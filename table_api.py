@@ -1,3 +1,4 @@
+from filter_values import argument as filter_argument, values as filter_values, matches as filter_matches, label as filter_label
 """Daily plans and a shared day/night fact projection for the calendar tables."""
 import secrets
 from datetime import date, timedelta
@@ -21,19 +22,20 @@ def register_table_routes(app, get_db, roles_required, utc_now):
         except (ValueError, OverflowError):
             abort(400, description="Выберите период от 1 до 31 дня.")
         dates = [(start + timedelta(days=index)).isoformat() for index in range(days)]
-        category = request.args.get('category') if 'category' in request.args else None
+        category = filter_argument('category')
         if category is not None and len(category) > 200:
             abort(400, description='Категория не должна превышать 200 символов.')
         db = get_db()
         db.execute('BEGIN')
         category_sql = "COALESCE(gc.name, w.category, '')"
-        fact_filter = '' if category is None else ' AND ' + category_sql + ' = ?'
+        fact_filter = '' if category is None else ' AND ' + category_sql + ' IN (' + ','.join('?' for _ in filter_values(category)) + ')' 
         fact_params = [dates[0], dates[-1]]
         if category is not None:
-            fact_params.append(category)
+            fact_params.extend(filter_values(category))
         company_sql = placement_company_sql()
         facts = [dict(row) for row in db.execute(
             f"""SELECT s.object_id, a.subobject_id, a.work_date, {company_sql} employer,
+                      COALESCE(ct.name,w.contractor,'') contractor,
                       SUM(CASE WHEN a.shift = '1 смена' THEN 1 ELSE 0 END) day_count,
                       SUM(CASE WHEN a.shift IN ('2 смена', 'Ночная смена') THEN 1 ELSE 0 END) night_count
                FROM assignments a JOIN subobjects s ON s.id = a.subobject_id
@@ -45,7 +47,7 @@ def register_table_routes(app, get_db, roles_required, utc_now):
                WHERE a.work_date BETWEEN ? AND ?
                AND NOT EXISTS (SELECT 1 FROM staffing_attendance att WHERE att.worker_id=a.worker_id
                    AND att.work_date=a.work_date AND att.status<>'Явка')""" + fact_filter +
-            f" GROUP BY a.subobject_id, a.work_date, {company_sql}", fact_params
+            f" GROUP BY a.subobject_id, a.work_date, {company_sql}, COALESCE(ct.name,w.contractor,'')", fact_params
         )]
         plans = [dict(row) for row in db.execute(
             """SELECT p.*, s.object_id FROM daily_staffing_plans p

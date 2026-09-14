@@ -1,3 +1,4 @@
+from filter_values import argument as filter_argument, values as filter_values, matches as filter_matches, label as filter_label
 """Read-only access to recorded assignment history for administrators."""
 from datetime import date, datetime, time, timedelta, timezone
 import math
@@ -62,13 +63,11 @@ def register_log_routes(app, get_db, roles_required):
         query = request.args.get('q', '').strip()
         if len(query) > 200:
             abort(400, description='Поисковый запрос должен быть не длиннее 200 символов.')
-        action = request.args.get('action', '')
-        if action not in ('', 'assign', 'move', 'clear', 'update', 'employee_delete', 'employee_restore'):
-            abort(400, description='Неизвестный тип действия.')
-        actor = request.args.get('actor', '')
+        action = filter_argument('action',ignore_empty=True,allowed={'assign','move','clear','update','employee_delete','employee_restore'})
+        actor = filter_argument('actor',ignore_empty=True)
         try:
             page = int(request.args.get('page', '1'))
-            if page < 1 or (actor and (not actor.isdecimal() or not 1 <= int(actor) <= 9223372036854775807)):
+            if page < 1 or any(not item.isdecimal() or not 1 <= int(item) <= 9223372036854775807 for item in filter_values(actor)):
                 raise ValueError()
         except ValueError:
             abort(400, description='Некорректный номер страницы или пользователь.')
@@ -84,9 +83,9 @@ def register_log_routes(app, get_db, roles_required):
         if work_day:
             where.append('e.work_date=?'); params.append(work_day.isoformat())
         if actor:
-            where.append('e.changed_by=?'); params.append(int(actor))
+            where.append('e.changed_by IN (' + ','.join('?' for _ in filter_values(actor)) + ')'); params.extend(int(item) for item in filter_values(actor))
         if action:
-            where.append('(' + ACTION + ')=?'); params.append(action)
+            where.append('(' + ACTION + ') IN (' + ','.join('?' for _ in filter_values(action)) + ')'); params.extend(filter_values(action))
         if query:
             fields = ('COALESCE(e.worker_snapshot,w.full_name)', 'COALESCE(e.personnel_snapshot,w.personnel_no)',
                       'COALESCE(e.crew_snapshot,c.name)', 'COALESCE(e.actor_snapshot,u.full_name)',

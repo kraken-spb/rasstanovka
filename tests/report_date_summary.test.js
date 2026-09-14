@@ -31,3 +31,14 @@ assert.equal(build({...fixture, query: 'Не существует'}).overall.cou
 assert.equal(build({...fixture, data: {dates: ['2026-09-15'], facts: []}}).objects.length, 0);
 assert.throws(() => build({...fixture, subobjects: []}), /Справочник объектов изменился/);
 console.log('Report-date totals, employer/site breakdown, date isolation, filters and empty state: OK');
+
+const split = build({...fixture, data: {dates: ['2026-09-13'], facts: [
+  {work_date:'2026-09-13', subobject_id:11, contractor:'Компания А', employer:'Общий работодатель', day_count:2, night_count:0},
+  {work_date:'2026-09-13', subobject_id:11, contractor:'Компания Б', employer:'Общий работодатель', day_count:1, night_count:3},
+  {work_date:'2026-09-13', subobject_id:12, contractor:'', employer:'Общий работодатель', day_count:4, night_count:0}
+]}});
+assert.equal(split.employers.length, 3);
+assert.equal(split.overall.count, 10);
+assert.equal(split.employers.find(c => c.contractor === 'Компания А').count, 2);
+assert.equal(split.employers.find(c => c.contractor === 'Компания Б').count, 4);
+assert.equal(split.objects[0].subobjects.find(site => site.id === 11).employers.length, 2);

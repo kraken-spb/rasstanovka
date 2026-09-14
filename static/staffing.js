@@ -1,23 +1,25 @@
 (() => {
   "use strict";
+  const MF = window.MultiFilter;
   const $ = (id) => document.getElementById(id);
   if (!$('view-staffing')) return;
   const root = document.querySelector('.app-shell');
   const state = { rows: [], crews: [], crewOptions: [], collapsed: new Set(), selected: new Map(), drafts: new Map(), crewDrafts: new Map(),
     nodes: new Map(), crewNodes: new Map(), loadedCrews: new Set(), loadingCrews: new Map(), busy: false, request: 0,
-    details: null, reference: null, imported: null, preview: null, search: '', regex: null, regexMode: false, department: '', employer: '', author: '', category: '', unassigned: false,
-    date: $('staffing-date').value, shift: $('staffing-shift').value, freshness: '', calendarFilter: null, groupMode: 'crew', itrGroups: [], rowsByItr: new Map() };
+    details: null, reference: null, imported: null, preview: null, search: '', regex: null, regexMode: false, department: '', employer: '', contractor: '', author: '', category: '', unassigned: false,
+    date: $('staffing-date').value, shift: MF.get($('staffing-shift')), freshness: '', calendarFilter: null, groupMode: 'crew', itrGroups: [], rowsByItr: new Map() };
+  ["staffing-shift", "staffing-category", "staffing-department", "staffing-author", "staffing-freshness", "staffing-export-category", "staffing-export-department", "staffing-export-contractor", "staffing-export-shift"].forEach(id => MF.enable($(id), id === 'staffing-export-shift' ? 'all' : ''));
   const preferences = window.staffingPreferences;
   state.pps = preferences.get('pps', '');
   state.date = preferences.get('date', state.date);
   $('staffing-date').value = state.date;
-  for (const field of ['groupMode', 'department', 'employer', 'author', 'category', 'unassigned', 'search', 'regexMode', 'shift', 'freshness']) {
+  for (const field of ['groupMode', 'department', 'employer', 'contractor', 'author', 'category', 'unassigned', 'search', 'regexMode', 'shift', 'freshness']) {
     state[field] = preferences.get(field, state[field]);
   }
   if (state.shift === 'all') state.shift = '';
   $('staffing-grouping').value = state.groupMode;
-  $('staffing-shift').value = state.shift;
-  $('staffing-freshness').value = state.freshness;
+  MF.set($('staffing-shift'), state.shift);
+  MF.set($('staffing-freshness'), state.freshness);
   $('staffing-unassigned').checked = state.unassigned;
   $('staffing-search').value = state.search;
   $('staffing-regex').checked = state.regexMode;
@@ -38,20 +40,30 @@
   };
   const employerFilter = el('select', {id: 'staffing-employer'});
   $('staffing-department').closest('label').after(el('label', {}, 'Организация-работодатель', employerFilter));
+  MF.enable(employerFilter);
   employerFilter.addEventListener('change', () => {
-    if (!canLeave()) { employerFilter.value = state.employer; return; }
-    state.employer = employerFilter.value;
+    if (!canLeave()) { MF.set(employerFilter, state.employer); return; }
+    state.employer = MF.get(employerFilter);
     if (!state.calendarFilter) preferences.set({employer: state.employer});
+    render();
+  });
+  const contractorFilter = el('select', {id: 'staffing-contractor'});
+  $('staffing-department').closest('label').after(el('label', {}, 'Компания-подрядчик', contractorFilter));
+  MF.enable(contractorFilter);
+  contractorFilter.addEventListener('change', () => {
+    if (!canLeave()) { MF.set(contractorFilter, state.contractor); return; }
+    state.contractor = MF.get(contractorFilter);
+    if (!state.calendarFilter) preferences.set({contractor: state.contractor});
     render();
   });
   const ppsOptions = () => [el('option', {value: ''}, 'Все ППС'),
     el('option', {value: 'ППС15'}, 'ППС15'), el('option', {value: 'ППС19'}, 'ППС19')];
   const ppsFilter = el('select', {id: 'staffing-pps'}, ...ppsOptions());
-  ppsFilter.value = state.pps;
   $('staffing-department').closest('label').before(el('label', {}, 'ППС', ppsFilter));
+  MF.enable(ppsFilter); MF.set(ppsFilter, state.pps);
   ppsFilter.addEventListener('change', () => {
-    if (!canLeave()) { ppsFilter.value = state.pps; return; }
-    state.pps = ppsFilter.value;
+    if (!canLeave()) { MF.enable(ppsFilter); MF.set(ppsFilter, state.pps); return; }
+    state.pps = MF.get(ppsFilter);
     if (!state.calendarFilter) preferences.set({pps: state.pps});
     render();
   });
@@ -95,20 +107,21 @@
   function calendarQuery() {
     if (!state.calendarFilter) return '';
     const query = new URLSearchParams({calendar_sites: state.calendarFilter.sites.join(','),
-      calendar_shift: $('staffing-shift').value || 'all'});
+      calendar_shift: MF.values(MF.get($('staffing-shift'))).length === 1 ? MF.get($('staffing-shift')) : 'all'});
+    if (state.calendarFilter.contractor !== undefined) query.set('calendar_contractor', state.calendarFilter.contractor);
     if (state.calendarFilter.employer !== undefined) query.set('calendar_employer', state.calendarFilter.employer);
-    if (state.calendarFilter.category !== undefined) query.set('calendar_category', state.calendarFilter.category);
+    if (state.calendarFilter.category !== undefined) [].concat(state.calendarFilter.category).forEach(value => query.append('calendar_category',value));
     return '&' + query.toString();
   }
   async function openFromCalendar(filter) {
-    state.pps = ''; ppsFilter.value = '';
+    state.pps = ''; MF.set(ppsFilter, '');
     state.calendarFilter = filter;
-    state.search = ''; state.regex = null; state.regexMode = false; state.department = ''; state.employer = ''; state.author = ''; state.category = ''; state.unassigned = false;
-    state.freshness = ''; $('staffing-freshness').value = '';
+    state.search = ''; state.regex = null; state.regexMode = false; state.department = ''; state.employer = ''; state.contractor = ''; state.author = ''; state.category = ''; state.unassigned = false;
+    state.freshness = ''; MF.set($('staffing-freshness'), '');
     state.selected.clear();
     $('staffing-search').value = ''; $('staffing-regex').checked = false; $('staffing-unassigned').checked = false;
     $('staffing-search-error').hidden = true;
-    $('staffing-date').value = filter.date; $('staffing-shift').value = filter.shift;
+    $('staffing-date').value = filter.date; MF.set($('staffing-shift'), filter.shift);
     await load();
     $('staffing-calendar-filter').scrollIntoView({block: 'nearest'});
   }
@@ -157,12 +170,12 @@
         state.rowsByCrew.get(row.crew_id).push(row);
         departments.set(row.department, (departments.get(row.department) || 0) + 1);
       });
-      if (state.department && !departments.has(state.department)) departments.set(state.department, 0);
+      MF.values(state.department).forEach(key => { if (!departments.has(key)) departments.set(key, 0); });
       $('staffing-department').replaceChildren(el('option', {value: ''}, 'Все строительные участки'),
         ...[...departments].sort(([a], [b]) => a.localeCompare(b, 'ru', {numeric: true})).map(([name, count]) =>
           el('option', {value: name}, name.replace(/^Строительно[-– ]монтажный участок\s*/i, 'СМУ ') + ' · ' + count + ' чел.')));
-      $('staffing-department').value = state.department;
-      state.date = $('staffing-date').value; state.shift = $('staffing-shift').value;
+      MF.set($('staffing-department'), state.department);
+      state.date = $('staffing-date').value; state.shift = MF.get($('staffing-shift'));
       $('staffing-source').textContent = state.calendarFilter ? 'Сотрудники с фактическими назначениями по выбранной позиции.' :
         data.import ? data.import.filename + (data.import.id ? ' · лист «Явка»' : '') + (data.import.has_outstaff && data.import.id ? ' + Аутстафф' : '') : 'Импортируйте численность с листа «Явка».';
       for (const group of displayGroups().filter(crew => expanded.has(crew.id))) await loadGroup(group);
@@ -258,12 +271,13 @@
       const fields = [...(row.search_fields || [row.full_name, row.personnel_no, row.profession, row.category, row.department, row.employer,
         row.crew_name, row.object_name || '', row.subobject_name || '', row.linear_itr_name || '', row.brigadier_name || '']),
         row.assignment_author?.full_name || ''];
-      return (!state.pps || row.pps === state.pps) && (!state.category || categoryKey(row) === state.category) &&
-        (!state.department || row.department === state.department) && (!state.unassigned || !row.assignment_id) &&
-        (!state.employer || employerKey(row) === state.employer) &&
-        (!state.author || (row.assignment_id && authorKey(row) === state.author)) &&
-        (!state.freshness || row.freshness?.status === state.freshness) &&
-        (state.calendarFilter || !state.shift || (state.shift === 'none' ? !row.employee_shift : row.employee_shift === state.shift)) &&
+      return MF.matches(state.pps, row.pps) && MF.matches(state.category, categoryKey(row)) &&
+        MF.matches(state.department, row.department) && (!state.unassigned || !row.assignment_id) &&
+        MF.matches(state.employer, employerKey(row)) &&
+        MF.matches(state.contractor, contractorKey(row)) &&
+        MF.matches(state.author, row.assignment_id ? authorKey(row) : '') &&
+        MF.matches(state.freshness, row.freshness?.status) &&
+        (state.calendarFilter || MF.matches(state.shift, row.employee_shift || 'none')) &&
         (state.regex ? fields.some(value => state.regex.test(value)) : matches(fields.join(' '), state.search));
     });
   }
@@ -277,12 +291,29 @@
       const key = employerKey(row);
       counts.set(key, (counts.get(key) || 0) + 1);
     });
-    if (state.employer && !counts.has(state.employer)) counts.set(state.employer, 0);
+    MF.values(state.employer).forEach(key => { if (!counts.has(key)) counts.set(key, 0); });
     const entries = [...counts].sort(([a], [b]) => a === 'none' ? 1 : b === 'none' ? -1 : a.localeCompare(b, 'ru'));
     employerFilter.replaceChildren(el('option', {value: ''}, 'Все организации'),
       ...entries.map(([key, count]) => el('option', {value: key},
         (key === 'none' ? 'Не указана' : key.slice(5)) + ' · ' + count + ' чел.')));
-    employerFilter.value = state.employer;
+    MF.set(employerFilter, state.employer);
+  }
+  function contractorKey(row) {
+    const name = String(row.contractor || '').trim();
+    return name ? 'name:' + name : 'none';
+  }
+  function renderContractors() {
+    const counts = new Map();
+    state.rows.forEach(row => {
+      const key = contractorKey(row);
+      counts.set(key, (counts.get(key) || 0) + 1);
+    });
+    MF.values(state.contractor).forEach(key => { if (!counts.has(key)) counts.set(key, 0); });
+    const entries = [...counts].sort(([a], [b]) => a === 'none' ? 1 : b === 'none' ? -1 : a.localeCompare(b, 'ru'));
+    contractorFilter.replaceChildren(el('option', {value: ''}, 'Все подрядчики'),
+      ...entries.map(([key, count]) => el('option', {value: key},
+        (key === 'none' ? 'Не указана' : key.slice(5)) + ' · ' + count + ' чел.')));
+    MF.set(contractorFilter, state.contractor);
   }
   function categoryKey(row) {
     const name = String(row.category || '').trim();
@@ -295,12 +326,12 @@
       counts.set(key, (counts.get(key) || 0) + 1);
     }
     // Keep the selected category visible with zero results after data changes.
-    if (state.category && !counts.has(state.category)) counts.set(state.category, 0);
+    MF.values(state.category).forEach(key => { if (!counts.has(key)) counts.set(key, 0); });
     const entries = [...counts].sort(([a], [b]) => a === 'none' ? 1 : b === 'none' ? -1 : a.localeCompare(b, 'ru'));
     $('staffing-category').replaceChildren(el('option', {value: ''}, 'Все категории'),
       ...entries.map(([key, count]) => el('option', {value: key},
         (key === 'none' ? 'Без категории' : key.slice(5)) + ' · ' + count + ' чел.')));
-    $('staffing-category').value = state.category;
+    MF.set($('staffing-category'), state.category);
   }
   function authorKey(row) {
     return row.assignment_author?.user_id != null ? String(row.assignment_author.user_id) : 'unknown';
@@ -322,9 +353,8 @@
     const previous = select.selectedOptions[0]?.textContent || 'Выбранный автор';
     select.replaceChildren(el('option', {value: ''}, 'Все авторы'), ...entries.map(([id, author]) =>
       el('option', {value: id}, author.name + (names.get(author.name) > 1 ? ' · №' + id : '') + ' · ' + author.count + ' чел.')));
-    if (state.author && !authors.has(state.author)) select.append(el('option', {value: state.author},
-      previous.replace(/ · \d+ чел\.$/, '') + ' · 0 чел.'));
-    select.value = state.author;
+    MF.values(state.author).filter(id => !authors.has(id)).forEach(id => select.append(el('option', {value:id}, 'Автор №' + id + ' · 0 чел.')));
+    MF.set(select, state.author);
   }
   const freshnessLabels = {current: 'Актуальные', inherited: 'Со вчера', mixed: 'Частично обновлены',
     unknown: 'Источник не определён', empty: 'Нет данных на дату'};
@@ -336,7 +366,7 @@
     }
     $('staffing-freshness').replaceChildren(el('option', {value: ''}, 'Все данные'),
       ...Object.entries(freshnessLabels).map(([key, label]) => el('option', {value: key}, label + ' · ' + (counts.get(key) || 0))));
-    $('staffing-freshness').value = state.freshness;
+    MF.set($('staffing-freshness'), state.freshness);
   }
   function paintFreshness(tr, row) {
     const fresh = row.freshness || {status: 'unknown'};
@@ -352,8 +382,8 @@
       fresh.status === 'inherited' ? 'Перенесены с предыдущего дня, ещё не обновлялись.' : detail.textContent;
   }
   $('staffing-freshness').addEventListener('change', () => {
-    if (!canLeave()) { $('staffing-freshness').value = state.freshness; return; }
-    state.freshness = $('staffing-freshness').value;
+    if (!canLeave()) { MF.set($('staffing-freshness'), state.freshness); return; }
+    state.freshness = MF.get($('staffing-freshness'));
     if (!state.calendarFilter) preferences.set({freshness: state.freshness});
     render();
   });
@@ -361,10 +391,11 @@
     const rows = state.rows.filter(row => state.selected.get(row.id) === row.crew_id);
     const visible = new Set(filtered.map(row => row.id));
     return {count: rows.length, hidden: rows.filter(row => !visible.has(row.id)).length,
-      filters: ['department', 'employer', 'author', 'category', 'pps', 'freshness', 'shift', 'search', 'unassigned'].filter(key => !!state[key]).length};
+      filters: ['department', 'employer', 'contractor', 'author', 'category', 'pps', 'freshness', 'shift', 'search', 'unassigned'].filter(key => !!state[key]).length};
   }
   function updateTotals() {
     renderEmployers();
+    renderContractors();
     renderCategories();
     renderAuthors();
     renderFreshnessFilter();
@@ -1221,20 +1252,20 @@
     finally { busy(false); }
   }
   $('staffing-category').addEventListener('change', () => {
-    if (!canLeave()) { $('staffing-category').value = state.category; return; }
-    state.category = $('staffing-category').value;
+    if (!canLeave()) { MF.set($('staffing-category'), state.category); return; }
+    state.category = MF.get($('staffing-category'));
     if (!state.calendarFilter) preferences.set({category: state.category});
     render();
   });
   $('staffing-author').addEventListener('change', () => {
-    if (!canLeave()) { $('staffing-author').value = state.author; return; }
-    state.author = $('staffing-author').value;
+    if (!canLeave()) { MF.set($('staffing-author'), state.author); return; }
+    state.author = MF.get($('staffing-author'));
     if (!state.calendarFilter) preferences.set({author: state.author});
     render();
   });
   $('staffing-department').addEventListener('change', () => {
-    if (!canLeave()) { $('staffing-department').value = state.department; return; }
-    state.department = $('staffing-department').value;
+    if (!canLeave()) { MF.set($('staffing-department'), state.department); return; }
+    state.department = MF.get($('staffing-department'));
     if (!state.calendarFilter) preferences.set({department: state.department});
     render();
   });
@@ -1273,7 +1304,7 @@
   $('staffing-search').addEventListener('input', searchTable);
   $('staffing-regex').addEventListener('change', searchTable);
   ['staffing-date'].forEach(id => $(id).addEventListener('change', () => {
-    if (!canLeave()) { $('staffing-date').value = state.date; $('staffing-shift').value = state.shift; return; }
+    if (!canLeave()) { $('staffing-date').value = state.date; MF.set($('staffing-shift'), state.shift); return; }
     if (!$('staffing-date').value) { $('staffing-date').value = state.date; return; }
     if (!$('staffing-date').validity.valid) { $('staffing-date').value = state.date; return; }
     preferences.set({date: $('staffing-date').value});
@@ -1282,15 +1313,15 @@
   async function resetFilters() {
     if (!canLeave()) return;
     const reload = !!state.calendarFilter;
-    const defaults = {department: '', employer: '', category: '', author: '', unassigned: false,
+    const defaults = {department: '', employer: '', contractor: '', category: '', author: '', unassigned: false,
       search: '', regexMode: false, shift: '', pps: ''};
-    ppsFilter.value = '';
+    MF.set(ppsFilter, '');
     if ($('staffing-freshness')) defaults.freshness = '';
     Object.assign(state, defaults, {regex: null, calendarFilter: null});
     state.selected.clear();
-    for (const [field, id] of [['department', 'staffing-department'], ['employer', 'staffing-employer'], ['category', 'staffing-category'],
+    for (const [field, id] of [['department', 'staffing-department'], ['employer', 'staffing-employer'], ['contractor', 'staffing-contractor'], ['category', 'staffing-category'],
       ['author', 'staffing-author'], ['search', 'staffing-search'], ['shift', 'staffing-shift'], ['freshness', 'staffing-freshness']]) {
-      if ($(id)) $(id).value = defaults[field];
+      if ($(id)) { if ($(id).multiple) MF.set($(id), defaults[field]); else $(id).value = defaults[field]; }
     }
     $('staffing-unassigned').checked = false; $('staffing-regex').checked = false;
     $('staffing-search').placeholder = 'Бригада, ФИО, табельный номер, должность';
@@ -1316,8 +1347,8 @@
     load().catch(() => {});
   });
   $('staffing-shift').addEventListener('change', () => {
-    if (!canLeave()) { $('staffing-shift').value = state.shift; return; }
-    state.shift = $('staffing-shift').value;
+    if (!canLeave()) { MF.set($('staffing-shift'), state.shift); return; }
+    state.shift = MF.get($('staffing-shift'));
     if (!state.calendarFilter) preferences.set({shift: state.shift});
     if (state.calendarFilter) load().catch(() => {});
     else render();
@@ -1449,21 +1480,21 @@
         $('staffing-export-date').value = $('staffing-date').value;
         $('staffing-export-department').replaceChildren(...[...$('staffing-department').options].filter((option, index) => index === 0 || option.value).map(option => option.cloneNode(true)));
         $('staffing-export-department').options[0].textContent = 'Все СМУ';
-        $('staffing-export-department').value = $('staffing-department').value;
+        MF.set($('staffing-export-department'), MF.get($('staffing-department')));
         const contractorFilter = $('staffing-export-contractor');
-        const selectedContractor = contractorFilter.value;
+        const selectedContractor = MF.get(contractorFilter);
         contractorFilter.replaceChildren(el('option', {value: ''}, 'Все компании-подрядчики'),
           ...(state.contractors || []).map(item => el('option', {value: item.name}, item.name)));
-        contractorFilter.value = [...contractorFilter.options].some(option => option.value === selectedContractor) ? selectedContractor : '';
+        MF.set(contractorFilter, selectedContractor);
         $('staffing-export-category').replaceChildren(...[...$('staffing-category').options].map(option => option.cloneNode(true)));
-        $('staffing-export-category').value = $('staffing-category').value;
-        const shift = $('staffing-shift').value;
-        $('staffing-export-shift').value = ['1 смена', '2 смена'].includes(shift) ? shift : 'all';
+        MF.set($('staffing-export-category'), MF.get($('staffing-category')));
+        const shift = MF.get($('staffing-shift'));
+        MF.set($('staffing-export-shift'), MF.values(shift).filter(value => value !== 'none'));
       }
     });
   });
   document.addEventListener('click', event => {
-    if (!event.target.closest('.staffing-transfers')) closeTransferMenus();
+    if (!event.target.closest('.staffing-transfers, .multi-filter-dialog')) closeTransferMenus();
   });
   document.addEventListener('keydown', event => {
     if (event.key === 'Escape' && transferMenus.some(menu => menu.open) && !state.busy) {
@@ -1481,20 +1512,20 @@
     const button = $('staffing-export-submit');
     if (button.disabled) return;
     const day = $('staffing-export-date').value;
-    const shift = $('staffing-export-shift').value;
+    const shift = MF.get($('staffing-export-shift'));
     button.disabled = true;
     message.classList.remove('error-text');
     message.textContent = 'Формируем файл…';
     try {
-      const params = new URLSearchParams({date: day, shift});
-      const department = $('staffing-export-department').value;
-      if (department) params.set('department', department);
-      const contractor = $('staffing-export-contractor').value;
-      if (contractor) params.set('contractor', contractor);
+      const params = new URLSearchParams({date: day}); MF.params(params, 'shift', shift || 'all');
+      const department = MF.get($('staffing-export-department'));
+      MF.params(params, 'department', department);
+      const contractor = MF.get($('staffing-export-contractor'));
+      MF.params(params, 'contractor', contractor);
       const includeUnassigned = $('staffing-export-unassigned').checked;
       if (includeUnassigned) params.set('include_unassigned', '1');
-      const selectedCategory = $('staffing-export-category').value;
-      if (selectedCategory) params.set('category', selectedCategory === 'none' ? '' : selectedCategory.slice(5));
+      const selectedCategory = MF.get($('staffing-export-category'));
+      MF.params(params, 'category', selectedCategory, value => value === 'none' ? '' : value.slice(5));
       const response = await fetch('/api/staffing/export?' + params, {cache: 'no-store'});
       if (!response.ok) {
         const data = await response.json();
@@ -1503,7 +1534,7 @@
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
       const dateLabel = day.split('-').reverse().join('.');
-      const suffix = shift === 'all' ? '' : shift === '1 смена' ? ' — день' : ' — ночь';
+      const suffix = !shift || MF.values(shift).length > 1 ? '' : shift === '1 смена' ? ' — день' : ' — ночь';
       const link = el('a', {href: url, download: 'Расстановка на ' + dateLabel + suffix + '.xlsx'});
       document.body.append(link);
       link.click();

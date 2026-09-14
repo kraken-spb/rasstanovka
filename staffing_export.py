@@ -1,3 +1,4 @@
+from filter_values import argument as filter_argument, values as filter_values, matches as filter_matches, label as filter_label
 """XLSX export of the actual daily placement records."""
 import io
 import re
@@ -30,7 +31,8 @@ def _period():
         day = date.fromisoformat(raw_day).isoformat()
     except ValueError:
         abort(400, description='Укажите существующую дату расстановки.')
-    shift = request.args.get('shift', '')
+    shift = filter_argument('shift', allowed={'all','1 смена','2 смена'})
+    if 'all' in filter_values(shift) or len(filter_values(shift))==2: shift='all'
     if shift not in {'all', '1 смена', '2 смена'}:
         abort(400, description='Выберите смену или все смены.')
     return day, shift
@@ -179,11 +181,11 @@ def register_staffing_export_route(app, get_db, roles_required):
         if include_unassigned not in ('0', '1'):
             abort(400, description='Некорректная настройка выгрузки нерасставленных сотрудников.')
         include_unassigned = include_unassigned == '1'
-        category = request.args.get('category')
-        department = request.args.get('department', '')
-        contractor = request.args.get('contractor', '')
+        category = filter_argument('category')
+        department = filter_argument('department',500,ignore_empty=True)
+        contractor = filter_argument('contractor',500,ignore_empty=True)
         query = request.args.get('query', '')
-        if (category is not None and len(category) > 200) or len(query) > 500 or len(department) > 500 or len(contractor) > 500:
+        if len(query) > 500:
             abort(400, description='Слишком длинный фильтр отчёта.')
         db = get_db()
         shifts = tuple(SHIFT_LABELS) if requested_shift == 'all' else (requested_shift,)
@@ -192,14 +194,14 @@ def register_staffing_export_route(app, get_db, roles_required):
             rows = _rows(db, day, shifts)
             unassigned = _unassigned_rows(db, day, requested_shift) if include_unassigned else []
             if department:
-                rows = [row for row in rows if row['department'] == department]
-                unassigned = [row for row in unassigned if row['department'] == department]
+                rows = [row for row in rows if filter_matches(department,row['department'])]
+                unassigned = [row for row in unassigned if filter_matches(department,row['department'])]
             if contractor:
-                rows = [row for row in rows if row['contractor'] == contractor]
-                unassigned = [row for row in unassigned if row['contractor'] == contractor]
+                rows = [row for row in rows if filter_matches(contractor,row['contractor'])]
+                unassigned = [row for row in unassigned if filter_matches(contractor,row['contractor'])]
             words = query.casefold().replace('ё', 'е').split()
             rows = [row for row in [*rows, *unassigned]
-                    if (category is None or (row['category'] or '') == category)
+                    if filter_matches(category,row['category'] or '')
                     and all(word in (row['object_name'] + ' ' + row['subobject_name']).casefold().replace('ё', 'е')
                             for word in words)]
             unassigned = [row for row in rows if row['id'] is None]
@@ -220,7 +222,7 @@ def register_staffing_export_route(app, get_db, roles_required):
         workbook.remove(workbook.active)
         # Both tabs use the exact same authorized, filtered snapshot.
         _sheet(workbook, 'Список сотрудников', rows, include_unassigned)
-        summary_sheet(workbook, rows, day, category, query)
+        summary_sheet(workbook, rows, day, filter_label(category,'','Без категории') if category is not None else None, query)
         output = io.BytesIO()
         workbook.save(output)
         output.seek(0)

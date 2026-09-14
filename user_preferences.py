@@ -22,9 +22,18 @@ def staffing_preferences(db, user_id):
 
 def validate_patch(data):
     if not isinstance(data, dict) or not data or set(data) - {
-            'groupMode', 'department', 'employer', 'category', 'author', 'unassigned', 'shift', 'search', 'regexMode', 'columns', 'freshness', 'date', 'pps'}:
+            'groupMode', 'department', 'employer', 'contractor', 'category', 'author', 'unassigned', 'shift', 'search', 'regexMode', 'columns', 'freshness', 'date', 'pps'}:
         abort(400, description='Некорректные настройки расстановки.')
     for field, value in data.items():
+        if field in ('department','employer','contractor','category','author','shift','freshness','pps') and isinstance(value,str) and value.startswith('__multi_filter_v1__:'):
+            try:
+                selected=json.loads(value[len('__multi_filter_v1__:'):])
+            except (ValueError,TypeError):
+                abort(400, description='Некорректный список значений фильтра.')
+            if not isinstance(selected,list) or not 1 <= len(selected) <= 100 or any(not isinstance(item,str) or item.startswith('__multi_filter_v1__:') for item in selected):
+                abort(400, description='Некорректный список значений фильтра.')
+            for item in selected: validate_patch({field:item})
+            continue
         valid = False
         if field == 'groupMode': valid = value in ('crew', 'itr')
         elif field == 'pps': valid = value in ('', 'ППС15', 'ППС19')
@@ -36,7 +45,7 @@ def validate_patch(data):
                 valid = False
         elif field == 'freshness': valid = value in ('', 'current', 'inherited', 'mixed', 'unknown', 'empty')
         elif field in ('unassigned', 'regexMode'): valid = type(value) is bool
-        elif field in ('department', 'employer', 'category', 'author', 'search'):
+        elif field in ('department', 'employer', 'contractor', 'category', 'author', 'search'):
             valid = isinstance(value, str) and len(value) <= (300 if field == 'search' else 500)
         elif field == 'columns' and isinstance(value, dict) and {'hidden', 'widths'} <= set(value) <= {'hidden', 'widths', 'order'}:
             hidden, widths = value['hidden'], value['widths']

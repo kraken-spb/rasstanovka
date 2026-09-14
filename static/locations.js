@@ -1,5 +1,6 @@
 (() => {
   'use strict';
+  const MF = window.MultiFilter;
   const root = document.querySelector('.app-shell');
   const panel = document.getElementById('location-catalog');
   if (!panel || !['admin', 'super_admin'].includes(root.dataset.role)) return;
@@ -23,12 +24,13 @@
   const stageSummary = element('div', null, 'location-catalog-toolbar');
   stageSummary.setAttribute('aria-label', 'Родительские этапы');
   panel.querySelector('.location-catalog-toolbar').before(stageSummary);
+  MF.enable(filter); MF.enable(stageFilter);
   const stageEditor = element('select'); stageEditor.id = 'location-editor-stage';
   const stageEditorLabel = element('label', 'Родительский этап'); stageEditorLabel.append(stageEditor);
   $('location-editor-group-label').before(stageEditorLabel);
   function stageOptions(select, selected, emptyLabel) {
     select.replaceChildren(new Option(emptyLabel, ''), ...catalog.stages.map(row => new Option(row.name, String(row.id))));
-    select.value = selected || '';
+    if(select===stageFilter)MF.set(select,selected);else select.value=selected||'';
   }
   function groupLabel(row) {
     const stage = catalog.stages.find(stage => stage.id === row.stage_id);
@@ -48,20 +50,20 @@
   }
   function options(select, selected, emptyLabel) {
     const empty = new Option(emptyLabel, '');
-    select.replaceChildren(empty, ...catalog.objects.filter(row => !stageFilter.value || String(row.stage_id) === stageFilter.value).map(row => new Option(groupLabel(row), String(row.id))));
-    select.value = catalog.objects.some(row => String(row.id) === String(selected)) ? String(selected) : '';
+    select.replaceChildren(empty, ...catalog.objects.filter(row => MF.matches(MF.get(stageFilter),row.stage_id)).map(row => new Option(groupLabel(row), String(row.id))));
+    if(select===filter)MF.set(select,selected);else select.value=catalog.objects.some(row => String(row.id)===String(selected))?String(selected):'';
   }
   function render() {
     const query = search.value.trim().toLocaleLowerCase('ru');
-    const objectId = Number(filter.value);
-    const stageId = Number(stageFilter.value);
-    const inStage = row => !stageId || row.stage_id === stageId;
+    const objectId = MF.get(filter);
+    const stageId = MF.get(stageFilter);
+    const inStage = row => MF.matches(stageId,row.stage_id);
     const stageGroups = new Set(catalog.objects.filter(inStage).map(row => row.id));
     stageSummary.replaceChildren(...catalog.stages.map(stage => {
       const count = catalog.objects.filter(row => row.stage_id === stage.id).length;
       const button = element('button', stage.name + ' · групп: ' + count, 'secondary-button');
-      button.type = 'button'; button.setAttribute('aria-pressed', String(stage.id === stageId));
-      button.addEventListener('click', () => { stageFilter.value = String(stage.id); filter.value = ''; options(filter, '', 'Все группы'); render(); });
+      button.type = 'button'; button.setAttribute('aria-pressed', String(MF.values(stageId).includes(String(stage.id))));
+      button.addEventListener('click', () => { MF.set(stageFilter, String(stage.id)); MF.set(filter, ''); options(filter, '', 'Все группы'); render(); });
       return button;
     }));
     const names = new Map(catalog.objects.map(row => [row.id, groupLabel(row)]));
@@ -72,8 +74,8 @@
     catalog.objects.forEach(row => stageCounts.set(row.stage_id, (stageCounts.get(row.stage_id) || 0) + 1));
     const stages = catalog.stages.filter(row => matches(row.name));
     const matchedParents = new Set(catalog.subobjects.filter(row => matches(row.name)).map(row => row.object_id));
-    const groups = catalog.objects.filter(row => inStage(row) && (!objectId || row.id === objectId) && (matches(groupLabel(row)) || matchedParents.has(row.id)));
-    const sites = catalog.subobjects.filter(row => stageGroups.has(row.object_id) && (!objectId || row.object_id === objectId) && matches((names.get(row.object_id) || '') + ' ' + row.name));
+    const groups = catalog.objects.filter(row => inStage(row) && MF.matches(objectId,row.id) && (matches(groupLabel(row)) || matchedParents.has(row.id)));
+    const sites = catalog.subobjects.filter(row => stageGroups.has(row.object_id) && MF.matches(objectId,row.object_id) && matches((names.get(row.object_id) || '') + ' ' + row.name));
     function list(id, rows, kind) {
       $(id).replaceChildren(...rows.map(row => {
         const text = element('div');
@@ -115,8 +117,8 @@
       catalog = await api('/api/locations');
       const tokens = new Map(catalog.stage_details.map(row => [row.id, row.edit_token]));
       catalog.stages.forEach(row => { row.edit_token = tokens.get(row.id); });
-      stageOptions(stageFilter, stageFilter.value, 'Все этапы');
-      options(filter, filter.value, 'Все группы');
+      stageOptions(stageFilter, MF.get(stageFilter), 'Все этапы');
+      options(filter, MF.get(filter), 'Все группы');
       render();
     } catch (error) { status('location-catalog-status', error.message, true); }
     finally { loading = false; panel.inert = false; }
@@ -130,15 +132,15 @@
       await api('/api/locations/' + kind + '/' + row.id, {method: 'DELETE', body: JSON.stringify({expected_token: row.edit_token})});
       catalog[kind] = catalog[kind].filter(item => item.id !== row.id);
       window.appReference.invalidate();
-      stageOptions(stageFilter, stageFilter.value, 'Все этапы');
-      options(filter, filter.value, 'Все группы'); render();
+      stageOptions(stageFilter, MF.get(stageFilter), 'Все этапы');
+      options(filter, MF.get(filter), 'Все группы'); render();
       status('location-catalog-status', 'Запись удалена.');
     } catch (error) { status('location-catalog-status', error.message, true); }
     finally { busy = false; panel.inert = false; }
   }
   function open(kind, row = null) {
     if (!canEdit || busy || loading) return;
-    editing = {kind, row, group: String(row?.object_id || filter.value || ''), stage: String(row?.stage_id || stageFilter.value || '')};
+    editing = {kind, row, group: String(row?.object_id || (MF.values(MF.get(filter)).length===1?MF.values(MF.get(filter))[0]:'') || ''), stage: String(row?.stage_id || (MF.values(MF.get(stageFilter)).length===1?MF.values(MF.get(stageFilter))[0]:'') || '')};
     stageEditorLabel.hidden = kind !== 'objects';
     stageOptions(stageEditor, editing.stage, 'Без этапа');
     $('location-editor-title').textContent = (row ? 'Изменить ' : 'Добавить ') + {stages: 'этап', objects: 'группу', subobjects: 'подобъект'}[kind];
@@ -187,11 +189,11 @@
       [...form.querySelectorAll('input, select, button')].forEach(node => { node.disabled = false; });
     }
     if (saved) {
-      search.value = ''; if (kind === 'subobjects') filter.value = String(data.object_id);
+      search.value = ''; if (kind === 'subobjects') MF.set(filter, String(data.object_id));
       await load();
     }
   });
-  stageFilter.addEventListener('change', () => { filter.value = ''; options(filter, '', 'Все группы'); render(); });
+  stageFilter.addEventListener('change', () => { MF.set(filter, ''); options(filter, '', 'Все группы'); render(); });
   search.addEventListener('input', render);
   filter.addEventListener('change', render);
   $('location-catalog-refresh').addEventListener('click', () => { window.appReference.invalidate(); load(); });

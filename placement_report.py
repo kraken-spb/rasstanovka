@@ -1,3 +1,4 @@
+from filter_values import argument as filter_argument, values as filter_values, matches as filter_matches, label as filter_label
 """Read-only placement coverage: distinct workers by PPS and effective GDLR."""
 from datetime import date
 from io import BytesIO
@@ -35,17 +36,20 @@ def report_data(db, day, pps=None, category=None):
         )
         SELECT w.id,w.full_name,w.personnel_no,w.profession,w.department,
                COALESCE(w.pps,'') pps,COALESCE(gc.name,w.category,'') category,
+               COALESCE(ct.name,w.contractor,'') contractor,
                COALESCE(att.status,'Явка') attendance_status
         FROM population p JOIN workers w ON w.id=p.worker_id
         LEFT JOIN crew_members m ON m.worker_id=w.id LEFT JOIN crews c ON c.id=m.crew_id
         LEFT JOIN employee_gdlr eg ON eg.worker_id=w.id LEFT JOIN gdlr_categories gc ON gc.id=eg.category_id
+        LEFT JOIN employee_contractors ec ON ec.worker_id=w.id
+        LEFT JOIN contractors ct ON ct.id=ec.contractor_id
         LEFT JOIN staffing_attendance att ON att.worker_id=w.id AND att.work_date=?
         WHERE {access} ORDER BY w.full_name COLLATE NOCASE,w.personnel_no,w.id
     ''', [day, day, *params]).fetchall()
     options = {'pps': sorted({r['pps'] for r in rows}),
                'categories': sorted({r['category'] for r in rows}, key=str.casefold)}
     people = {r['id']: {**dict(r), 'assignments': []} for r in rows
-              if (pps is None or r['pps'] == pps) and (category is None or r['category'] == category)}
+              if filter_matches(pps,r['pps']) and filter_matches(category,r['category'])}
     for assignment in db.execute('''
         SELECT a.worker_id,a.shift,o.name object_name,s.name subobject_name
         FROM assignments a JOIN subobjects s ON s.id=a.subobject_id JOIN objects o ON o.id=s.object_id
@@ -64,11 +68,15 @@ def report_data(db, day, pps=None, category=None):
         totals[status] += 1
         group = groups.setdefault((person['pps'], person['category']), {
             'pps': person['pps'], 'category': person['category'], 'total': 0,
-            'assigned': 0, 'unassigned': 0, 'absent': 0, 'people': []})
+            'assigned': 0, 'unassigned': 0, 'absent': 0, 'people': [], 'companies': {}})
         group['total'] += 1
         group[status] += 1
         group['people'].append(person)
+        company = group['companies'].setdefault(person['contractor'], {'total': 0, 'assigned': 0, 'unassigned': 0, 'absent': 0})
+        company['total'] += 1
+        company[status] += 1
     return {'date': day, 'filters': {'pps': pps, 'category': category}, 'options': options,
+            'contractors': sorted({p['contractor'] for p in people.values()}, key=str.casefold),
             'totals': totals, 'groups': sorted(groups.values(), key=lambda r: (r['pps'], r['category'].casefold())),
             'note': REPORT_NOTE}
 
@@ -82,7 +90,7 @@ def register_placement_report(app, get_db, roles_required):
             day = date.fromisoformat(request.args.get('date', '')).isoformat()
         except ValueError:
             abort(400, description='Укажите существующую дату отчёта.')
-        filters = {key: request.args.get(key) for key in ('pps', 'category')}
+        filters = {key: filter_argument(key) for key in ('pps', 'category')}
         if any(value is not None and len(value) > 200 for value in filters.values()):
             abort(400, description='Значение фильтра слишком длинное.')
         if request.args.get('details', '0') not in ('0', '1'):

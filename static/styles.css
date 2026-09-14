@@ -649,7 +649,11 @@ body:has(#view-employees.active) .app-shell { width: calc(100% - 24px); padding-
 @media (max-width: 900px) {
   :is(#view-employees, #view-outstaff) .employees-grid colgroup { display: none; }
   :is(#view-employees, #view-outstaff) .employees-grid td, :is(#view-employees, #view-outstaff) .employees-grid td:nth-child(2) { display: grid; grid-template-columns: minmax(0, .7fr) minmax(0, 1.3fr); }
-  :is(#view-employees, #view-outstaff) .employees-grid td:first-child { display: block; }
+  :is(#view-employees, #view-outstaff) .employees-grid td:first-child { display: grid; }
+  :is(#view-employees, #view-outstaff) .employees-grid td:first-child::before { display: block; }
+  :is(#view-employees, #view-outstaff) .employees-grid td[data-column="full_name"] { display: block; }
+  :is(#view-employees, #view-outstaff) .employees-grid td[data-column="full_name"]::before { display: none; }
+  :is(#view-employees, #view-outstaff) .employees-grid td[data-column="full_name"] strong { font-size: 1rem; }
   :is(#view-employees, #view-outstaff) .employees-grid td:nth-child(2)::before { margin: 0; }
   :is(#view-employees, #view-outstaff) .employees-grid td > * { min-width: 0; max-width: 100%; }
   :is(#view-employees, #view-outstaff) .employee-grid-controls { align-items: start; }

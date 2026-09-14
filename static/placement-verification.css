@@ -1,0 +1,26 @@
+.verification-workspace { min-width: 0; width: 100%; }
+.verification-controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: .65rem; padding: 0; margin: 1rem 0; border: 0; min-width: 0; }
+.verification-controls label { display: grid; gap: .3rem; min-width: 0; font-size: .85rem; }
+.verification-controls input, .verification-controls select { width: 100%; min-width: 0; box-sizing: border-box; }
+.verification-controls button { align-self: end; }
+.verification-totals { display: flex; flex-wrap: wrap; gap: .5rem 1rem; padding: .7rem; background: var(--mint); border-radius: 8px; font-size: .85rem; }
+.verification-message { overflow-wrap: anywhere; }
+.verification-position { margin-top: .7rem; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.verification-position summary { cursor: pointer; padding: .85rem; background: #eef4f4; overflow-wrap: anywhere; }
+.verification-position summary span { display: block; margin-top: .35rem; font-size: .85rem; }
+.verification-position-actions { padding: .65rem .8rem; }
+.verification-people { list-style: none; padding: 0; margin: 0; }
+.verification-people li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(180px, 260px); gap: 1rem; padding: .85rem; border-top: 1px solid var(--line); }
+.verification-people small { display: block; margin-top: .3rem; color: var(--muted); }
+.verification-people li > div { min-width: 0; overflow-wrap: anywhere; }
+.verification-result { display: grid; gap: .45rem; align-content: start; }
+.verification-badge { font-size: .85rem; font-weight: 600; }
+.verification-badge.verified { color: #147153; }
+.verification-badge.changed, .verification-warning { color: #995000; }
+.verification-warning { display: block; margin-top: .3rem; font-weight: 600; font-size: .85rem; }
+.verification-workspace button { white-space: normal; max-width: 100%; min-height: 44px; }
+@media (max-width: 540px) {
+  .verification-controls, .verification-people li { grid-template-columns: minmax(0, 1fr); }
+  .verification-totals { display: grid; }
+  .verification-position-actions button { width: 100%; }
+}

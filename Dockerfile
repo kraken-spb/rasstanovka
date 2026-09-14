@@ -21,8 +21,11 @@ COPY tools/sync_gdlr_catalog.py ./tools/sync_gdlr_catalog.py
 COPY tools/promote_super_admin.py ./tools/promote_super_admin.py
 COPY seed.example.json ./seed.json
 COPY placement_report.py placement_report_pdf.py ./
+COPY position_cards.py position_cards_pdf.py ./
 COPY fonts ./fonts
 COPY telegram_api.py telegram_report_bot.py telegram_worker.py ./
+COPY placement_verification.py ./
+COPY filter_values.py ./
 COPY templates ./templates
 COPY static ./static
 

@@ -229,6 +229,8 @@ def init_db():
     migrate_smu_catalog(db)
     from telegram_api import migrate_telegram
     migrate_telegram(db)
+    from placement_verification import migrate_verification
+    migrate_verification(db)
     # Additive migration: existing assignments retain their date, owner and site.
     columns = {row["name"] for row in db.execute("PRAGMA table_info(assignments)")}
     if "crew_id" not in columns:
@@ -630,6 +632,10 @@ register_day_inheritance(app, get_db, roles_required, utc_now)
 register_personnel_dashboard(app, get_db, roles_required)
 register_user_activity(app, get_db, login_required, roles_required)
 register_staffing_export_route(app, get_db, roles_required)
+from position_cards import register_position_cards_route
+register_position_cards_route(app, get_db, roles_required)
+from placement_verification import register_verification
+register_verification(app, get_db, roles_required, utc_now)
 from placement_report import register_placement_report
 register_placement_report(app, get_db, roles_required)
 from telegram_api import register_telegram

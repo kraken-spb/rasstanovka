@@ -67,7 +67,7 @@
     move($('staffing-search')?.closest('label'), search);
     move($('staffing-unassigned')?.closest('label'), quick);
     move($('staffing-refresh'), quick);
-    for (const id of ['grouping', 'category', 'department', 'employer', 'pps', 'author', 'freshness', 'regex']) {
+    for (const id of ['grouping', 'category', 'department', 'employer', 'contractor', 'pps', 'author', 'freshness', 'regex']) {
       move($('staffing-' + id)?.closest('label'), filters.lastElementChild);
     }
     move($('staffing-reset-filters'), filters.lastElementChild);

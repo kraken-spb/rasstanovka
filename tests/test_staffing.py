@@ -108,6 +108,21 @@ class StaffingWorkflowTest(unittest.TestCase):
         with self.app.app_context():
             return apply_attendance(self.module.get_db(), self.parsed, self.admin_id, self.module.utc_now)
 
+    def test_summary_includes_canonical_contractor_before_expanding_crews(self):
+        self.apply()
+        with self.app.app_context():
+            db = self.module.get_db()
+            worker = db.execute("SELECT id FROM workers WHERE personnel_no='70001'").fetchone()[0]
+            contractor = db.execute("INSERT INTO contractors(name,name_key,edit_token,updated_at) VALUES ('Выбранный подрядчик','выбранный подрядчик','ct','now')").lastrowid
+            db.execute("UPDATE employee_contractors SET contractor_id=? WHERE worker_id=?", (contractor, worker))
+            db.execute("UPDATE workers SET contractor='Старое значение' WHERE id=?", (worker,))
+            db.commit()
+        summary = self.admin.get('/api/staffing?date=2026-09-12&shift=all&view=summary').get_json()
+        self.assertEqual(summary['rows'], [])
+        self.assertEqual(next(r for r in summary['index'] if r['id']==worker)['contractor'], 'Выбранный подрядчик')
+        detail = self.admin.get('/api/staffing?date=2026-09-12&shift=all').get_json()
+        self.assertEqual({r['id']:r['contractor'] for r in summary['index']}, {r['id']:r['contractor'] for r in detail['rows']})
+
     def test_manual_category_survives_import_and_reaches_staffing_search(self):
         self.apply()
         headers = {'X-CSRF-Token': 'staffing-csrf'}

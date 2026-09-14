@@ -5,15 +5,18 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Бригады и расстановка</title>
   <link rel="stylesheet" href="{{ asset_url('styles.css') }}">
+  <link rel="stylesheet" href="{{ asset_url('multi-filter.css') }}">
   <link rel="stylesheet" href="{{ asset_url('user-smu-access.css') }}">
   {% if user.role == 'super_admin' %}<link rel="stylesheet" href="{{ asset_url('backups.css') }}">{% endif %}
   <link rel="stylesheet" href="{{ asset_url('staffing-transfers.css') }}">
+  <link rel="stylesheet" href="{{ asset_url('staffing-top-compact.css') }}">
   {% if user.role in ('admin', 'super_admin') %}<link rel="stylesheet" href="{{ asset_url('employee-create.css') }}">{% endif %}
   {% if user.role in ('admin', 'super_admin') %}<link rel="stylesheet" href="{{ asset_url('crew-create.css') }}">{% endif %}
   <link rel="stylesheet" href="{{ asset_url('personnel-dashboard.css') }}">
   {% if user.role in ('admin', 'super_admin') %}<link rel="stylesheet" href="{{ asset_url('user-activity.css') }}">{% endif %}
   <link rel="stylesheet" href="{{ asset_url('report-date-summary.css') }}">
   <link rel="stylesheet" href="{{ asset_url('placement-report.css') }}">
+  <link rel="stylesheet" href="{{ asset_url('placement-verification.css') }}">
   <link rel="stylesheet" href="{{ asset_url('telegram-report.css') }}">
   <link rel="stylesheet" href="{{ asset_url('attendance-status.css') }}">
   <link rel="stylesheet" href="{{ asset_url('employee-removal.css') }}">
@@ -26,7 +29,7 @@
   <header class="topbar">
     <a class="brand" href="{{ '#dashboard' if user.role == 'viewer' else '#staffing' }}"><span class="brand-mark">Р</span><strong>Расстановка</strong></a>
     <nav class="desktop-nav" aria-label="Разделы">
-      {% if user.role != 'viewer' %}<button data-view="staffing">Расстановка</button>{% endif %}
+      {% if user.role != 'viewer' %}<button data-view="staffing">Расстановка</button><button data-view="verification">Верификация</button>{% endif %}
       {% if user.role != 'viewer' %}<button data-view="employees">Сотрудники</button><button data-view="outstaff">Аутстафф</button>{% endif %}
       <button data-view="dashboard">Сводная таблица</button>
       <button data-view="analytics">Дашборд</button>
@@ -89,6 +92,8 @@
     {% if user.role in ('admin', 'super_admin') %}
     {% endif %}
     <script id="staffing-preferences-data" type="application/json">{{ staffing_preferences | tojson }}</script>
+    <section id="view-verification" class="view" aria-label="Верификация"></section>
+
     <section id="view-staffing" class="view">
       <div class="page-heading">
         <div><h1>Расстановка персонала</h1><p id="staffing-source">Численность с листа «Явка»</p></div>
@@ -96,7 +101,6 @@
           <label>Дата<input type="date" id="staffing-date" value="{{ today }}" required></label>
           <label>Фильтр смен<select id="staffing-shift"><option value="">Все смены</option><option value="1 смена">День</option><option value="2 смена">Ночь</option><option value="none">Без смены</option></select></label>
         </div>
-      </div>
       <div class="staffing-transfers">
       {% if user.role in ('admin', 'super_admin') %}<button id="staffing-create-crew" type="button" class="secondary-button">+ Создать бригаду</button>{% endif %}
       {% if user.role in ('admin', 'super_admin') %}
@@ -133,6 +137,7 @@
         <p id="staffing-export-status" role="status" aria-live="polite"></p>
         </div>
       </details>
+      </div>
       </div>
       <div class="staffing-stats" id="staffing-stats" aria-live="polite"></div>
       <div id="staffing-calendar-filter" class="staffing-calendar-filter" hidden>
@@ -253,6 +258,7 @@
       <div class="segmented report-summary-modes" role="group" aria-label="Раздел сводной таблицы">
         <button type="button" data-summary-mode="week" aria-pressed="true">По дням</button>
         <button type="button" data-summary-mode="date" aria-pressed="false">На отчётную дату</button>
+        <button type="button" data-summary-mode="category" aria-pressed="false">По категориям ГДТЛР</button>
         <button type="button" data-summary-mode="placement" aria-pressed="false">Отчёт по расстановке</button>
       </div>
       <section id="placement-report" hidden aria-label="Отчёт по расстановке">
@@ -435,11 +441,12 @@
   </dialog>
   {% endif %}
   <nav class="mobile-nav" aria-label="Разделы на телефоне">
-    {% if user.role != 'viewer' %}<button data-view="staffing">Расстановка</button><button data-view="employees">Сотрудники</button><button data-view="outstaff">Аутстафф</button>{% endif %}<button data-view="dashboard">Сводка</button>
+    {% if user.role != 'viewer' %}<button data-view="staffing">Расстановка</button><button data-view="verification">Верификация</button><button data-view="employees">Сотрудники</button><button data-view="outstaff">Аутстафф</button>{% endif %}<button data-view="dashboard">Сводка</button>
     <button data-view="analytics">Дашборд</button>
     {% if user.role in ('admin', 'super_admin') %}<button data-view="plan">План</button><button data-view="catalogs">Справочники</button><button data-view="accounts">Управление</button><button data-view="logs">Логи</button>{% endif %}{% if user.role == 'super_admin' %}<button data-view="backups">Резервные копии</button>{% endif %}
   </nav>
   <div id="toast" class="toast" role="status"></div>
+  <script src="{{ asset_url('multi-filter.js') }}" defer></script>
   <script src="{{ asset_url('search-regex.js') }}" defer></script>
   <script src="{{ asset_url('reference-cache.js') }}" defer></script>
   {% if user.role in ('admin', 'super_admin') %}<script src="{{ asset_url('locations.js') }}" defer></script>{% endif %}
@@ -451,10 +458,13 @@
   <script src="{{ asset_url('staffing-columns.js') }}" defer></script>
   {% if user.role in ('admin', 'super_admin') %}<script src="{{ asset_url('crew-create.js') }}" defer></script>{% endif %}
   <script src="{{ asset_url('staffing.js') }}" defer></script>
+  <script src="{{ asset_url('position-cards.js') }}" defer></script>
   <script src="{{ asset_url('user-activity.js') }}" defer></script>
   <script src="{{ asset_url('personnel-dashboard.js') }}" defer></script>
   <script src="{{ asset_url('report-date-summary.js') }}" defer></script>
+  <script src="{{ asset_url('category-placement.js') }}" defer></script>
   <script src="{{ asset_url('placement-report.js') }}" defer></script>
+  <script src="{{ asset_url('placement-verification.js') }}" defer></script>
   <script src="{{ asset_url('telegram-report.js') }}" defer></script>
   <script src="{{ asset_url('attendance-summary.js') }}" defer></script>
   {% if user.role in ('admin', 'super_admin') %}<script src="{{ asset_url('catalogs.js') }}" defer></script>{% endif %}
@@ -462,6 +472,7 @@
   {% if user.role == 'super_admin' %}<script src="{{ asset_url('backups.js') }}" defer></script>{% endif %}
   {% if user.role in ('admin', 'super_admin') %}<script src="{{ asset_url('outstaff-import.js') }}" defer></script>{% endif %}
   <script src="{{ asset_url('app.js') }}" defer></script>
+  <script src="{{ asset_url('staffing-toolbar.js') }}" defer></script>
   <script src="{{ asset_url('mobile-placement.js') }}" defer></script>
 </body>
 </html>
