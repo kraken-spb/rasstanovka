@@ -1,0 +1,27 @@
+.staffing-attendance-control { display: flex; align-items: center; gap: .25rem; min-width: 0; }
+.staffing-attendance-control select { flex: 1 1 0; width: 0; min-width: 0; }
+.staffing-attendance-control button { flex: 0 0 auto; white-space: nowrap; }
+.staffing-attendance-select { width: 100%; min-width: 0; }
+.staffing-row-absent > td { background: #fff4df; }
+.staffing-row-absent > td:first-child { box-shadow: inset 3px 0 #c58217; }
+#dashboard-absences { margin-top: 20px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: white; }
+#dashboard-absences h2 { font-size: 1rem; margin: 0 0 8px; }
+.attendance-summary-table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: .8rem; }
+.attendance-summary-table th, .attendance-summary-table td { padding: 8px 4px; border-bottom: 1px solid var(--line); text-align: center; overflow-wrap: anywhere; }
+.attendance-summary-table th:first-child { width: 45%; text-align: left; }
+.attendance-summary-table thead { background: #eaf2f0; }
+.attendance-people { margin-top: 12px; }
+.attendance-people summary { cursor: pointer; }
+.attendance-people ul { list-style: none; padding: 0; }
+.attendance-people li { padding: 8px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.attendance-people small { display: block; color: var(--muted); margin-top: 4px; }
+.attendance-status-badge { display: inline-block; background: #fff0d2; color: #795111; padding: 2px 6px; border-radius: 4px; margin-left: 8px; }
+@media (min-width: 901px) {
+  .staffing-table thead th:nth-child(12) { width: 144px; }
+}
+@media (max-width: 640px) {
+  #dashboard-absences { padding: 8px; }
+  .attendance-summary-table { font-size: .7rem; }
+  .attendance-summary-table th:first-child { width: 34%; }
+  .attendance-summary-table thead th:not(:first-child) { padding-inline: 1px; white-space: nowrap; }
+}

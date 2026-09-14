@@ -1,0 +1,7 @@
+.employee-removal-dialog form { display: grid; gap: 14px; }
+.employee-removal-dialog h2, .employee-removal-dialog p { margin: 0; }
+.employee-removal-dialog label { display: grid; gap: 6px; min-width: 0; }
+.employee-removal-dialog textarea { width: 100%; min-height: 100px; resize: vertical; font: inherit; padding: 10px; border: 1px solid var(--line); border-radius: 6px; }
+.employee-removal-dialog .employee-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.employee-removal-dialog .employee-remove-submit { background: #a4322a; }
+.employee-removal-dialog .error-text:empty { display: none; }

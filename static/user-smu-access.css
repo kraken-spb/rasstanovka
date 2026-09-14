@@ -1,0 +1,14 @@
+#account-list .account-scope { grid-column: 1 / -1; grid-row: auto; min-width: 0; margin: 0; padding: .65rem; border: 1px solid var(--line); border-radius: .6rem; }
+#account-list .account-actions { grid-column: 3; grid-row: 1; }
+.account-scope legend { font-size: .85rem; font-weight: 600; padding: 0 .3rem; }
+.account-scope-modes { display: flex; flex-wrap: wrap; gap: .6rem 1.5rem; }
+.account-scope label { display: flex; align-items: flex-start; gap: .5rem; font-size: .85rem; min-width: 0; }
+.account-scope input[type=checkbox], .account-scope input[type=radio] { flex: 0 0 auto; width: 1rem; height: 1rem; min-height: 1rem; padding: 0; margin: .12rem 0 0; }
+.account-smu-list { margin: .7rem 0; }
+.account-smu-list summary { cursor: pointer; overflow-wrap: anywhere; }
+.account-smu-choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); gap: .6rem 1rem; padding: .6rem 0; max-height: 270px; overflow-y: auto; }
+.account-smu-choices span { overflow-wrap: anywhere; }
+.account-scope .save-status:empty { display: none; }
+.account-scope > button { margin-top: .6rem; }
+@media (max-width: 1200px) { #account-list .account-actions { grid-column: 2; grid-row: 2; } }
+@media (max-width: 760px) { #account-list .account-actions { grid-column: 1; grid-row: auto; } .account-scope-modes { flex-direction: column; } }

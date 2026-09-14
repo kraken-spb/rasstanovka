@@ -1,0 +1,18 @@
+.crew-create-dialog { overflow-y: auto; }
+#view-staffing .staffing-transfers { flex-wrap: wrap; }
+#view-staffing .staffing-transfers details:not([open]) .transfer-window { display: none; }
+#staffing-create-crew { max-width: 100%; }
+.crew-create-dialog h2 { margin: 0; font-size: 1.2rem; }
+.crew-create-dialog input, .crew-create-dialog select { width: 100%; min-width: 0; }
+.crew-create-members { margin: .5rem 0; padding-left: 1.3rem; max-height: 210px; overflow-y: auto; }
+.crew-create-members li { margin-bottom: .5rem; overflow-wrap: anywhere; }
+.crew-create-members span { display: block; color: var(--muted); font-size: .8rem; }
+.crew-create-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: .5rem; }
+.crew-create-actions button, #staffing-create-crew { white-space: normal; overflow-wrap: anywhere; }
+.crew-create-person-field { min-width: 0; }
+.crew-create-dialog .crew-create-manual input { width: auto; }
+.crew-create-dialog .crew-create-manual { margin-top: .4rem; flex-direction: row; align-items: center; gap: .5rem; }
+.crew-create-matches { max-height: 220px; overflow-y: auto; border: 1px solid var(--line, #d4dde4); border-radius: 8px; padding: .4rem; }
+.crew-create-person { display: block; width: 100%; text-align: left; white-space: normal; overflow-wrap: anywhere; padding: .65rem; margin-top: .3rem; }
+.crew-create-person small { display: block; font-weight: normal; margin-top: .2rem; }
+@media (max-width: 480px) { .crew-create-actions button { width: 100%; min-height: 44px; } }

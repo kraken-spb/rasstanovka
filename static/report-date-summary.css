@@ -1,0 +1,47 @@
+.report-summary-modes { margin-bottom: .8rem; max-width: 100%; }
+.report-date-control { display: grid; gap: .25rem; color: var(--muted); font-size: .8rem; font-weight: 600; }
+#dashboard-table.report-date-view { border: 0; border-radius: 0; background: transparent; max-height: none; overflow: visible; }
+.report-date-section { background: white; border: 1px solid var(--line); border-radius: 10px; padding: .7rem; margin-bottom: 1rem; }
+.report-date-section h2 { font-size: 1rem; margin: .25rem .3rem .8rem; }
+.report-date-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: .85rem; font-variant-numeric: tabular-nums; }
+.report-date-table th, .report-date-table td { padding: .5rem .6rem; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.report-date-table th:first-child { width: 61%; text-align: left; }
+.report-date-table td, .report-date-table thead th:not(:first-child) { width: 13%; text-align: center; }
+.report-date-table thead { background: #eaf2ef; }
+.report-date-table .report-total { background: var(--mint); font-weight: 700; }
+.report-date-table .report-object { background: #f1f6f3; font-weight: 700; }
+.report-date-table .report-site th { padding-left: 1.4rem; }
+.report-date-table .report-employer th { padding-left: 2.2rem; font-weight: 400; color: var(--muted); }
+.report-fact-link { border: 0; background: transparent; color: var(--teal); text-decoration: underline; width: 100%; min-height: 32px; padding: .2rem; font: inherit; }
+.report-object-toggle { border: 0; background: transparent; color: var(--ink); text-align: left; padding: 0; min-height: 32px; width: 100%; font: inherit; font-weight: 700; }
+.report-empty { margin: .5rem .3rem; color: var(--muted); }
+.report-matrix-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .6rem; }
+.report-matrix-toolbar a { white-space: normal; text-align: center; }
+.report-matrix-scroll { max-width: 100%; overflow: auto; }
+.report-date-table.report-matrix { table-layout: auto; width: 100%; }
+.report-matrix th, .report-matrix td { border: 1px solid #a5afb6; }
+.report-date-table.report-matrix thead th { background: #dae3f3; text-align: center; width: auto; min-width: 78px; }
+.report-date-table.report-matrix th:first-child { width: auto; }
+.report-date-table.report-matrix thead tr:first-child th:first-child,
+.report-date-table.report-matrix tbody th { min-width: 280px; width: 48%; text-align: left; }
+.report-date-table.report-matrix td { width: auto; min-width: 78px; }
+.report-matrix .report-company-total { background: #e2e2e2; font-weight: 600; }
+.report-matrix .report-object th, .report-matrix .report-object td { background: #e8eef8; font-weight: 700; }
+.report-matrix .report-total th, .report-matrix .report-total td { background: #0070c0; color: white; font-weight: 700; }
+.report-matrix .report-total .report-fact-link { color: white; }
+.report-matrix .report-site th { font-weight: 400; }
+@media (max-width: 650px) {
+  .report-summary-modes { display: flex; }
+  .report-summary-modes button { flex: 1; white-space: normal; padding-inline: .5rem; }
+  .report-date-section { padding: .4rem; }
+  .report-date-table { font-size: .75rem; }
+  .report-date-table th, .report-date-table td { padding: .35rem .2rem; }
+  .report-date-table th:first-child { width: 49%; }
+  .report-date-table td, .report-date-table thead th:not(:first-child) { width: 17%; }
+  .report-date-table .report-site th { padding-left: .7rem; }
+  .report-date-table .report-employer th { padding-left: 1.1rem; }
+  .report-fact-link, .report-object-toggle { min-height: 44px; }
+  .report-date-table.report-matrix thead tr:first-child th:first-child,
+  .report-date-table.report-matrix tbody th { min-width: 145px; }
+  .report-date-table.report-matrix td, .report-date-table.report-matrix thead th { min-width: 64px; }
+}

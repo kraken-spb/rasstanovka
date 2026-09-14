@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+data/
+.env
+.env.*
+.git/
+.ssh/
+backups/
+output/
+outputs/
+seed.json
+.playwright-cli/
+.inspect_workbook.py

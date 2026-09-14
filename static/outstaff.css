@@ -1,0 +1,55 @@
+#outstaff-import-dialog { width: min(1100px, calc(100vw - 24px)); max-width: calc(100vw - 24px); max-height: 90dvh; overflow-y: auto; padding: 1.2rem; border: 1px solid var(--line); border-radius: 12px; }
+#outstaff-import-dialog input, #outstaff-import-dialog select { max-width: 100%; min-width: 0; }
+#outstaff-import-dialog input[type=file] { display: block; width: 100%; }
+.outstaff-column-filters { margin-block: 1rem; }
+.outstaff-filter-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem; }
+#outstaff-filter-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .65rem; margin-block: .7rem; align-items: start; }
+.outstaff-filter { display: grid; min-width: 0; gap: .5rem; padding: .7rem; border: 1px solid var(--line); border-radius: 8px; overflow-wrap: anywhere; }
+.outstaff-filter.active { border-color: var(--primary, #177d79); background: #f2faf8; }
+.outstaff-filter > label, .outstaff-filter-options { display: grid; min-width: 0; gap: .4rem; }
+.outstaff-filter select, .outstaff-filter input:not([type=checkbox]) { width: 100%; }
+.outstaff-filter small { color: var(--muted); }
+.outstaff-filter-values { max-height: 180px; overflow-y: auto; display: grid; gap: .2rem; }
+.outstaff-filter-values label { display: flex; align-items: start; gap: .5rem; padding: .35rem; cursor: pointer; }
+.outstaff-filter-values input[type=checkbox] { flex-shrink: 0; margin-top: .2rem; }
+.outstaff-map { display: grid; grid-template-columns: 1fr 1fr; gap: .7rem; padding-block: .6rem; border-bottom: 1px solid var(--line); }
+.outstaff-map small, .outstaff-preview-row small { display: block; color: var(--muted); }
+#outstaff-mapping details { margin-block: 1rem; }
+.outstaff-preview-row { border: 1px solid var(--line); border-radius: 8px; padding: .7rem; margin-block: .5rem; overflow-wrap: anywhere; }
+.outstaff-preview-row p { margin-block: .35rem; }
+#outstaff-preview-list { margin-top: 1rem; }
+#view-outstaff .employees-table { table-layout: fixed; width: 100%; }
+#view-outstaff .employees-table th { width: 12.5%; }
+#view-outstaff .employees-table th:nth-child(1), #view-outstaff .employees-table th:nth-child(2), #view-outstaff .employees-table th:nth-child(3) { width: 15%; }
+#view-outstaff .employees-table th:nth-child(4), #view-outstaff .employees-table th:nth-child(5), #view-outstaff .employees-table th:nth-child(6), #view-outstaff .employees-table th:nth-child(7) { width: 10%; }
+#view-outstaff .employees-table th:nth-child(8) { width: 15%; }
+#view-outstaff .employees-table td { overflow-wrap: anywhere; }
+#view-outstaff .employees-table select { max-width: 100%; }
+#view-outstaff .employees-report-controls { flex-wrap: wrap; }
+@media (min-width: 901px) {
+  body:has(#view-outstaff.active) .app-shell { width: calc(100% - 24px); }
+  #view-outstaff h1 { font-size: 1.35rem; }
+  #view-outstaff .page-heading { margin-bottom: .5rem; }
+  #view-outstaff .table-note { font-size: .72rem; margin: .25rem 0; }
+  #view-outstaff input, #view-outstaff select, #view-outstaff button { font-size: .75rem; }
+  #outstaff-list { min-width: 0; overflow: auto; }
+}
+@media (max-width: 900px) {
+  .mobile-nav { grid-auto-flow: row; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .mobile-nav:has(button:nth-child(9)) { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  body:has(.mobile-nav button:nth-child(5)) .app-shell { padding-bottom: 150px; }
+  body:has(.mobile-nav button:nth-child(9)) .app-shell { padding-bottom: 200px; }
+}
+@media (max-width: 640px) {
+  #outstaff-filter-list, .outstaff-map { grid-template-columns: minmax(0, 1fr); }
+  #outstaff-import-dialog { padding: .7rem; }
+  #outstaff-import-dialog .dialog-heading h2 { font-size: 1.2rem; }
+  #outstaff-import-dialog button { max-width: 100%; white-space: normal; }
+}
+
+/* Match the employee grid while keeping import controls independent. */
+#view-outstaff .employees-table.employees-grid th:nth-child(n) { width: auto; }
+@media (min-width: 901px) {
+  #view-outstaff .employees-stats > div { padding: 0; }
+  #view-outstaff .employees-toolbar { padding: .4rem 0; }
+}

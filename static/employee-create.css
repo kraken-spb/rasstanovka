@@ -1,0 +1,13 @@
+#employees-create { margin-top: .65rem; max-width: 100%; white-space: normal; }
+.employee-create-dialog { overflow-y: auto; }
+.employee-create-dialog h2 { margin: 0; font-size: 1.2rem; }
+.employee-create-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .8rem; }
+.employee-create-dialog input, .employee-create-dialog select { width: 100%; min-width: 0; }
+.employee-create-dialog .employee-create-check { flex-direction: row; align-items: center; gap: .5rem; }
+.employee-create-dialog input[type=checkbox] { width: 20px; height: 20px; }
+.employee-create-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: .5rem; }
+.employee-create-actions button { white-space: normal; }
+@media (max-width: 480px) {
+  .employee-create-grid { grid-template-columns: minmax(0, 1fr); }
+  .employee-create-actions button { width: 100%; min-height: 44px; }
+}

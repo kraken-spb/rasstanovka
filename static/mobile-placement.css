@@ -1,0 +1,92 @@
+.staffing-location-open, .mobile-group-more { display: none; }
+.mobile-navigation-dialog, .mobile-location-dialog { box-sizing: border-box; }
+.mobile-dialog-heading { display: flex; align-items: center; justify-content: space-between; gap: .7rem; }
+.mobile-dialog-heading h2 { margin: 0; font-size: 1.2rem; }
+.mobile-dialog-heading button { flex: none; }
+.mobile-location-worker { margin: .3rem 0; font-weight: 600; overflow-wrap: anywhere; }
+.mobile-location-results { display: grid; gap: .5rem; overflow: auto; min-height: 0; overscroll-behavior: contain; }
+.mobile-location-option { width: 100%; text-align: left; white-space: normal; overflow-wrap: anywhere; padding: .8rem; line-height: 1.4; border: 1px solid var(--line); border-radius: 10px; background: #fff; color: var(--ink); }
+.mobile-location-option:hover, .mobile-location-option:focus-visible { border-color: var(--teal); background: var(--mint); }
+.mobile-location-option small { display: block; color: var(--muted); margin-top: .25rem; }
+.mobile-location-dialog[open] { display: flex; flex-direction: column; gap: .6rem; width: min(640px, calc(100% - 24px)); max-height: calc(100dvh - 24px); padding: 1rem; }
+.mobile-location-dialog > :not(.mobile-location-results) { flex-shrink: 0; }
+.mobile-location-dialog .table-note { margin: 0; }
+.mobile-navigation-items { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .6rem; margin-top: 1rem; }
+.mobile-navigation-items button { min-height: 48px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; }
+.mobile-navigation-items button.active { background: var(--mint); color: var(--teal); }
+@media (max-width: 900px) {
+  body.mobile-enhanced { --mobile-nav-height: calc(64px + env(safe-area-inset-bottom)); }
+  body.mobile-enhanced .app-shell { padding-bottom: calc(var(--mobile-nav-height) + 16px); }
+  body.mobile-enhanced.mobile-has-selection .app-shell { padding-bottom: calc(var(--mobile-nav-height) + 84px); }
+  body.mobile-enhanced .mobile-nav { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); grid-template-columns: none; min-height: var(--mobile-nav-height); box-sizing: border-box; padding: .35rem .35rem calc(.35rem + env(safe-area-inset-bottom)); background: #fff; }
+  body.mobile-enhanced .mobile-nav button { font-size: .75rem; min-height: 48px; overflow-wrap: normal; padding: .3rem .15rem; }
+  body.mobile-enhanced .toast { bottom: calc(var(--mobile-nav-height) + 8px); }
+  body.mobile-enhanced.mobile-has-selection .toast { bottom: calc(var(--mobile-nav-height) + 72px); }
+  .mobile-enhanced input:not([type=checkbox]):not([type=radio]), .mobile-enhanced select, .mobile-enhanced textarea { font-size: 16px; }
+  .mobile-enhanced button, .mobile-enhanced summary, .mobile-enhanced select, .mobile-enhanced input:not([type=checkbox]):not([type=radio]) { min-height: 44px; }
+  .mobile-enhanced input[type=checkbox] { width: 22px; height: 22px; }
+  .mobile-enhanced .check-label { min-height: 44px; }
+  .mobile-enhanced #view-staffing .page-heading { flex-direction: column; align-items: stretch; gap: .5rem; margin-bottom: .5rem; }
+  .mobile-enhanced #view-staffing h1 { font-size: 1.25rem; margin-bottom: .25rem; }
+  .mobile-enhanced #staffing-source { font-size: .75rem; margin: .2rem 0; max-height: 2.6em; overflow: hidden; overflow-wrap: anywhere; }
+  .mobile-enhanced #view-staffing .period-controls { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); width: 100%; gap: .5rem; }
+  .mobile-enhanced #view-staffing .period-controls > label { min-width: 0; }
+  .mobile-enhanced #view-staffing .period-controls input, .mobile-enhanced #view-staffing .period-controls select { width: 100%; min-width: 0; }
+  .mobile-enhanced .staffing-stats { margin: .5rem 0; display: flex; gap: .7rem; justify-content: space-between; }
+  .mobile-staffing-search { margin: .5rem 0; }
+  .mobile-staffing-search label { display: grid; gap: .25rem; font-size: .8rem; }
+  .mobile-staffing-search input { width: 100%; }
+  .mobile-staffing-quick { display: flex; justify-content: space-between; align-items: center; gap: .5rem; }
+  .mobile-staffing-quick .check-label { font-size: .85rem; }
+  .mobile-disclosure { border: 1px solid var(--line); border-radius: 10px; margin: .5rem 0; background: white; }
+  .mobile-disclosure summary { padding: .6rem .75rem; font-weight: 600; cursor: pointer; }
+  .mobile-panel-content { display: grid; gap: .7rem; padding: .75rem; }
+  .mobile-panel-content label:not(.check-label) { display: grid; gap: .3rem; font-size: .85rem; }
+  .mobile-panel-content select, .mobile-panel-content input:not([type=checkbox]) { width: 100%; min-width: 0; }
+  #mobile-staffing-tools .mobile-panel-content { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  #mobile-staffing-tools .staffing-transfers { grid-column: 1 / -1; margin: 0; }
+  #mobile-staffing-tools .staffing-transfers > * { flex: 1; }
+  .mobile-enhanced .staffing-toolbar:empty { display: none; }
+  .mobile-enhanced #staffing-preferences-status:empty { display: none; }
+  .mobile-enhanced #staffing-status { font-size: .8rem; line-height: 1.35; margin: .5rem 0; }
+  .mobile-selection-dock { position: fixed; left: 8px; right: 8px; bottom: calc(var(--mobile-nav-height) + 6px); z-index: 12; border: 1px solid var(--teal); border-radius: 12px; background: #fff; box-shadow: 0 -3px 18px #17313a22; max-height: 65dvh; overflow: auto; }
+  .mobile-selection-dock[hidden] { display: none; }
+  .mobile-selection-dock summary { min-height: 48px; box-sizing: border-box; padding: .8rem; background: var(--teal); color: white; cursor: pointer; font-weight: 600; }
+  .mobile-selection-dock .mobile-panel-content { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .mobile-selection-dock .table-note { grid-column: 1 / -1; margin: 0; }
+  .mobile-selection-dock button { font-size: .85rem; white-space: normal; }
+  .mobile-enhanced .staffing-group-content { gap: .25rem .5rem; }
+  .mobile-enhanced .staffing-group-content > .check-label { flex: 0 0 auto; }
+  .mobile-enhanced .staffing-group-toggle { flex: 1 1 180px; text-align: left; line-height: 1.35; min-width: 0; }
+  .mobile-enhanced .staffing-group-content > [data-crew-count] { flex-basis: 100%; font-size: .8rem; }
+  .mobile-enhanced .staffing-group-content > button.text-button { font-size: .8rem; }
+  .mobile-enhanced .staffing-crew-assignment:not(.mobile-group-selected), .mobile-enhanced .staffing-crew-actions-row:not(.mobile-group-selected) { display: none; }
+  .mobile-enhanced .staffing-worker-row:not(.show-all) > [data-column-start="6"], .mobile-enhanced .staffing-worker-row:not(.show-all) > [data-column-start="9"] { display: none; }
+  .mobile-enhanced .staffing-worker-row > [data-column-start="1"], .mobile-enhanced .staffing-worker-row > [data-column-start="2"] { grid-template-columns: minmax(0, 1fr); gap: .25rem; }
+  .mobile-enhanced .staffing-worker-row > [data-column-start="1"]::before { content: 'Место работы'; }
+  .mobile-enhanced .staffing-worker-row > [data-column-start="1"] > *, .mobile-enhanced .staffing-worker-row > [data-column-start="2"] > * { grid-column: 1; }
+  .mobile-enhanced .staffing-location-open { display: block; width: 100%; color: var(--teal); border-color: var(--teal); font-weight: 600; }
+  .mobile-enhanced .staffing-worker-row:not(.show-all) .staffing-object-select { display: none; }
+  .mobile-enhanced .staffing-selected-label { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: .75rem; }
+  .mobile-enhanced .staffing-worker-row { scroll-margin-block: 12px calc(var(--mobile-nav-height) + 74px); }
+  .mobile-enhanced .staffing-table tbody { scroll-margin-top: 12px; }
+  .mobile-enhanced .staffing-more { margin-left: auto; }
+  .mobile-enhanced .staffing-name strong { line-height: 1.35; }
+  .mobile-keyboard .mobile-nav, .mobile-keyboard .mobile-selection-dock { display: none !important; }
+  .mobile-navigation-dialog { width: calc(100% - 24px); max-width: 480px; max-height: calc(100dvh - 24px); padding: 1rem; }
+  .mobile-location-dialog { border-radius: 14px; }
+  .mobile-location-dialog input { font-size: 16px; }
+}
+
+@media (max-width: 900px) {
+  .mobile-enhanced tbody:has(> .mobile-group-selected) .staffing-crew-actions-row { display: flex; }
+}
+
+@media (max-width: 900px) {
+  .mobile-enhanced .staffing-group-content > button.text-button:disabled { display: none; }
+  .mobile-enhanced .mobile-group-more { display: block; margin-top: .35rem; }
+  .mobile-enhanced .staffing-crew-assignment:not(.mobile-group-expanded) > :is([data-column-start="3"], [data-column-start="4"], [data-column-start="7"], [data-column-start="8"], [data-column-start="9"], [data-column-start="11"], [data-column-start="12"], [data-column-start="13"]) { display: none; }
+  .mobile-enhanced .staffing-crew-assignment:not(.mobile-group-expanded) .staffing-crew-object { display: none; }
+  .mobile-enhanced .staffing-crew-assignment > [data-column-start="1"] { display: block; }
+  .mobile-enhanced .staffing-crew-assignment > [data-column-start="1"]::before { content: 'Место работы выбранных'; display: block; margin-bottom: .3rem; }
+}

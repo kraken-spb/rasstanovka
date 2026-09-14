@@ -1,0 +1,36 @@
+.placement-report-filters {display:flex;flex-wrap:wrap;gap:.75rem;align-items:end;margin:1rem 0;}
+.placement-report-filters label {display:flex;flex:1 1 180px;flex-direction:column;gap:.3rem;min-width:0;}
+.placement-report-filters select {max-width:100%;}
+.placement-report-filters .placement-report-pdf-details {flex-direction:row;align-items:center;flex-basis:100%;min-height:36px;}
+.placement-report-totals {display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.75rem;margin:1rem 0;}
+.placement-report-stat {display:flex;flex-direction:column;justify-content:space-between;background:white;border:1px solid var(--line);border-radius:12px;padding:1rem;}
+.placement-report-stat strong {font-size:1.8rem;}
+.placement-report-stat.assigned {border-top:3px solid var(--teal);}
+.placement-report-stat.unassigned {border-top:3px solid #b76516;}
+.placement-report-stat.absent {border-top:3px solid #7b6c94;}
+.placement-report-pps {margin-top:1.5rem;}
+.placement-report-pps > h2 {margin-bottom:.65rem;}
+.placement-report-category {border:1px solid var(--line);border-radius:10px;overflow:hidden;margin:.65rem 0;background:white;}
+.placement-report-category h3 {display:flex;flex-wrap:wrap;gap:.5rem;justify-content:space-between;font-size:1rem;margin:0;padding:.75rem 1rem;background:var(--mint);overflow-wrap:anywhere;}
+.placement-report-category h3 span {font-weight:400;white-space:nowrap;}
+.placement-report-line summary {display:flex;gap:1rem;align-items:center;cursor:pointer;min-height:46px;padding:.55rem 1rem;border-top:1px solid var(--line);}
+.placement-report-line summary::before {content:'›';font-size:1.25rem;}
+.placement-report-line[open] summary::before {transform:rotate(90deg);}
+.placement-report-line summary strong {margin-left:auto;font-variant-numeric:tabular-nums;}
+.placement-report-line.absent summary {background:#f4f1f8;}
+.placement-report-line.unassigned summary {background:#fff8ef;}
+.placement-report-people {list-style:none;margin:0;padding:0 1rem;}
+.placement-report-people li {display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:1rem;padding:.75rem 0;border-top:1px solid var(--line);overflow-wrap:anywhere;}
+.placement-report-people small {display:block;margin-top:.2rem;}
+.placement-report-absence {color:#68517f;font-weight:600;}
+.placement-report-empty {padding:.75rem 1rem;}
+#placement-report-note {line-height:1.5;}
+.placement-report-method summary {cursor:pointer;min-height:44px;display:flex;align-items:center;color:var(--muted);}
+@media (max-width:640px) {
+  .placement-report-totals {grid-template-columns:repeat(2,minmax(0,1fr));gap:.5rem;}
+  .placement-report-stat {padding:.75rem;font-size:.85rem;}
+  .placement-report-filters {align-items:stretch;}
+  .placement-report-filters label,.placement-report-filters button {flex-basis:100%;width:100%;}
+  .placement-report-people li {grid-template-columns:minmax(0,1fr);gap:.35rem;}
+  .placement-report-category h3,.placement-report-line summary {padding:.65rem .75rem;}
+}
