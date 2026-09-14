@@ -16,6 +16,7 @@ def migrate_smu_catalog(db):
         CREATE TABLE IF NOT EXISTS smu_catalog (
             id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE,
             active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
+            site_chief_user_id INTEGER REFERENCES users(id),
             edit_token TEXT NOT NULL DEFAULT (lower(hex(randomblob(16)))),
             updated_by INTEGER REFERENCES users(id), updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
@@ -29,6 +30,14 @@ def migrate_smu_catalog(db):
         CREATE INDEX IF NOT EXISTS idx_employee_smu_catalog ON employee_smu(smu_id);
         CREATE INDEX IF NOT EXISTS idx_smu_aliases_catalog ON smu_aliases(smu_id);
     ''')
+    if 'site_chief_user_id' not in {r[1] for r in db.execute('PRAGMA table_info(smu_catalog)')}:
+        with db:
+            db.execute('BEGIN IMMEDIATE')
+            # Another application process can finish the migration while we wait.
+            if 'site_chief_user_id' not in {r[1] for r in db.execute('PRAGMA table_info(smu_catalog)')}:
+                from backup_api import create_backup
+                create_backup(db, reason='smu-site-chief-migration')
+                db.execute('ALTER TABLE smu_catalog ADD COLUMN site_chief_user_id INTEGER REFERENCES users(id)')
     # Both imports and manual employee creation already write workers.department.
     # Resolve only exact aliases; preserve the source when a canonical name changes.
     body = '''
@@ -86,6 +95,19 @@ def register_smu_routes(app, get_db, roles_required, utc_now):
         if not actor or not actor['active'] or actor['role'] != 'super_admin':
             abort(403, description='Справочник изменяет только супер-администратор.')
 
+    def chief_value(db, data, current=None):
+        if 'site_chief_user_id' not in data:
+            return current
+        value = data['site_chief_user_id']
+        if value is None:
+            return None
+        if type(value) is not int or value <= 0:
+            abort(400, description='Выберите ответственное лицо из пользователей приложения.')
+        user = db.execute('SELECT active FROM users WHERE id=?', (value,)).fetchone()
+        if not user or (not user['active'] and value != current):
+            abort(400, description='Для назначения выберите действующего пользователя приложения.')
+        return value
+
     def checked_row(db, smu_id, data):
         check_actor(db)
         row = db.execute('SELECT * FROM smu_catalog WHERE id=?', (smu_id,)).fetchone()
@@ -98,21 +120,30 @@ def register_smu_routes(app, get_db, roles_required, utc_now):
     @app.get('/api/smu')
     @roles_required('admin', 'foreman')
     def list_smu():
-        return jsonify({'rows': [dict(r) for r in get_db().execute('''
-            SELECT c.*,COUNT(e.worker_id) employee_count FROM smu_catalog c
-            LEFT JOIN employee_smu e ON e.smu_id=c.id GROUP BY c.id ORDER BY c.name''')]})
+        db = get_db()
+        rows = [dict(r) for r in db.execute('''
+            SELECT c.*,u.full_name site_chief_name,u.active site_chief_active,
+                   COUNT(e.worker_id) employee_count FROM smu_catalog c
+            LEFT JOIN users u ON u.id=c.site_chief_user_id
+            LEFT JOIN employee_smu e ON e.smu_id=c.id GROUP BY c.id ORDER BY c.name''')]
+        options = [dict(r) for r in db.execute('''SELECT id,full_name,username FROM users
+            WHERE active=1 ORDER BY full_name,username,id''')] if g.user['role'] == 'super_admin' else []
+        return jsonify({'rows': rows, 'chief_options': options})
 
     @app.post('/api/smu')
     @roles_required('super_admin')
     def create_smu():
-        name = name_value(payload())
+        data = payload()
+        name = name_value(data)
         db = get_db()
         try:
             with db:
                 db.execute('BEGIN IMMEDIATE')
                 check_actor(db)
-                smu_id = db.execute('INSERT INTO smu_catalog(name,updated_by,updated_at) VALUES (?,?,?)',
-                                    (name, g.user['id'], utc_now())).lastrowid
+                chief_id = chief_value(db, data)
+                smu_id = db.execute('''INSERT INTO smu_catalog
+                    (name,site_chief_user_id,updated_by,updated_at) VALUES (?,?,?,?)''',
+                    (name, chief_id, g.user['id'], utc_now())).lastrowid
                 db.execute('INSERT INTO smu_aliases VALUES (?,?)', (name, smu_id))
         except sqlite3.IntegrityError:
             abort(409, description='Такое название СМУ уже есть или сохранено как прежнее название.')
@@ -132,6 +163,7 @@ def register_smu_routes(app, get_db, roles_required, utc_now):
             with db:
                 db.execute('BEGIN IMMEDIATE')
                 old = checked_row(db, smu_id, data)
+                chief_id = chief_value(db, data, old['site_chief_user_id'])
                 alias = db.execute('SELECT smu_id FROM smu_aliases WHERE name=?', (name,)).fetchone()
                 if alias and alias[0] != smu_id:
                     abort(409, description='Такое название уже связано с другим СМУ.')
@@ -142,8 +174,9 @@ def register_smu_routes(app, get_db, roles_required, utc_now):
                     users = db.execute('SELECT u.* FROM users u JOIN user_smu_access a ON a.user_id=u.id').fetchall()
                     rights = {u['id']: allowed_workers(db, ids, u) for u in users}
                     views = {u['id']: access_view(db, u) for u in users}
-                db.execute('UPDATE smu_catalog SET name=?,active=?,edit_token=?,updated_by=?,updated_at=? WHERE id=?',
-                           (name, data['active'], secrets.token_hex(16), g.user['id'], stamp, smu_id))
+                db.execute('''UPDATE smu_catalog SET name=?,active=?,site_chief_user_id=?,
+                    edit_token=?,updated_by=?,updated_at=? WHERE id=?''',
+                    (name, data['active'], chief_id, secrets.token_hex(16), g.user['id'], stamp, smu_id))
                 db.execute('INSERT INTO smu_aliases VALUES (?,?) ON CONFLICT(name) DO NOTHING', (name, smu_id))
                 if name != old['name']:
                     db.execute('UPDATE workers SET department=? WHERE id IN (SELECT worker_id FROM employee_smu WHERE smu_id=?)',

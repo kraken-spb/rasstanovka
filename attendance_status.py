@@ -1,3 +1,4 @@
+from filter_values import argument as filter_argument, values as filter_values, matches as filter_matches, label as filter_label
 """Date-bound attendance, independent of retained workplace assignments."""
 from user_smu_access import can_worker, can_crew, require_workers, require_crew, allowed_workers, worker_clause, explicit_scope, legacy_foreman
 import secrets
@@ -31,8 +32,8 @@ def calendar_absences(db, start, end, category):
     params = [start, end]
     category_filter = ''
     if category is not None:
-        category_filter = " AND COALESCE(gc.name,w.category,'')=?"
-        params.append(category)
+        category_filter = " AND COALESCE(gc.name,w.category,'') IN (" + ','.join('?' for _ in filter_values(category)) + ')'
+        params.extend(filter_values(category))
     # One person per date, including people without a workplace assignment.
     return [dict(row) for row in db.execute("""SELECT t.work_date,t.worker_id,t.status,
         w.full_name,w.personnel_no,w.employer,c.name crew_name,

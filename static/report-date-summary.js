@@ -1,7 +1,7 @@
 (() => {
   'use strict';
   const normalize = value => String(value || '').toLocaleLowerCase('ru').replace(/ё/g, 'е');
-  const sort = (a, b) => a.name.localeCompare(b.name, 'ru', {numeric: true});
+  const sort = (a, b) => (a.contractor || '').localeCompare(b.contractor || '', 'ru') || a.name.localeCompare(b.name, 'ru', {numeric: true});
   const sum = (target, fact) => { target.day += fact.day_count; target.night += fact.night_count; };
   const total = name => ({name, day: 0, night: 0, sites: new Set()});
   function build({data, objects, subobjects, query = ''}) {
@@ -18,9 +18,10 @@
       const group = groups.get(object.id);
       if (!group.subobjects.has(sub.id)) group.subobjects.set(sub.id, {...total(sub.name), id: sub.id, employers: new Map()});
       const site = group.subobjects.get(sub.id);
-      if (!site.employers.has(fact.employer)) site.employers.set(fact.employer, total(fact.employer));
-      if (!employers.has(fact.employer)) employers.set(fact.employer, total(fact.employer));
-      for (const target of [overall, group, site, site.employers.get(fact.employer), employers.get(fact.employer)]) {
+      const key = JSON.stringify([fact.contractor, fact.employer]);
+      if (!site.employers.has(key)) site.employers.set(key, {...total(fact.employer), key, contractor: fact.contractor});
+      if (!employers.has(key)) employers.set(key, {...total(fact.employer), key, contractor: fact.contractor});
+      for (const target of [overall, group, site, site.employers.get(key), employers.get(key)]) {
         sum(target, fact); target.sites.add(sub.id);
       }
     }
@@ -42,7 +43,7 @@
     };
     const companies = report.employers.map(item => ({...item, shifts: [
       ...(item.day ? ['day'] : []), ...(item.night ? ['night'] : []), 'count']}));
-    const labels = {day: '1 смена', night: '2 смена', count: 'ИТОГО'};
+    const labels = {day: 'День', night: 'Ночь', count: 'Всего'};
     const section = element('section', null, 'report-date-section');
     const toolbar = element('div', null, 'report-matrix-toolbar');
     toolbar.append(element('h2', 'Расстановка на ' + day.split('-').reverse().join('.')));
@@ -57,38 +58,41 @@
     const scroller = element('div', null, 'report-matrix-scroll');
     scroller.tabIndex = 0; scroller.setAttribute('role', 'region'); scroller.setAttribute('aria-label', 'Сводная по позициям, компаниям и сменам');
     const table = element('table', null, 'report-date-table report-matrix');
-    const head = element('thead'), main = element('tr'), shifts = element('tr');
-    const position = element('th', 'Позиция'); position.rowSpan = 2; position.scope = 'col'; main.append(position);
+    const head = element('thead'), contractors = element('tr'), main = element('tr'), shifts = element('tr');
+    const position = element('th', 'Позиция'); position.rowSpan = 3; position.scope = 'col'; contractors.append(position);
+    const contractorSpans = new Map();
+    companies.forEach(company => contractorSpans.set(company.contractor, (contractorSpans.get(company.contractor) || 0) + company.shifts.length));
+    contractorSpans.forEach((span, name) => { const th = element('th', name || 'Подрядчик не указан'); th.colSpan = span; th.scope = 'colgroup'; contractors.append(th); });
     companies.forEach(company => {
       const th = element('th', company.name || 'Организация не указана');
       th.colSpan = company.shifts.length; th.scope = 'colgroup'; main.append(th);
       company.shifts.forEach(shift => { const cell = element('th', labels[shift], shift === 'count' ? 'report-company-total' : ''); cell.scope = 'col'; shifts.append(cell); });
     });
-    const overallHead = element('th', 'Общий итог'); overallHead.rowSpan = 2; overallHead.scope = 'col'; main.append(overallHead);
-    head.append(main, shifts); table.append(head);
+    const overallHead = element('th', 'Общий итог'); overallHead.rowSpan = 3; overallHead.scope = 'col'; contractors.append(overallHead);
+    head.append(contractors, main, shifts); table.append(head);
     const body = element('tbody');
     function row(item, items, level) {
       const tr = element('tr', null, level), title = element('th', item.name); title.scope = 'row'; tr.append(title);
-      function cell(value, shift, employer, totalClass = '') {
+      function cell(value, shift, employer, totalClass = '', contractor) {
         const td = element('td', null, totalClass);
         if (value && canDrill) {
           const button = element('button', String(value), 'report-fact-link'); button.type = 'button';
           button.setAttribute('aria-label', item.name + ', ' + (employer || 'Все компании') + ', ' + (labels[shift] || 'Общий итог') + ': ' + value + ' чел.');
           button.addEventListener('click', () => openStaffing({sites: item.sites, date: day,
-            shift: shift === 'day' ? '1 смена' : shift === 'night' ? '2 смена' : '', label: item.name, employer, category}));
+            shift: shift === 'day' ? '1 смена' : shift === 'night' ? '2 смена' : '', label: item.name, employer, category, contractor}));
           td.append(button);
         } else td.textContent = value ? String(value) : '';
         tr.append(td);
       }
-      const byCompany = new Map(items.map(company => [company.name, company]));
-      companies.forEach(company => company.shifts.forEach(shift => cell(byCompany.get(company.name)?.[shift] || 0, shift, company.name, shift === 'count' ? 'report-company-total' : '')));
+      const byCompany = new Map(items.map(company => [company.key, company]));
+      companies.forEach(company => company.shifts.forEach(shift => cell(byCompany.get(company.key)?.[shift] || 0, shift, company.name, shift === 'count' ? 'report-company-total' : '', company.contractor)));
       cell(item.count, 'count', undefined, 'report-grand-total'); body.append(tr);
     }
     report.objects.forEach(object => {
       const totals = new Map();
       object.subobjects.forEach(site => site.employers.forEach(company => {
-        if (!totals.has(company.name)) totals.set(company.name, {name: company.name, day: 0, night: 0, count: 0});
-        const target = totals.get(company.name); target.day += company.day; target.night += company.night; target.count += company.count;
+        if (!totals.has(company.key)) totals.set(company.key, {key: company.key, name: company.name, contractor: company.contractor, day: 0, night: 0, count: 0});
+        const target = totals.get(company.key); target.day += company.day; target.night += company.night; target.count += company.count;
       }));
       row(object, [...totals.values()], 'report-object');
       object.subobjects.forEach(site => row(site, site.employers, 'report-site'));

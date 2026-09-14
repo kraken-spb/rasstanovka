@@ -1,8 +1,8 @@
 .report-summary-modes { margin-bottom: .8rem; max-width: 100%; }
 .report-date-control { display: grid; gap: .25rem; color: var(--muted); font-size: .8rem; font-weight: 600; }
 #dashboard-table.report-date-view { border: 0; border-radius: 0; background: transparent; max-height: none; overflow: visible; }
-.report-date-section { background: white; border: 1px solid var(--line); border-radius: 10px; padding: .7rem; margin-bottom: 1rem; }
-.report-date-section h2 { font-size: 1rem; margin: .25rem .3rem .8rem; }
+.report-date-section { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 1rem; margin-bottom: 1rem; }
+.report-date-section h2 { font-size: 1.05rem; margin: 0; color: var(--ink); }
 .report-date-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: .85rem; font-variant-numeric: tabular-nums; }
 .report-date-table th, .report-date-table td { padding: .5rem .6rem; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
 .report-date-table th:first-child { width: 61%; text-align: left; }
@@ -16,24 +16,35 @@
 .report-object-toggle { border: 0; background: transparent; color: var(--ink); text-align: left; padding: 0; min-height: 32px; width: 100%; font: inherit; font-weight: 700; }
 .report-empty { margin: .5rem .3rem; color: var(--muted); }
 .report-matrix-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .6rem; }
-.report-matrix-toolbar a { white-space: normal; text-align: center; }
-.report-matrix-scroll { max-width: 100%; overflow: auto; }
-.report-date-table.report-matrix { table-layout: auto; width: 100%; }
-.report-matrix th, .report-matrix td { border: 1px solid #a5afb6; }
-.report-date-table.report-matrix thead th { background: #dae3f3; text-align: center; width: auto; min-width: 78px; }
+.report-matrix-toolbar a { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; color: var(--ink); text-decoration: none; white-space: normal; text-align: center; }
+.report-matrix-toolbar a:hover { background: var(--paper); border-color: var(--teal); }
+.report-matrix-scroll { max-width: 100%; overflow: auto; border: 1px solid var(--line); border-radius: 10px; scrollbar-width: thin; }
+.report-date-table.report-matrix { table-layout: auto; width: 100%; border-collapse: separate; border-spacing: 0; }
+.report-matrix th, .report-matrix td { border: 0; border-bottom: 1px solid var(--line); padding: .65rem .75rem; }
+.report-date-table.report-matrix thead th { background: var(--surface); color: var(--muted); text-align: center; width: auto; min-width: 78px; font-size: .78rem; font-weight: 500; }
+.report-date-table.report-matrix thead tr:first-child th { background: var(--mint); color: var(--navy); font-size: .85rem; font-weight: 600; padding-block: .8rem; }
+.report-date-table.report-matrix thead tr:nth-child(2) th { background: var(--paper); }
+.report-date-table.report-matrix thead th[colspan] { border-inline-end: 1px solid var(--line); }
 .report-date-table.report-matrix th:first-child { width: auto; }
 .report-date-table.report-matrix thead tr:first-child th:first-child,
 .report-date-table.report-matrix tbody th { min-width: 280px; width: 48%; text-align: left; }
 .report-date-table.report-matrix td { width: auto; min-width: 78px; }
-.report-matrix .report-company-total { background: #e2e2e2; font-weight: 600; }
-.report-matrix .report-object th, .report-matrix .report-object td { background: #e8eef8; font-weight: 700; }
-.report-matrix .report-total th, .report-matrix .report-total td { background: #0070c0; color: white; font-weight: 700; }
-.report-matrix .report-total .report-fact-link { color: white; }
-.report-matrix .report-site th { font-weight: 400; }
+.report-matrix .report-company-total { background: var(--paper); font-weight: 600; border-inline-end: 1px solid var(--line); }
+.report-matrix .report-grand-total { background: var(--paper); font-weight: 700; color: var(--navy); }
+.report-matrix .report-object th, .report-matrix .report-object td { background: var(--paper); font-weight: 600; color: var(--navy); }
+.report-matrix .report-object th { border-inline-start: 3px solid var(--teal); }
+.report-matrix .report-total th, .report-matrix .report-total td { background: var(--mint); color: var(--navy); font-weight: 700; border-top: 1px solid var(--line); border-bottom: 0; }
+.report-matrix .report-site th { font-weight: 400; color: var(--muted); }
+.report-matrix .report-site:hover th, .report-matrix .report-site:hover td { background: var(--paper); }
+.report-matrix .report-fact-link { color: var(--teal); text-decoration: none; border-radius: 6px; font-weight: inherit; transition: background-color .15s; }
+.report-matrix .report-fact-link:hover { background: var(--mint); text-decoration: underline; }
+.report-matrix .report-fact-link:focus-visible { outline: 2px solid var(--teal); outline-offset: -2px; }
+.report-date-section > .table-note { margin: .75rem 0; font-size: .78rem; }
+.report-date-section > .table-note:last-child { margin-bottom: 0; }
 @media (max-width: 650px) {
   .report-summary-modes { display: flex; }
   .report-summary-modes button { flex: 1; white-space: normal; padding-inline: .5rem; }
-  .report-date-section { padding: .4rem; }
+  .report-date-section { padding: .6rem; }
   .report-date-table { font-size: .75rem; }
   .report-date-table th, .report-date-table td { padding: .35rem .2rem; }
   .report-date-table th:first-child { width: 49%; }

@@ -1,3 +1,4 @@
+from filter_values import argument as filter_argument, values as filter_values, matches as filter_matches, label as filter_label
 """Flat attendance-backed placement, with crew defaults and row corrections."""
 import json
 import secrets
@@ -105,7 +106,7 @@ def register_staffing_routes(app, get_db, roles_required, utc_now):
                 abort(400, description='Выберите смену для перехода из сводной таблицы.')
         if 'calendar_category' in request.args and calendar_sites is None:
             abort(400, description='Категория доступна только при переходе из сводной таблицы.')
-        calendar_category = request.args.get('calendar_category') if calendar_sites is not None and 'calendar_category' in request.args else None
+        calendar_category = filter_argument('calendar_category') if calendar_sites is not None else None
         if calendar_category is not None and len(calendar_category) > 200:
             abort(400, description='Категория не должна превышать 200 символов.')
         has_outstaff = db.execute('SELECT 1 FROM outstaff_members LIMIT 1').fetchone() is not None
@@ -139,6 +140,11 @@ def register_staffing_routes(app, get_db, roles_required, utc_now):
                 match_params.append(calendar_shift)
             else:
                 match += " AND aa.shift IN ('1 смена','2 смена','Ночная смена')"
+            if 'calendar_contractor' in request.args:
+                if len(request.args['calendar_contractor']) > 200:
+                    abort(400, description='Название подрядчика слишком длинное.')
+                match += " AND COALESCE(ct.name,w.contractor,'')=?"
+                match_params.append(request.args['calendar_contractor'])
             if 'calendar_employer' in request.args:
                 match += ' AND (' + placement_company_sql('aa.employer') + ')=?'
                 match_params.append(request.args['calendar_employer'])
@@ -146,8 +152,8 @@ def register_staffing_routes(app, get_db, roles_required, utc_now):
             where = "a.id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM staffing_attendance att WHERE att.worker_id=w.id AND att.work_date=a.work_date AND att.status<>'Явка')"
             params = [batch['id'] if batch else None, *match_params]
             if calendar_category is not None:
-                where += " AND COALESCE(gc.name,w.category,'')=?"
-                params.append(calendar_category)
+                where += " AND COALESCE(gc.name,w.category,'') IN (" + ','.join('?' for _ in filter_values(calendar_category)) + ')'
+                params.extend(filter_values(calendar_category))
         access_clause, access_params = worker_clause(db)
         clause = ' AND (' + access_clause + ')'
         params.extend(access_params)
@@ -253,7 +259,7 @@ def register_staffing_routes(app, get_db, roles_required, utc_now):
             # Keep global filtering available without loading editable worker details.
             fields = ("full_name", "personnel_no", "profession", "category", "department", "employer", "pps",
                       "crew_name", "object_name", "subobject_name", "linear_itr_name", "brigadier_name")
-            index = [{**{key: row.get(key) for key in ("id", "crew_id", "number", "department", "employer", "category", "pps",
+            index = [{**{key: row.get(key) for key in ("id", "crew_id", "number", "department", "employer", "contractor", "category", "pps",
                        "assignment_id", "assignment_author", "attendance_status", "attendance_token", "employee_shift", "itr_group_key", "itr_group_label", "group_token", "freshness")},
                       "search_fields": [row.get(key) or "" for key in fields]} for row in result]
             return jsonify({"import": info, "crews": ordered, "rows": [], "index": index, **extra})

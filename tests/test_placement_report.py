@@ -87,6 +87,28 @@ class PlacementReportTest(unittest.TestCase):
         self.assertEqual(self.get(pps='',category='').get_json()['totals']['total'],1)
         self.assertEqual(self.get(pps='Не существует').get_json()['groups'],[])
 
+    def test_contractor_columns_use_catalog_and_preserve_totals_and_drill(self):
+        with self.module.app.app_context():
+            db = self.module.get_db()
+            db.execute("UPDATE workers SET contractor='Исходный подрядчик' WHERE id IN (?,?)", self.people[:2])
+            contractor = db.execute("INSERT INTO contractors(name,name_key,edit_token,updated_by,updated_at) VALUES ('Подрядчик А','подрядчик а','t',?,'now')", (self.admin,)).lastrowid
+            db.execute("INSERT INTO employee_contractors VALUES (?,?,'t',?,'now')", (self.people[0], contractor, self.admin))
+            self.assign(db, self.people[1], '1 смена')
+            db.commit()
+        data = self.get().get_json()
+        self.assertEqual(data['contractors'], ['', 'Исходный подрядчик', 'Подрядчик А'])
+        group = next(g for g in data['groups'] if g['pps'] == 'ППС15')
+        self.assertEqual(group['companies']['Подрядчик А']['assigned'], 1)
+        self.assertEqual(group['companies']['Исходный подрядчик']['assigned'], 1)
+        self.assertEqual(group['companies']['']['absent'], 1)
+        self.assertEqual(sum(c['total'] for g in data['groups'] for c in g['companies'].values()), data['totals']['total'])
+        calendar = self.client(self.admin).get('/api/calendar?start=2026-09-13&days=1').get_json()
+        self.assertEqual({f['contractor'] for f in calendar['facts']}, {'Подрядчик А', 'Исходный подрядчик'})
+        self.assertEqual(sum(f['day_count'] + f['night_count'] for f in calendar['facts']), 3)
+        drill = self.client(self.admin).get('/api/staffing', query_string={'date':'2026-09-13', 'shift':'all',
+            'calendar_sites':str(self.site), 'calendar_contractor':'Подрядчик А'}).get_json()
+        self.assertEqual([r['id'] for r in drill['rows']], [self.people[0]])
+
     def test_inactive_roster_excluded_but_historical_assignments_kept(self):
         with self.module.app.app_context():
             db = self.module.get_db()

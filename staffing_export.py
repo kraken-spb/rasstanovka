@@ -1,11 +1,12 @@
+from filter_values import argument as filter_argument, values as filter_values, matches as filter_matches, label as filter_label
 """XLSX export of the actual daily placement records."""
 import io
 import re
-from user_smu_access import explicit_scope, worker_clause
+from user_smu_access import worker_clause
 from datetime import date
 
 from flask import abort, g, request, send_file
-from contractor_api import placement_company_sql
+from report_queries import SHIFT_LABELS, assignment_rows, filter_assignment_rows
 from report_matrix import summary_sheet
 from staffing_import import active_members_sql
 from openpyxl import Workbook
@@ -19,7 +20,6 @@ HEADERS = [
     'Должность по штатному расписанию', 'Профессия ГСП', 'Категория ГДЛР',
     'ФИО линейного ИТР', 'ФИО бригадира', 'Смена', 'СМУ', 'Выполняемые операции',
 ]
-SHIFT_LABELS = {'1 смена': 'День', '2 смена': 'Ночь'}
 
 
 def _period():
@@ -30,50 +30,15 @@ def _period():
         day = date.fromisoformat(raw_day).isoformat()
     except ValueError:
         abort(400, description='Укажите существующую дату расстановки.')
-    shift = request.args.get('shift', '')
+    shift = filter_argument('shift', allowed={'all','1 смена','2 смена'})
+    if 'all' in filter_values(shift) or len(filter_values(shift))==2: shift='all'
     if shift not in {'all', '1 смена', '2 смена'}:
         abort(400, description='Выберите смену или все смены.')
     return day, shift
 
 def _rows(db, day, shifts):
-    access = ''
-    params = [day, *shifts]
-    if explicit_scope(db):
-        clause, scope_params = worker_clause(db)
-        access = ' AND (' + clause + ')'
-        params.extend(scope_params)
-    elif g.user['role'] == 'foreman':
-        access = ''' AND (a.foreman_user_id=? OR a.crew_id IN
-            (SELECT id FROM crews WHERE owner_user_id=?))'''
-        params.extend((g.user['id'], g.user['id']))
-    company_sql = placement_company_sql()
-    return db.execute(f'''
-        SELECT s.object_id, a.subobject_id, {company_sql} display_company,
-               NOT EXISTS (SELECT 1 FROM staffing_attendance att WHERE att.worker_id=a.worker_id
-                   AND att.work_date=a.work_date AND att.status<>'Явка') present, a.id, CASE WHEN a.shift='Ночная смена' THEN '2 смена' ELSE a.shift END normalized_shift,
-               o.name object_name, s.name subobject_name, a.employer assignment_employer,
-               w.full_name, w.personnel_no, COALESCE(ct.name,w.contractor) contractor, w.profession, w.gsp_profession,
-               w.department, pw.description performed_work,
-               COALESCE(gc.name, w.category) category,
-               d.linear_itr_override, d.brigadier_override,
-               c.linear_itr crew_linear_itr, c.brigadier crew_brigadier
-        FROM assignments a
-        JOIN workers w ON w.id=a.worker_id
-        JOIN subobjects s ON s.id=a.subobject_id
-        JOIN objects o ON o.id=s.object_id
-        LEFT JOIN employee_contractors ew ON ew.worker_id=w.id
-        LEFT JOIN contractors ct ON ct.id=ew.contractor_id
-        LEFT JOIN employee_gdlr eg ON eg.worker_id=w.id
-        LEFT JOIN gdlr_categories gc ON gc.id=eg.category_id
-        LEFT JOIN staffing_row_details d ON d.worker_id=w.id
-        LEFT JOIN crews c ON c.id=a.crew_id
-        LEFT JOIN staffing_performed_work pw ON pw.worker_id=a.worker_id AND pw.work_date=a.work_date
-            AND pw.shift=CASE WHEN a.shift='Ночная смена' THEN '2 смена' ELSE a.shift END
-        WHERE a.work_date=?
-          AND (CASE WHEN a.shift='Ночная смена' THEN '2 смена' ELSE a.shift END)
-              IN (''' + ','.join('?' for _ in shifts) + ')''' + access + '''
-        ORDER BY o.name COLLATE NOCASE, s.name COLLATE NOCASE, a.employer COLLATE NOCASE,
-                 w.full_name COLLATE NOCASE, w.personnel_no COLLATE NOCASE, a.id''', params).fetchall()
+    # Compatibility for existing callers; the query belongs to the read model.
+    return assignment_rows(db, day, shifts, user=g.user)
 
 
 def _string(cell, value):
@@ -179,11 +144,11 @@ def register_staffing_export_route(app, get_db, roles_required):
         if include_unassigned not in ('0', '1'):
             abort(400, description='Некорректная настройка выгрузки нерасставленных сотрудников.')
         include_unassigned = include_unassigned == '1'
-        category = request.args.get('category')
-        department = request.args.get('department', '')
-        contractor = request.args.get('contractor', '')
+        category = filter_argument('category')
+        department = filter_argument('department',500,ignore_empty=True)
+        contractor = filter_argument('contractor',500,ignore_empty=True)
         query = request.args.get('query', '')
-        if (category is not None and len(category) > 200) or len(query) > 500 or len(department) > 500 or len(contractor) > 500:
+        if len(query) > 500:
             abort(400, description='Слишком длинный фильтр отчёта.')
         db = get_db()
         shifts = tuple(SHIFT_LABELS) if requested_shift == 'all' else (requested_shift,)
@@ -191,17 +156,8 @@ def register_staffing_export_route(app, get_db, roles_required):
         try:
             rows = _rows(db, day, shifts)
             unassigned = _unassigned_rows(db, day, requested_shift) if include_unassigned else []
-            if department:
-                rows = [row for row in rows if row['department'] == department]
-                unassigned = [row for row in unassigned if row['department'] == department]
-            if contractor:
-                rows = [row for row in rows if row['contractor'] == contractor]
-                unassigned = [row for row in unassigned if row['contractor'] == contractor]
-            words = query.casefold().replace('ё', 'е').split()
-            rows = [row for row in [*rows, *unassigned]
-                    if (category is None or (row['category'] or '') == category)
-                    and all(word in (row['object_name'] + ' ' + row['subobject_name']).casefold().replace('ё', 'е')
-                            for word in words)]
+            rows = filter_assignment_rows([*rows, *unassigned], category=category,
+                                          department=department, contractor=contractor, query=query)
             unassigned = [row for row in rows if row['id'] is None]
         finally:
             db.commit()
@@ -220,7 +176,7 @@ def register_staffing_export_route(app, get_db, roles_required):
         workbook.remove(workbook.active)
         # Both tabs use the exact same authorized, filtered snapshot.
         _sheet(workbook, 'Список сотрудников', rows, include_unassigned)
-        summary_sheet(workbook, rows, day, category, query)
+        summary_sheet(workbook, rows, day, filter_label(category,'','Без категории') if category is not None else None, query)
         output = io.BytesIO()
         workbook.save(output)
         output.seek(0)
