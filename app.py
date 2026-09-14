@@ -14,10 +14,11 @@ from flask import Flask, g, jsonify, redirect, render_template, request, session
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from user_activity import migrate_user_activity, start_session, end_session, session_valid, register_user_activity
+from database_health import database_path, database_ready
 
 
 BASE_DIR = Path(__file__).resolve().parent
-DATABASE_PATH = Path(os.getenv("DATABASE_PATH", BASE_DIR / "data" / "placement.db"))
+DATABASE_PATH = database_path()
 SECRET_KEY = os.getenv("SECRET_KEY", "")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
 if len(SECRET_KEY) < 32:
@@ -346,6 +347,13 @@ app.jinja_env.globals["csrf_token"] = csrf_token
 
 @app.get("/health")
 def health():
+    return {"status": "ok"}
+
+
+@app.get("/ready")
+def ready():
+    if not database_ready(DATABASE_PATH):
+        return {"status": "unavailable", "error": "База данных недоступна или не подготовлена."}, 503
     return {"status": "ok"}
 
 
