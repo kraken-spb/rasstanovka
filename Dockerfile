@@ -25,7 +25,7 @@ COPY position_cards.py position_cards_pdf.py ./
 COPY fonts ./fonts
 COPY telegram_api.py telegram_report_bot.py telegram_worker.py ./
 COPY placement_verification.py ./
-COPY filter_values.py ./
+COPY filter_values.py report_queries.py ./
 COPY templates ./templates
 COPY static ./static
 

@@ -6,6 +6,7 @@ from io import BytesIO
 from flask import abort, g, jsonify, request, send_file
 
 from staffing_import import active_members_sql
+from report_queries import CATEGORY_SQL, CONTRACTOR_SQL, coverage_status
 from user_smu_access import legacy_foreman, worker_clause
 
 
@@ -35,8 +36,8 @@ def report_data(db, day, pps=None, category=None):
             UNION SELECT worker_id FROM assignments WHERE work_date=?
         )
         SELECT w.id,w.full_name,w.personnel_no,w.profession,w.department,
-               COALESCE(w.pps,'') pps,COALESCE(gc.name,w.category,'') category,
-               COALESCE(ct.name,w.contractor,'') contractor,
+               COALESCE(w.pps,'') pps,{CATEGORY_SQL} category,
+               {CONTRACTOR_SQL} contractor,
                COALESCE(att.status,'Явка') attendance_status
         FROM population p JOIN workers w ON w.id=p.worker_id
         LEFT JOIN crew_members m ON m.worker_id=w.id LEFT JOIN crews c ON c.id=m.crew_id
@@ -63,7 +64,7 @@ def report_data(db, day, pps=None, category=None):
     totals = {'total': len(people), 'assigned': 0, 'unassigned': 0, 'absent': 0}
     for person in people.values():
         person['assigned'] = bool(person['assignments'])
-        status = 'absent' if person['attendance_status'] != 'Явка' else 'assigned' if person['assigned'] else 'unassigned'
+        status = coverage_status(person['attendance_status'], person['assigned'])
         person['status'] = status
         totals[status] += 1
         group = groups.setdefault((person['pps'], person['category']), {

@@ -3,9 +3,9 @@ import io
 import re
 from datetime import date
 
-from flask import abort, request, send_file
+from flask import abort, g, request, send_file
 
-from staffing_export import _rows, SHIFT_LABELS
+from report_queries import assignment_rows, filter_assignment_rows, SHIFT_LABELS
 from position_cards_pdf import build_position_cards_pdf
 
 
@@ -92,16 +92,13 @@ def register_position_cards_route(app, get_db, roles_required):
         query = request.args.get('query', '')
         if len(query) > 500:
             abort(400, description='Слишком длинный фильтр отчёта.')
-        words = query.casefold().replace('ё', 'е').split()
         db = get_db()
         db.execute('BEGIN')
         try:
-            rows = [row for row in _rows(db, day.isoformat(), shifts)
-                    if (not departments or row['department'] in departments)
-                    and (not contractors or row['contractor'] in contractors)
-                    and (not categories or (row['category'] or '') in categories)
-                    and all(word in (row['object_name'] + ' ' + row['subobject_name']).casefold().replace('ё', 'е')
-                            for word in words)]
+            rows = filter_assignment_rows(
+                assignment_rows(db, day.isoformat(), shifts, user=g.user),
+                department=list(departments) or None, contractor=list(contractors) or None,
+                category=list(categories) or None, query=query)
             cards = _cards(db, rows)
         finally:
             db.commit()
