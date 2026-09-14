@@ -1,14 +1,17 @@
 """Single Telegram long-polling process; no public endpoint and no session/CSRF bypass."""
 import logging
+import sqlite3
 import sys
 import time
 
-from app import app, get_db
+from database_health import database_path, open_readonly
 from telegram_api import config_path, read_config, telegram_call, TelegramError
-from telegram_report_bot import process_update
 
 
 def poll_once(call=telegram_call):
+    from app import app, get_db
+    from telegram_report_bot import process_update
+
     with app.app_context():
         db=get_db();config=read_config(db)
         if not config: return False
@@ -30,12 +33,22 @@ def poll_once(call=telegram_call):
         return True
 
 
-def main():
-    if '--healthcheck' in sys.argv:
-        with app.app_context():
-            db=get_db(); config=read_config(db)
+def healthcheck():
+    try:
+        with open_readonly(database_path()) as db:
+            config=read_config(db)
             state=db.execute('SELECT polled_at FROM telegram_state WHERE bot_id=?',(config['bot_id'],)).fetchone() if config else None
             return 0 if not config or (state and time.time()-state['polled_at']<120) else 1
+    except (sqlite3.Error, OSError, ValueError, TypeError, OverflowError, TelegramError):
+        # Never emit exception text: configuration/errors may contain secrets.
+        return 1
+
+
+def main():
+    if '--healthcheck' in sys.argv:
+        return healthcheck()
+    from app import app, get_db
+
     import fcntl
     with app.app_context(): path=config_path(get_db()).with_name('.telegram-worker.lock')
     with path.open('a') as lock:
