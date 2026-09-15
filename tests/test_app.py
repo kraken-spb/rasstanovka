@@ -23,9 +23,18 @@ class PlacementAppTest(unittest.TestCase):
                 db = cls.module.get_db()
                 db.execute("UPDATE users SET password_hash = ? WHERE username = 'admin'",
                            (cls.module.generate_password_hash("test-password-123"),))
+                cls.super_admin_id = db.execute(
+                    "INSERT INTO users(username,password_hash,full_name,role,created_at) VALUES (?,?,?,?,?)",
+                    ("test-super", cls.module.generate_password_hash("test-password-123"),
+                     "Тестовый супер-администратор", "super_admin", cls.module.utc_now()),
+                ).lastrowid
                 db.commit()
         cls.module.app.config.update(TESTING=True)
         cls.client = cls.module.app.test_client()
+        cls.super_admin = cls.module.app.test_client()
+        with cls.super_admin.session_transaction() as session:
+            session['user_id'] = cls.super_admin_id
+            session['csrf_token'] = 'test-super-csrf'
 
     @classmethod
     def tearDownClass(cls):
@@ -63,9 +72,9 @@ class PlacementAppTest(unittest.TestCase):
         self.assertEqual(sum(row["planned_count"] for row in calendar["plans"]), 3)
         dates = self.client.get("/api/activity-dates").get_json()
         self.assertEqual(dates["rows"][0]["work_date"], "2026-09-11")
-        account = self.client.post("/api/users", json={
+        account = self.super_admin.post("/api/users", json={
             "username": "foreman", "full_name": "Тестовый Прораб", "password": "password-123", "role": "foreman",
-        }, headers=headers)
+        }, headers={'X-CSRF-Token': 'test-super-csrf'})
         self.assertEqual(account.status_code, 201)
         self.assertEqual(self.client.post("/api/plans", json={}, headers=headers).status_code, 410)
 

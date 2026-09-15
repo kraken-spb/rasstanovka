@@ -36,6 +36,7 @@ class CrewWorkflowTest(unittest.TestCase):
             self.module.init_db()
             db = self.module.get_db()
             self.admin_id = db.execute("SELECT id FROM users WHERE role = 'admin'").fetchone()["id"]
+            self.super_admin_id = self.insert_user(db, "crew_super", "super_admin")
             self.owner_a = self.insert_user(db, "crew_owner_a", "foreman")
             self.owner_b = self.insert_user(db, "crew_owner_b", "foreman")
             self.viewer_id = self.insert_user(db, "crew_viewer", "viewer")
@@ -55,6 +56,7 @@ class CrewWorkflowTest(unittest.TestCase):
             ]
             db.commit()
         self.admin = self.client_for(self.admin_id)
+        self.super_admin = self.client_for(self.super_admin_id)
         self.foreman_a = self.client_for(self.owner_a)
         self.foreman_b = self.client_for(self.owner_b)
         self.viewer = self.client_for(self.viewer_id)
@@ -213,21 +215,19 @@ class CrewWorkflowTest(unittest.TestCase):
         url = f'/api/users/{self.owner_a}'
         change = {'role': 'viewer', 'expected_role': 'foreman'}
         self.assertEqual(self.write(self.foreman_a, 'PATCH', url, change).status_code, 403)
-        self.assertEqual(self.admin.patch(url, json=change).status_code, 403)
-        self.assertEqual(self.write(self.admin, 'PATCH', url, {**change, 'role': 'unknown'}).status_code, 400)
-        self.assertEqual(self.write(self.admin, 'PATCH', url, {'role': 'viewer'}).status_code, 400)
-        self.assertEqual(self.write(self.admin, 'PATCH', url, change).status_code, 200)
+        self.assertEqual(self.write(self.admin, 'PATCH', url, change).status_code, 403)
+        self.assertEqual(self.write(self.super_admin, 'PATCH', url, {**change, 'role': 'unknown'}).status_code, 400)
+        self.assertEqual(self.write(self.super_admin, 'PATCH', url, {'role': 'viewer'}).status_code, 400)
+        self.assertEqual(self.write(self.super_admin, 'PATCH', url, change).status_code, 200)
         self.assertEqual(self.foreman_a.get('/api/crews').status_code, 403)
-        self.assertEqual(self.write(self.admin, 'PATCH', url, {**change, 'active': False}).status_code, 409)
+        self.assertEqual(self.write(self.super_admin, 'PATCH', url, {**change, 'active': False}).status_code, 409)
         user = next(u for u in self.admin.get('/api/users').get_json()['rows'] if u['id'] == self.owner_a)
         self.assertEqual(user['active'], 1)
         self.assertEqual(user['crew_count'], 2)
-        self.assertEqual(self.write(self.admin, 'PATCH', f'/api/users/{self.admin_id}',
-                                   {'role': 'foreman', 'expected_role': 'admin'}).status_code, 409)
-        self.assertEqual(self.write(self.admin, 'PATCH', url, {'role': 'admin', 'expected_role': 'viewer'}).status_code, 200)
-        self.assertEqual(self.foreman_a.get('/api/users').status_code, 200)
-        self.assertEqual(self.write(self.admin, 'PATCH', f'/api/users/{self.admin_id}',
+        self.assertEqual(self.write(self.super_admin, 'PATCH', f'/api/users/{self.admin_id}',
                                    {'role': 'foreman', 'expected_role': 'admin'}).status_code, 200)
+        self.assertEqual(self.write(self.super_admin, 'PATCH', url, {'role': 'admin', 'expected_role': 'viewer'}).status_code, 200)
+        self.assertEqual(self.foreman_a.get('/api/users').status_code, 200)
         self.assertEqual(self.admin.get('/api/users').status_code, 403)
 
     def test_user_full_name_edit_validates_permissions_and_concurrent_changes(self):
@@ -236,12 +236,12 @@ class CrewWorkflowTest(unittest.TestCase):
         change = {'full_name': '  Иванов Иван Иванович  ', 'expected_full_name': original['full_name']}
         self.assertEqual(self.write(self.foreman_a, 'PATCH', url, change).status_code, 403)
         self.assertEqual(self.write(self.viewer, 'PATCH', url, change).status_code, 403)
-        self.assertEqual(self.admin.patch(url, json=change).status_code, 403)
+        self.assertEqual(self.write(self.admin, 'PATCH', url, change).status_code, 403)
         for invalid in ('', '   ', None, 42, 'Я' * 201):
-            self.assertEqual(self.write(self.admin, 'PATCH', url, {**change, 'full_name': invalid}).status_code, 400)
-        self.assertEqual(self.write(self.admin, 'PATCH', url, {'full_name': 'Новое ФИО'}).status_code, 400)
-        self.assertEqual(self.write(self.admin, 'PATCH', url, change).status_code, 200)
-        self.assertEqual(self.write(self.admin, 'PATCH', url, {**change, 'active': False}).status_code, 409)
+            self.assertEqual(self.write(self.super_admin, 'PATCH', url, {**change, 'full_name': invalid}).status_code, 400)
+        self.assertEqual(self.write(self.super_admin, 'PATCH', url, {'full_name': 'Новое ФИО'}).status_code, 400)
+        self.assertEqual(self.write(self.super_admin, 'PATCH', url, change).status_code, 200)
+        self.assertEqual(self.write(self.super_admin, 'PATCH', url, {**change, 'active': False}).status_code, 409)
         current = next(u for u in self.admin.get('/api/users').get_json()['rows'] if u['id'] == self.owner_a)
         self.assertEqual(current['full_name'], 'Иванов Иван Иванович')
         for key in ('username', 'active', 'role', 'crew_count'):

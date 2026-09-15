@@ -29,7 +29,7 @@ class UserSmuAccessTest(unittest.TestCase):
     def scope(self, user_id, mode='selected', departments=None, **changes):
         return self.write(f'/api/users/{user_id}/smu-access', {
             'mode': mode, 'departments': departments if departments is not None else [self.A],
-            'expected_token': self.view(user_id)['expected_token'], **changes})
+            'expected_token': self.view(user_id)['expected_token'], **changes}, self.super_admin)
 
     def status(self, rows, client):
         return self.write('/api/staffing/status', {'date': '2026-09-12', 'status': 'Вых',
@@ -92,17 +92,18 @@ class UserSmuAccessTest(unittest.TestCase):
         url = f'/api/users/{self.foreman_id}/smu-access'
         body = {'mode': 'all', 'departments': [], 'expected_token': before['expected_token']}
         self.assertEqual(self.admin.put(url, json=body).status_code, 403)
+        self.assertEqual(self.view(self.foreman_id)['expected_token'], before['expected_token'])
         self.assertEqual(self.write(url, body, self.viewer).status_code, 403)
         self.assertEqual(self.scope(self.foreman_id, departments=['Неизвестный СМУ']).status_code, 400)
         self.assertEqual(self.scope(self.viewer_id).status_code, 400)
-        self.assertEqual(self.write(url, body).status_code, 200)
-        self.assertEqual(self.write(url, body).status_code, 409)
+        self.assertEqual(self.write(url, body, self.super_admin).status_code, 200)
+        self.assertEqual(self.write(url, body, self.super_admin).status_code, 409)
         latest = self.view(self.foreman_id)
         with self.app.app_context():
             db = self.module.get_db()
             db.execute("UPDATE users SET role='admin' WHERE id=?", (self.foreman_id,))
             db.commit()
-        self.assertEqual(self.write(url, {**body, 'expected_token': latest['expected_token']}).status_code, 409)
+        self.assertEqual(self.write(url, {**body, 'expected_token': latest['expected_token']}, self.super_admin).status_code, 409)
 
     def test_new_employee_department_is_automatically_in_scope(self):
         self.scope(self.foreman_id)

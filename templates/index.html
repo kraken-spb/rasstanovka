@@ -185,7 +185,7 @@
       <div id="crew-tabs" class="crew-tabs" aria-label="Бригады"></div>
       <div id="crew-empty" class="empty-state" hidden>
         <h2>Бригады пока не привязаны</h2>
-        <p>{% if user.role in ('admin', 'super_admin') %}Назначьте СМУ пользователю в разделе «Управление».{% else %}Администратор должен закрепить за вами бригады. После этого здесь появятся их составы.{% endif %}</p>
+        <p>{% if user.role == 'super_admin' %}Назначьте СМУ пользователю в разделе «Управление».{% else %}Попросите супер-администратора назначить вам доступ к СМУ.{% endif %}</p>
         {% if user.role in ('admin', 'super_admin') %}<button class="primary-button" data-view="accounts">Назначить СМУ</button>{% endif %}
       </div>
       <div id="crew-workspace" hidden>
@@ -384,16 +384,19 @@
     </section>
     {% endif %}
     <section id="view-accounts" class="view">
-      <div class="page-heading"><div><h1>Управление</h1><p>Учётные записи, роли и доступ к редактированию СМУ.</p></div></div>
+      <div class="page-heading"><div><h1>Управление</h1><p>{% if user.role == 'super_admin' %}Учётные записи, роли и доступ к редактированию СМУ.{% else %}Только просмотр. Учётные записи и доступ изменяет супер-администратор.{% endif %}</p></div></div>
       <div class="panel"><h2>Учётные записи</h2><div id="account-list" class="account-list"></div></div>
-      <div>
-        <form id="account-form" class="panel stack-form"><h2>Выдать доступ</h2>
+      {% if user.role == 'super_admin' %}
+      <details class="account-create panel">
+        <summary>Выдать доступ</summary>
+        <form id="account-form" class="stack-form" aria-label="Новая учётная запись">
           <label>ФИО<input id="account-name" required></label><label>Логин<input id="account-username" minlength="3" required autocomplete="off"></label>
           <label>Пароль<input id="account-password" type="password" minlength="10" required autocomplete="new-password"></label>
           <label>Роль<select id="account-role"><option value="foreman">Прораб</option><option value="viewer">Только просмотр</option><option value="admin">Администратор</option>{% if user.role == 'super_admin' %}<option value="super_admin">Супер-администратор</option>{% endif %}</select></label>
           <button class="primary-button">Создать учётную запись</button>
         </form>
-      </div>
+      </details>
+      {% endif %}
     </section>
     {% endif %}
   </main>

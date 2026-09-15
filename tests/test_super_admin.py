@@ -1,11 +1,15 @@
 from contextlib import closing
 import importlib
+import inspect
 import os
 import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+
+from flask import g
+from werkzeug.exceptions import HTTPException
 
 from user_roles import migrate_user_roles, promote_super_admin
 
@@ -96,7 +100,66 @@ class SuperAdminTest(unittest.TestCase):
                        {'role': 'admin', 'expected_role': 'super_admin'}):
             self.assertEqual(self.write('admin', 'PATCH', f"/api/users/{self.ids['super_admin']}", change).status_code, 403)
         self.assertEqual(self.write('super_admin', 'POST', '/api/users', payload).status_code, 201)
-        self.assertEqual(self.write('admin', 'POST', '/api/users', {**payload, 'username': 'ordinary-admin', 'role': 'admin'}).status_code, 201)
+        self.assertEqual(self.write('admin', 'POST', '/api/users', {**payload, 'username': 'ordinary-admin', 'role': 'admin'}).status_code, 403)
+
+    def test_only_super_admin_can_create_accounts_and_change_credentials_or_roles(self):
+        with self.module.app.app_context():
+            db = self.module.get_db()
+            db.execute('UPDATE users SET active=0 WHERE id=?', (self.ids['viewer'],))
+            db.commit()
+            before = [tuple(row) for row in db.execute('SELECT * FROM users ORDER BY id')]
+        for actor in ('admin', 'foreman'):
+            for target_role in ('viewer', 'foreman', 'admin', 'super_admin'):
+                payload = {'username': 'new-' + target_role, 'full_name': 'Новая учётная запись',
+                           'password': 'access-test-password', 'role': target_role}
+                self.assertEqual(self.write(actor, 'POST', '/api/users', payload).status_code, 403)
+            for target in ('admin', 'foreman', 'viewer', 'super_admin'):
+                for change in ({'active': True}, {'password': 'replacement-password'},
+                               {'role': 'admin', 'expected_role': target},
+                               {'full_name': 'Новое ФИО', 'expected_full_name': target}):
+                    self.assertEqual(self.write(actor, 'PATCH', f'/api/users/{self.ids[target]}', change).status_code, 403)
+        with self.module.app.app_context():
+            self.assertEqual([tuple(row) for row in self.module.get_db().execute('SELECT * FROM users ORDER BY id')], before)
+        payload = {'username': 'issued-by-super', 'full_name': 'Выданный доступ',
+                   'password': 'access-test-password', 'role': 'foreman'}
+        self.assertEqual(self.clients['super_admin'].post('/api/users', json=payload).status_code, 403)
+        created = self.write('super_admin', 'POST', '/api/users', payload)
+        self.assertEqual(created.status_code, 201)
+        path = '/api/users/' + str(created.get_json()['id'])
+        self.assertEqual(self.write('super_admin', 'PATCH', path, {'role': 'viewer', 'expected_role': 'foreman'}).status_code, 200)
+        self.assertEqual(self.write('super_admin', 'PATCH', path, {'role': 'admin', 'expected_role': 'foreman'}).status_code, 409)
+        self.assertEqual(self.clients['super_admin'].patch(path, json={'active': False}).status_code, 403)
+        self.assertEqual(self.write('super_admin', 'PATCH', path, {'active': False, 'password': 'replacement-password'}).status_code, 200)
+
+    def test_transaction_rechecks_super_admin_after_request_role_was_read(self):
+        target = self.ids['foreman']
+        token = next(row['expected_token'] for row in self.clients['super_admin'].get('/api/user-smu-access').get_json()['rows']
+                     if row['user_id'] == target)
+        with self.module.app.app_context():
+            db = self.module.get_db()
+            db.execute("UPDATE users SET role='admin' WHERE id=?", (self.ids['super_admin'],))
+            db.commit()
+            before = [tuple(row) for row in db.execute('SELECT * FROM users ORDER BY id')]
+        cases = [
+            ('create_user', '/api/users', 'POST', {}, {'username': 'revoked-super', 'full_name': 'Не создавать',
+                'password': 'test-password-123', 'role': 'foreman'}),
+            ('update_user', f'/api/users/{target}', 'PATCH', {'user_id': target}, {'active': False}),
+            ('save_access', f'/api/users/{target}/smu-access', 'PUT', {'user_id': target},
+                {'mode': 'all', 'departments': [], 'expected_token': token}),
+        ]
+        for endpoint, path, method, kwargs, payload in cases:
+            with self.subTest(endpoint=endpoint), self.module.app.test_request_context(path, method=method, json=payload):
+                g.user = {'id': self.ids['super_admin'], 'role': 'super_admin'}
+                try:
+                    response = self.module.app.make_response(inspect.unwrap(self.module.app.view_functions[endpoint])(**kwargs))
+                except HTTPException as error:
+                    response = error.get_response()
+                self.assertEqual(response.status_code, 403)
+        with self.module.app.app_context():
+            db = self.module.get_db()
+            self.assertEqual([tuple(row) for row in db.execute('SELECT * FROM users ORDER BY id')], before)
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM user_smu_access').fetchone()[0], 0)
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM user_smu_access_events').fetchone()[0], 0)
 
     def test_last_super_admin_and_immediate_revocation(self):
         path = f"/api/users/{self.ids['super_admin']}"
@@ -117,6 +180,8 @@ class SuperAdminTest(unittest.TestCase):
             html = self.clients[role].get('/').get_data(as_text=True)
             self.assertIn('id="view-catalogs"', html)
             self.assertEqual('value="super_admin"' in html, role == 'super_admin')
+            self.assertEqual('id="account-form"' in html, role == 'super_admin')
+            self.assertEqual('Учётные записи и доступ изменяет супер-администратор.' in html, role == 'admin')
             self.assertEqual('Только просмотр. Редактирование' in html, role == 'admin')
         for role in ('admin', 'super_admin'):
             self.assertEqual(self.write(role, 'POST', '/api/crews', {'name': role, 'owner_user_id': self.ids['super_admin']}).status_code, 201)

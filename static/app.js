@@ -564,6 +564,14 @@
       const saved = accessByUser.get(user.id);
       if (user.role === 'viewer' || user.role === 'super_admin') return E('p', {className: 'account-scope'},
         user.role === 'viewer' ? 'Только просмотр — редактирование недоступно.' : 'Редактирование всех СМУ — супер-администратор.');
+      if (role !== 'super_admin') {
+        if (!saved.configured && user.role === 'foreman') return E('p', {className: 'account-scope'}, 'Доступ по назначенным бригадам.');
+        if (saved.mode === 'all') return E('p', {className: 'account-scope'}, 'Редактирование всех СМУ.');
+        if (!saved.departments.length) return E('p', {className: 'account-scope'}, 'Доступ к редактированию СМУ не назначен.');
+        return E('details', {className: 'account-scope account-scope-readonly'},
+          E('summary', {}, 'Доступ к СМУ: ' + saved.departments.length),
+          E('ul', {}, ...saved.departments.map(name => E('li', {}, name))));
+      }
       let mode = saved.mode;
       const selected = new Set(saved.departments);
       const departments = [...new Set([...access.departments.map(item => item.name), ...saved.departments])];
@@ -604,9 +612,9 @@
       return editor;
     };
     const labels = { super_admin: "Супер-администратор", admin: "Администратор", foreman: "Прораб", viewer: "Просмотр" };
-    const canManage = user => role === 'super_admin' || user.role !== 'super_admin';
+    const canManage = () => role === 'super_admin';
     const roleEditor = (user) => {
-      if (!canManage(user)) return E('span', {}, 'Управляет супер-администратор');
+      if (!canManage(user)) return null;
       const select = E("select", {"aria-label": "Роль пользователя " + user.username},
         ...Object.entries(labels).filter(([value]) => role === 'super_admin' || value !== 'super_admin').map(([value, label]) => E("option", {value, selected: value === user.role}, label)));
       const save = E("button", {className: "secondary-button", disabled: true, onclick: async () => {
@@ -621,7 +629,7 @@
       select.addEventListener("change", () => { save.disabled = select.value === user.role; });
       return E("div", {className: "account-role-editor"}, E("label", {}, "Роль", select), save);
     };
-    $("#account-list").replaceChildren(...state.users.map((user) => E("div", { className: "account-card" },
+    $("#account-list").replaceChildren(...state.users.map((user) => E("div", { className: "account-card" + (canManage(user) ? "" : " account-readonly") },
       E("span", {}, E("strong", {}, user.full_name), E("small", {}, user.username + " · " + labels[user.role] + (user.active ? "" : " · отключён")), E("small", {}, "Бригад: " + user.crew_count)),
       roleEditor(user),
       scopeEditor(user),

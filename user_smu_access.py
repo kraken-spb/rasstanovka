@@ -133,7 +133,7 @@ def register_smu_access(app, get_db, roles_required, utc_now):
             for user in db.execute('SELECT id,role,active FROM users ORDER BY id')]})
 
     @app.put('/api/users/<int:user_id>/smu-access')
-    @roles_required('admin')
+    @roles_required('super_admin')
     def save_access(user_id):
         data = request.get_json(silent=True)
         if not isinstance(data, dict) or data.get('mode') not in ('all', 'selected'):
@@ -149,8 +149,8 @@ def register_smu_access(app, get_db, roles_required, utc_now):
             db.execute('BEGIN IMMEDIATE')
             actor = db.execute('SELECT id,role,active FROM users WHERE id=?', (g.user['id'],)).fetchone()
             user = db.execute('SELECT id,role,active FROM users WHERE id=?', (user_id,)).fetchone()
-            if not actor or not actor['active'] or actor['role'] not in ('admin', 'super_admin'):
-                abort(403, description='Недостаточно прав для изменения доступа.')
+            if not actor or not actor['active'] or actor['role'] != 'super_admin':
+                abort(403, description='Выдавать доступ к СМУ может только супер-администратор.')
             if not user:
                 abort(404, description='Пользователь не найден.')
             if user['role'] in ('viewer', 'super_admin'):

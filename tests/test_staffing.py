@@ -81,10 +81,12 @@ class StaffingWorkflowTest(unittest.TestCase):
             self.module.init_db()
             db = self.module.get_db()
             self.admin_id = db.execute("SELECT id FROM users WHERE role='admin'").fetchone()[0]
+            self.super_admin_id = db.execute("INSERT INTO users(username,password_hash,full_name,role,created_at) VALUES ('staff-super','unused','Супер-администратор','super_admin','now')").lastrowid
             self.foreman_id = db.execute("INSERT INTO users(username,password_hash,full_name,role,created_at) VALUES ('staff-f','unused','Прораб','foreman','now')").lastrowid
             self.viewer_id = db.execute("INSERT INTO users(username,password_hash,full_name,role,created_at) VALUES ('staff-v','unused','Просмотр','viewer','now')").lastrowid
             db.commit()
         self.admin = self.client(self.admin_id)
+        self.super_admin = self.client(self.super_admin_id)
         self.foreman = self.client(self.foreman_id)
         self.viewer = self.client(self.viewer_id)
         self.content = workbook_bytes([{}, {'number': '70002', 'name': 'Петров Пётр Петрович'},
@@ -690,7 +692,7 @@ class StaffingWorkflowTest(unittest.TestCase):
         for row in changed:
             self.assertEqual(by_id[row['id']]['assignment_author'], row['assignment_author'])
         # Names can be corrected without losing stable author identity or changing history.
-        renamed = self.admin.patch(f'/api/users/{self.admin_id}', headers={'X-CSRF-Token': 'staffing-csrf'},
+        renamed = self.super_admin.patch(f'/api/users/{self.admin_id}', headers={'X-CSRF-Token': 'staffing-csrf'},
             json={'full_name': 'Иванов Иван Иванович', 'expected_full_name': expected['full_name']})
         self.assertEqual(renamed.status_code, 200)
         renamed_rows = self.admin.get(query).get_json()['index']

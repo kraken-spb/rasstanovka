@@ -501,7 +501,7 @@ def users():
 
 
 @app.post("/api/users")
-@roles_required("admin")
+@roles_required("super_admin")
 def create_user():
     payload = request.get_json(silent=True) or {}
     username = str(payload.get("username", "")).strip()
@@ -514,12 +514,9 @@ def create_user():
     try:
         db.execute('BEGIN IMMEDIATE')
         actor = db.execute('SELECT role,active FROM users WHERE id=?', (g.user['id'],)).fetchone()
-        if not actor or not actor['active'] or actor['role'] not in ('admin', 'super_admin'):
+        if not actor or not actor['active'] or actor['role'] != 'super_admin':
             db.rollback()
-            return jsonify({'error': 'Недостаточно прав.'}), 403
-        if role == 'super_admin' and actor['role'] != 'super_admin':
-            db.rollback()
-            return jsonify({'error': 'Назначить супер-администратора может только супер-администратор.'}), 403
+            return jsonify({'error': 'Выдавать доступ может только супер-администратор.'}), 403
         cursor = db.execute(
             "INSERT INTO users(username, password_hash, full_name, role, created_at) VALUES (?, ?, ?, ?, ?)",
             (username, generate_password_hash(password), full_name, role, utc_now()),
@@ -532,7 +529,7 @@ def create_user():
 
 
 @app.patch("/api/users/<int:user_id>")
-@roles_required("admin")
+@roles_required("super_admin")
 def update_user(user_id):
     payload = request.get_json(silent=True) or {}
     if not isinstance(payload, dict):
@@ -572,13 +569,11 @@ def update_user(user_id):
     with db:
         db.execute('BEGIN IMMEDIATE')
         actor = db.execute('SELECT role,active FROM users WHERE id=?', (g.user['id'],)).fetchone()
-        if not actor or actor['role'] not in ('admin', 'super_admin') or not actor['active']:
-            return jsonify({'error': 'Для изменения пользователей необходима роль администратора.'}), 403
+        if not actor or actor['role'] != 'super_admin' or not actor['active']:
+            return jsonify({'error': 'Изменять учётные записи может только супер-администратор.'}), 403
         user = db.execute('SELECT role,active,full_name FROM users WHERE id=?', (user_id,)).fetchone()
         if user is None:
             return jsonify({"error": "Пользователь не найден."}), 404
-        if actor['role'] != 'super_admin' and (user['role'] == 'super_admin' or payload.get('role') == 'super_admin'):
-            return jsonify({'error': 'Изменять учётную запись супер-администратора и назначать эту роль может только супер-администратор.'}), 403
         if 'role' in payload and payload['expected_role'] != user['role']:
             return jsonify({'error': 'Роль уже изменена в другом окне. Обновите список.'}), 409
         if 'full_name' in payload and payload['expected_full_name'] != user['full_name']:

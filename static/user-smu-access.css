@@ -1,14 +1,66 @@
-#account-list .account-scope { grid-column: 1 / -1; grid-row: auto; min-width: 0; margin: 0; padding: .65rem; border: 1px solid var(--line); border-radius: .6rem; }
-#account-list .account-actions { grid-column: 3; grid-row: 1; }
-.account-scope legend { font-size: .85rem; font-weight: 600; padding: 0 .3rem; }
-.account-scope-modes { display: flex; flex-wrap: wrap; gap: .6rem 1.5rem; }
-.account-scope label { display: flex; align-items: flex-start; gap: .5rem; font-size: .85rem; min-width: 0; }
-.account-scope input[type=checkbox], .account-scope input[type=radio] { flex: 0 0 auto; width: 1rem; height: 1rem; min-height: 1rem; padding: 0; margin: .12rem 0 0; }
-.account-smu-list { margin: .7rem 0; }
-.account-smu-list summary { cursor: pointer; overflow-wrap: anywhere; }
-.account-smu-choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); gap: .6rem 1rem; padding: .6rem 0; max-height: 270px; overflow-y: auto; }
+/* Compact account rows; controls retain their native behavior. */
+#view-accounts .page-heading { margin-bottom: .7rem; }
+#view-accounts > .panel { padding: .8rem 1rem; margin-bottom: .65rem; }
+#account-list { gap: .4rem; margin-top: .5rem; }
+#account-list > .account-card { grid-template-columns: minmax(0, 1fr) minmax(210px, 280px) auto; gap: .35rem .75rem; padding: .55rem 0 .15rem; align-items: center; }
+#account-list > .account-card > span { grid-row: auto; }
+#account-list .account-role-editor { gap: .35rem; }
+#account-list .account-role-editor label { gap: .15rem; }
+#account-list .account-role-editor select { min-height: 34px; padding: .3rem .5rem; font-size: .85rem; }
+#account-list .account-actions { display: flex; grid-column: 3; grid-row: 1; gap: .2rem; }
+#account-list .account-actions button { width: auto; }
+#account-list .account-scope { grid-column: 1 / -1; grid-row: auto; min-width: 0; margin: 0; padding: .3rem .5rem .4rem; border: 1px solid var(--line); border-radius: .45rem; }
+#account-list fieldset.account-scope { display: grid; grid-template-columns: auto minmax(160px, 1fr) auto; align-items: center; gap: .25rem .75rem; }
+#account-list p.account-scope { border: 0; padding: .1rem 0; font-size: .8rem; }
+#account-list > .account-card.account-readonly { grid-template-columns: minmax(0, 1fr); }
+.account-scope-readonly summary { cursor: pointer; font-size: .8rem; padding: .25rem 0; }
+.account-scope-readonly ul { margin: .25rem 0; padding-left: 1.25rem; font-size: .8rem; overflow-wrap: anywhere; }
+.account-scope legend { font-size: .78rem; font-weight: 600; padding: 0 .25rem; }
+.account-scope-modes { display: flex; flex-wrap: wrap; gap: .3rem 1rem; }
+.account-scope label { display: flex; align-items: center; gap: .4rem; font-size: .8rem; min-width: 0; cursor: pointer; }
+.account-scope input[type=checkbox], .account-scope input[type=radio] { flex: 0 0 auto; width: 1rem; height: 1rem; min-height: 1rem; padding: 0; margin: 0; }
+.account-smu-list { min-width: 0; margin: 0; grid-column: 2; grid-row: 1; }
+.account-smu-list summary { cursor: pointer; overflow-wrap: anywhere; font-size: .8rem; padding: .35rem 0; }
+.account-smu-list[open] { grid-column: 1 / -1; grid-row: 2; }
+.account-smu-choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); gap: .3rem .75rem; padding: .3rem 0; max-height: 270px; overflow-y: auto; }
 .account-smu-choices span { overflow-wrap: anywhere; }
+.account-scope > p { grid-column: 1 / -1; }
+.account-scope > .table-note, .account-scope > .save-status { margin: 0; padding: .1rem 0; min-height: 0; font-size: .75rem; }
 .account-scope .save-status:empty { display: none; }
-.account-scope > button { margin-top: .6rem; }
-@media (max-width: 1200px) { #account-list .account-actions { grid-column: 2; grid-row: 2; } }
-@media (max-width: 760px) { #account-list .account-actions { grid-column: 1; grid-row: auto; } .account-scope-modes { flex-direction: column; } }
+.account-scope > button { grid-column: 3; grid-row: 1; margin: 0; min-height: 34px; padding: .35rem .65rem; font-size: .8rem; }
+#view-accounts .account-create { padding: .5rem 1rem; }
+.account-create > summary { cursor: pointer; font-weight: 600; min-height: 34px; padding: .3rem 0; }
+#account-form { display: grid; grid-template-columns: minmax(160px, 1.5fr) repeat(3, minmax(140px, 1fr)) auto; align-items: end; gap: .5rem .75rem; margin-top: .5rem; }
+#account-form input, #account-form select, #account-form button { min-height: 36px; padding: .35rem .6rem; }
+#account-form button { font-size: .85rem; }
+@media (max-width: 1100px) {
+  #account-list > .account-card { grid-template-columns: minmax(0, 1fr) minmax(180px, 240px) auto; }
+  #account-list fieldset.account-scope { grid-template-columns: minmax(0, 1fr) auto; }
+  .account-scope-modes { grid-column: 1; grid-row: 1; }
+  .account-smu-list { grid-column: 1; grid-row: 2; }
+  .account-smu-list[open] { grid-column: 1 / -1; }
+  .account-scope > button { grid-column: 2; grid-row: 1; }
+  #account-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  #account-form > button { grid-column: 1 / -1; justify-self: start; }
+}
+@media (max-width: 900px) {
+  #account-list .account-role-editor select, #account-form input, #account-form select, #account-form button { min-height: 44px; }
+  .account-scope label, .account-smu-list summary, .account-scope-readonly summary, .account-create > summary { min-height: 44px; }
+  .account-smu-list summary, .account-create > summary { padding-block: .65rem; }
+  .account-scope-modes { gap: 0 .75rem; }
+}
+@media (max-width: 760px) {
+  #view-accounts > .panel, #view-accounts .account-create { padding-inline: .65rem; }
+  #account-list > .account-card { grid-template-columns: minmax(0, 1fr); gap: .25rem; padding-top: .5rem; }
+  #account-list .account-role-editor { grid-template-columns: minmax(0, 1fr) auto; }
+  #account-list .account-actions { grid-column: 1; grid-row: auto; justify-content: flex-end; }
+  #account-list fieldset.account-scope { grid-template-columns: minmax(0, 1fr) auto; gap: .15rem .35rem; padding: .25rem .4rem; }
+  .account-scope-modes { grid-column: 1 / -1; flex-direction: column; }
+  .account-scope > button { grid-column: 2; grid-row: 2; }
+  .account-smu-list[open] { grid-column: 1 / -1; grid-row: 3; }
+  .account-smu-choices { gap: .15rem; }
+}
+@media (max-width: 480px) {
+  #account-form { grid-template-columns: minmax(0, 1fr); gap: .4rem; }
+  #account-form > button { width: 100%; justify-self: stretch; }
+}
