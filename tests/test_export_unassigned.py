@@ -47,7 +47,7 @@ class ExportUnassignedTest(unittest.TestCase):
 
     def rows(self, response):
         self.assertEqual(response.status_code, 200, response.get_json(silent=True))
-        return list(self.fixture.workbook(response).active.iter_rows(min_row=2, values_only=True))
+        return list(self.fixture.workbook(response)['Список сотрудников'].iter_rows(min_row=2, values_only=True))
 
     def test_opt_in_current_sources_deduplicate_and_keep_assignments(self):
         response = self.export()
@@ -62,14 +62,14 @@ class ExportUnassignedTest(unittest.TestCase):
         self.assertEqual(unassigned[10:14], ('ИТР бригады', 'Бригадир бригады', 'День', 'СМУ тест'))
         self.assertEqual(unassigned[-1], 'Не расставлен')
         self.assertEqual(sum(r[-1] == 'Расставлен' for r in rows), 4)
-        sheet = self.fixture.workbook(response).active
+        sheet = self.fixture.workbook(response)['Список сотрудников']
         formula = next(r for r in sheet.iter_rows(min_row=2) if r[6].value == '000201')
         self.assertEqual(formula[5].data_type, 's')
         self.assertEqual(formula[6].number_format, '@')
         self.assertEqual(sheet.tables['StaffingSource'].autoFilter.ref, 'A1:P9')
         default = self.export(include_unassigned='0')
         self.assertEqual(default.headers['X-Export-Count'], '4')
-        self.assertEqual(self.fixture.workbook(default).active.max_column, 15)
+        self.assertEqual(self.fixture.workbook(default)['Список сотрудников'].max_column, 15)
 
     def test_shift_and_date_scope_no_opposite_shift_duplicates(self):
         night = self.rows(self.export(shift='2 смена'))
