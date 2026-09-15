@@ -8,6 +8,7 @@ from datetime import date
 from flask import abort, g, request, send_file
 from report_queries import SHIFT_LABELS, assignment_rows, filter_assignment_rows
 from report_matrix import summary_sheet
+from native_pivot import save_workbook_with_slicer
 from staffing_import import active_members_sql
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
@@ -178,7 +179,7 @@ def register_staffing_export_route(app, get_db, roles_required):
         _sheet(workbook, 'Список сотрудников', rows, include_unassigned)
         summary_sheet(workbook, rows, day, filter_label(category,'','Без категории') if category is not None else None, query)
         output = io.BytesIO()
-        workbook.save(output)
+        save_workbook_with_slicer(workbook, output)
         output.seek(0)
         filename = f'Расстановка на {day}'
         if requested_shift != 'all':

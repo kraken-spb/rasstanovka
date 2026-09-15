@@ -92,19 +92,19 @@ class StaffingExportTest(unittest.TestCase):
         book = self.workbook(response)
         self.assertEqual(book.sheetnames, ['Список сотрудников', 'Сводная таблица'])
         expected = ['№\nп/п','Группа подобъектов','Подобъект','Компания подрядчик','Организация-работодатель','ФИО работника','Таб. № с префиксом','Должность по штатному расписанию','Профессия ГСП','Категория ГДЛР','ФИО линейного ИТР','ФИО бригадира','Смена','СМУ','Выполняемые операции']
-        self.assertEqual([cell.value for cell in book.active[1]], expected)
-        rows = list(book.active.iter_rows(min_row=2, values_only=False))
+        self.assertEqual([cell.value for cell in book['Список сотрудников'][1]], expected)
+        rows = list(book['Список сотрудников'].iter_rows(min_row=2, values_only=False))
         visible = next(row for row in rows if row[5].value == '=Формула')
         self.assertEqual([cell.value for cell in visible], [1, 'Группа А', 'Подобъект 1', 'Подрядчик', '=Работодатель', '=Формула', '000123', 'Должность', 'ГСП', 'Ручная ГДЛР', 'ИТР вручную', 'Бригадир вручную', 'День', None, None])
         self.assertEqual(visible[5].data_type, 's')
         self.assertEqual(visible[4].data_type, 's')
         self.assertEqual(visible[6].number_format, '@')
-        self.assertEqual(book.active.max_row, 5)
+        self.assertEqual(book['Список сотрудников'].max_row, 5)
         self.assertEqual([row[0].value for row in rows], [1, 2, 3, 4])
         night = next(row for row in rows if row[5].value == 'Ночной сотрудник')
         self.assertEqual(night[12].value, 'Ночь')
-        self.assertEqual(book.active.freeze_panes, 'A2')
-        self.assertEqual(book.active.tables['StaffingSource'].autoFilter.ref, 'A1:O5')
+        self.assertEqual(book['Список сотрудников'].freeze_panes, 'A2')
+        self.assertEqual(book['Список сотрудников'].tables['StaffingSource'].autoFilter.ref, 'A1:O5')
 
     def test_department_and_operations_follow_assignment_date_and_shift(self):
         department = 'Строительно-монтажный участок № 15.2'
@@ -124,7 +124,7 @@ class StaffingExportTest(unittest.TestCase):
             db.commit()
         response = self.export(self.admin)
         self.assertEqual(response.headers['X-Export-Count'], '5')
-        sheet = self.workbook(response).active
+        sheet = self.workbook(response)['Список сотрудников']
         rows = {(r[6].value, r[12].value): r for r in sheet.iter_rows(min_row=2)}
         day = rows[('000123', 'День')]
         self.assertEqual([c.value for c in day[13:]], [department, operations])
@@ -134,7 +134,7 @@ class StaffingExportTest(unittest.TestCase):
         self.assertEqual(rows[('000123', 'Ночь')][14].value, 'Ночная сборка')
         self.assertEqual(rows[('000124', 'Ночь')][14].value, 'Ночные операции')
         self.assertIsNone(rows[('000125', 'День')][14].value)
-        night = self.workbook(self.export(self.admin, '2 смена')).active
+        night = self.workbook(self.export(self.admin, '2 смена'))['Список сотрудников']
         self.assertEqual({r[14].value for r in night.iter_rows(min_row=2)}, {'Ночная сборка', 'Ночные операции'})
 
     def test_foreman_sees_only_own_or_own_crew_assignments(self):
@@ -143,8 +143,8 @@ class StaffingExportTest(unittest.TestCase):
         self.assertEqual(response.headers['X-Export-Count'], '2')
         book = self.workbook(response)
         self.assertEqual(book.sheetnames, ['Список сотрудников', 'Сводная таблица'])
-        self.assertEqual({row[12].value for row in book.active.iter_rows(min_row=2)}, {'День'})
-        values = [row[5].value for row in book.active.iter_rows(min_row=2)]
+        self.assertEqual({row[12].value for row in book['Список сотрудников'].iter_rows(min_row=2)}, {'День'})
+        values = [row[5].value for row in book['Список сотрудников'].iter_rows(min_row=2)]
         self.assertEqual(values, ['=Формула', 'Неактивный сотрудник'])
 
     def test_night_filter_exports_two_tabs_with_shift_column(self):
@@ -152,9 +152,9 @@ class StaffingExportTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         book = self.workbook(response)
         self.assertEqual(book.sheetnames, ['Список сотрудников', 'Сводная таблица'])
-        self.assertEqual(book.active.max_row, 2)
-        self.assertEqual(book.active['F2'].value, 'Ночной сотрудник')
-        self.assertEqual(book.active['M2'].value, 'Ночь')
+        self.assertEqual(book['Список сотрудников'].max_row, 2)
+        self.assertEqual(book['Список сотрудников']['F2'].value, 'Ночной сотрудник')
+        self.assertEqual(book['Список сотрудников']['M2'].value, 'Ночь')
 
     def test_permissions_invalid_period_and_empty_export(self):
         self.assertEqual(self.module.app.test_client().get('/api/staffing/export').status_code, 401)
