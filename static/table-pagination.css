@@ -1,0 +1,15 @@
+.table-pagination { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem .85rem; padding: .55rem .7rem; margin: .45rem 0; border: 1px solid #d2e1e3; border-radius: 9px; background: #fff; min-width: 0; }
+.table-pagination-summary { margin-right: auto; font-size: .85rem; color: #35505a; }
+.table-pagination-pages { display: flex; align-items: center; flex-wrap: wrap; gap: .25rem; }
+.table-pagination .table-pagination-pages button { min-width: 34px; min-height: 34px; padding: .3rem .5rem; font-size: .85rem; }
+.table-pagination button[aria-current="page"] { background: #007c86; color: white; border-color: #007c86; font-weight: 700; }
+.table-pagination-size { display: flex; align-items: center; gap: .35rem; font-size: .85rem; }
+.table-pagination-size select { width: auto; min-height: 34px; padding: .25rem .4rem; }
+.table-pagination-note { flex-basis: 100%; color: #526c73; }
+@media (max-width: 640px) {
+  .table-pagination { gap: .4rem; padding: .4rem; }
+  .table-pagination-summary { flex-basis: 100%; }
+  .table-pagination-pages { flex: 1 1 100%; gap: .2rem; }
+  .table-pagination .table-pagination-pages button { min-width: 32px; min-height: 44px; padding: .25rem .45rem; }
+  .table-pagination-size select { min-height: 44px; }
+}

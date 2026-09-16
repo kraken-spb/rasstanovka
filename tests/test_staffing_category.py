@@ -21,8 +21,8 @@ class StaffingCategoryTest(unittest.TestCase):
         self.client = self.fixture.admin
         with self.module.app.app_context():
             db = self.module.get_db()
-            self.category_id = db.execute('''INSERT INTO gdlr_categories(name,name_key,edit_token,updated_by,updated_at)
-                VALUES ('Новая категория','новая категория','catalog-token',?,'now')''', (self.fixture.admin_id,)).lastrowid
+            self.category_id = db.execute('''INSERT INTO gdlr_categories(name,name_key,staffing_allowed,edit_token,updated_by,updated_at)
+                VALUES ('Новая категория','новая категория',1,'catalog-token',?,'now')''', (self.fixture.admin_id,)).lastrowid
             db.commit()
         self.row = next(row for row in self.fixture.table().get_json()['rows'] if row['personnel_no'] == '70001')
         self.url = f"/api/staffing/workers/{self.row['id']}/category"
@@ -83,7 +83,8 @@ class StaffingCategoryTest(unittest.TestCase):
             db.commit()
         self.assertEqual(self.write().status_code, 400)
         with self.module.app.app_context():
-            self.assertIsNone(self.module.get_db().execute('SELECT 1 FROM employee_gdlr WHERE worker_id=?', (self.row['id'],)).fetchone())
+            self.assertEqual(self.module.get_db().execute('SELECT category_id FROM employee_gdlr WHERE worker_id=?',
+                (self.row['id'],)).fetchone()[0], self.row['category_id'])
 
     def test_employee_screen_change_invalidates_staffing_editor(self):
         employee = next(row for row in self.client.get('/api/employees').get_json()['rows'] if row['id'] == self.row['id'])

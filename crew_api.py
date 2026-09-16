@@ -12,6 +12,8 @@ from pathlib import Path
 from flask import abort, g, jsonify, request
 from itsdangerous import BadSignature, URLSafeSerializer, URLSafeTimedSerializer
 
+from staffing_shifts import responsible_ref, resolve_responsible
+
 SHIFTS = {"1 смена", "2 смена"}
 
 
@@ -74,7 +76,7 @@ def register_crew_routes(app, get_db, roles_required, utc_now):
             'SELECT worker_id,edit_token FROM employee_restorations ORDER BY id')}
         rows = []
         employees = employee_rows()
-        editable = allowed_workers(db, [r['id'] for r in employees], allow_unowned=True)
+        editable = set() if g.user['role'] == 'hr_viewer' else allowed_workers(db, [r['id'] for r in employees], allow_unowned=True)
         for row in employees:
             if request.args.get('scope') == 'outstaff' and row['id'] not in outstaff:
                 continue
@@ -294,6 +296,143 @@ def register_crew_routes(app, get_db, roles_required, utc_now):
     def api_error(error):
         return jsonify({"error": error.description}), error.code
 
+    def crew_catalog_token(crew):
+        fields = ('id', 'name', 'owner_user_id', 'linear_itr', 'brigadier', 'details_token',
+                  'linear_itr_person_id', 'brigadier_person_id', 'linear_itr_worker_id', 'brigadier_worker_id')
+        return hashlib.sha256(json.dumps({key: crew[key] for key in fields},
+            sort_keys=True, ensure_ascii=False).encode('utf-8')).hexdigest()
+
+    def catalog_members(db, crew_id=None):
+        clause, params = worker_clause(db)
+        extra = '' if crew_id is None else ' AND c.id=?'
+        if crew_id is not None:
+            params = [*params, crew_id]
+        return db.execute(f"""SELECT w.id,w.full_name,w.personnel_no,w.department,w.employer,
+            COALESCE(gc.name,w.category) category,w.active,m.crew_id
+            FROM workers w JOIN crew_members m ON m.worker_id=w.id JOIN crews c ON c.id=m.crew_id
+            LEFT JOIN employee_gdlr ec ON ec.worker_id=w.id
+            LEFT JOIN gdlr_categories gc ON gc.id=ec.category_id
+            WHERE ({clause}){extra} ORDER BY w.full_name,w.id""", params).fetchall()
+
+    def catalog_crew_history(db):
+        # Undo/redo guards also retain brigade IDs after a roster transfer.
+        return {row[0] for row in db.execute('''
+            SELECT crew_id FROM assignments WHERE crew_id IS NOT NULL
+            UNION SELECT crew_id FROM assignment_events WHERE crew_id IS NOT NULL
+            UNION SELECT crew_id FROM employee_removals WHERE crew_id IS NOT NULL
+            UNION SELECT crew_id FROM employee_restorations WHERE crew_id IS NOT NULL
+            UNION SELECT value FROM staffing_action_history,
+                json_each(staffing_action_history.guards_json, '$.crew_ids')
+        ''')}
+
+    def catalog_delete_reason(member_count, has_history):
+        if member_count:
+            return 'В бригаде есть сотрудники. Сначала переведите их в другую бригаду.'
+        if has_history:
+            return 'Бригада используется в расстановке или истории изменений. Удаление недоступно.'
+        return ''
+
+    @app.get('/api/crew-catalog')
+    @roles_required('admin')
+    def list_crew_catalog():
+        db = get_db()
+        members = {}
+        for member in catalog_members(db):
+            members.setdefault(member['crew_id'], []).append(member)
+        totals = dict(db.execute('SELECT crew_id,COUNT(*) FROM crew_members GROUP BY crew_id').fetchall())
+        history = catalog_crew_history(db) if g.user['role'] == 'super_admin' else set()
+        result = []
+        for crew in db.execute('SELECT * FROM crews ORDER BY name,id'):
+            visible = members.get(crew['id'], [])
+            total = totals.get(crew['id'], 0)
+            if not visible and (total or not can_crew(db, crew['id'])):
+                continue
+            result.append({**{key: crew[key] for key in ('id','name','linear_itr','brigadier',
+                'linear_itr_person_id','brigadier_person_id')},
+                'linear_itr_person_id': responsible_ref(crew, 'linear_itr'),
+                'brigadier_person_id': responsible_ref(crew, 'brigadier'),
+                'expected_token': crew_catalog_token(crew), 'member_count': len(visible),
+                'active_count': sum(bool(row['active']) for row in visible),
+                'departments': sorted({row['department'] for row in visible if row['department']}),
+                'can_edit': g.user['role'] != 'hr_viewer' and len(visible) == total,
+                'can_delete': g.user['role'] == 'super_admin' and not total and crew['id'] not in history,
+                'delete_reason': catalog_delete_reason(total, crew['id'] in history) if g.user['role'] == 'super_admin' else '',
+                'imported': bool(crew['import_key'])})
+        return jsonify({'rows': result})
+
+    @app.delete('/api/crew-catalog/<int:crew_id>')
+    @roles_required('super_admin')
+    def delete_crew_catalog(crew_id):
+        from backup_api import create_backup
+
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict) or set(payload) != {'expected_token'} or not isinstance(payload['expected_token'], str):
+            abort(400, description='Обновите справочник перед удалением бригады.')
+        db = get_db()
+        try:
+            with db:
+                db.execute('BEGIN IMMEDIATE')
+                actor = db.execute('SELECT role,active FROM users WHERE id=?', (g.user['id'],)).fetchone()
+                if not actor or not actor['active'] or actor['role'] != 'super_admin':
+                    abort(403, description='Удалять бригады из справочника может только супер-администратор.')
+                crew = crew_access(crew_id)
+                require_crew(db, crew_id, whole=True)
+                if payload['expected_token'] != crew_catalog_token(crew):
+                    abort(409, description='Бригада изменена. Закройте окно и обновите справочник перед удалением.')
+                count = db.execute('SELECT COUNT(*) FROM crew_members WHERE crew_id=?', (crew_id,)).fetchone()[0]
+                reason = catalog_delete_reason(count, crew_id in catalog_crew_history(db))
+                if reason:
+                    abort(409, description=reason)
+                try:
+                    create_backup(db, reason='before-crew-deletion')
+                except (OSError, sqlite3.Error):
+                    return jsonify({'error': 'Не удалось создать резервную копию. Бригада не удалена.'}), 503
+                db.execute('DELETE FROM crews WHERE id=?', (crew_id,))
+        except sqlite3.IntegrityError:
+            abort(409, description='Бригада связана с другими данными. Удаление недоступно.')
+        return jsonify({'deleted': crew_id})
+
+    @app.get('/api/crew-catalog/<int:crew_id>/members')
+    @roles_required('admin')
+    def crew_catalog_members(crew_id):
+        crew_access(crew_id)
+        return jsonify({'rows': [dict(row) for row in catalog_members(get_db(), crew_id)]})
+
+    @app.patch('/api/crew-catalog/<int:crew_id>')
+    @roles_required('admin')
+    def save_crew_catalog(crew_id):
+        payload = request.get_json(silent=True)
+        allowed = {'name','linear_itr','brigadier','linear_itr_person_id','brigadier_person_id','expected_token'}
+        if not isinstance(payload, dict) or set(payload) - allowed:
+            abort(400, description='Некорректные данные бригады.')
+        values = {}
+        for field, limit in (('name',120),('linear_itr',200),('brigadier',200)):
+            value = payload.get(field)
+            if not isinstance(value, str) or len(value.strip()) > limit or (field == 'name' and not value.strip()):
+                abort(400, description='Проверьте название бригады и ФИО ответственных.')
+            values[field] = value.strip()
+        db = get_db()
+        try:
+            with db:
+                db.execute('BEGIN IMMEDIATE')
+                crew = crew_access(crew_id)
+                require_crew(db, crew_id, whole=True)
+                if payload.get('expected_token') != crew_catalog_token(crew):
+                    abort(409, description='Бригада изменена в другом окне. Закройте форму и обновите справочник.')
+                bindings = []
+                for field in ('linear_itr','brigadier'):
+                    reference = payload.get(field + '_person_id', responsible_ref(crew, field) if values[field] == crew[field] else None)
+                    # Renaming a brigade must preserve a historical, now inactive responsible.
+                    if values[field] == crew[field] and reference == responsible_ref(crew, field):
+                        bindings.extend((crew[field + '_person_id'], crew[field + '_worker_id']))
+                    else:
+                        bindings.extend(resolve_responsible(db, reference, values[field]))
+                db.execute('UPDATE crews SET name=?,linear_itr=?,brigadier=?,linear_itr_person_id=?,linear_itr_worker_id=?,brigadier_person_id=?,brigadier_worker_id=?,details_token=? WHERE id=?',
+                    (values['name'],values['linear_itr'],values['brigadier'],*bindings,secrets.token_urlsafe(16),crew_id))
+        except sqlite3.IntegrityError:
+            abort(409, description='Бригада с таким названием уже существует. Укажите другое название.')
+        return jsonify({'id': crew_id, **values})
+
     @app.get("/api/crews")
     @roles_required("admin", "foreman")
     def list_crews():
@@ -352,17 +491,13 @@ def register_crew_routes(app, get_db, roles_required, utc_now):
                         abort(409, description='Состав сотрудников изменился. Закройте форму и обновите расстановку.')
                     validate_group_snapshot(db, ids, payload)
                     create_backup(db, reason='before-crew-creation')
-                person_ids = {}
+                bindings = []
                 for field in ('linear_itr', 'brigadier'):
-                    person_id = payload.get(field + '_person_id')
-                    person = db.execute('SELECT full_name FROM staffing_people WHERE id=?', (person_id,)).fetchone() if type(person_id) is int else None
-                    if person_id is not None and (not person or person['full_name'] != responsible[field]):
-                        abort(400, description='ФИО не соответствует выбранному сотруднику. Выберите его заново.')
-                    person_ids[field] = person_id
+                    bindings.extend(resolve_responsible(db, payload.get(field + '_person_id'), responsible[field]))
                 crew_id = db.execute('''INSERT INTO crews(name,owner_user_id,created_at,linear_itr,brigadier,details_token,
-                    linear_itr_person_id,brigadier_person_id) VALUES (?,?,?,?,?,?,?,?)''',
+                    linear_itr_person_id,linear_itr_worker_id,brigadier_person_id,brigadier_worker_id) VALUES (?,?,?,?,?,?,?,?,?,?)''',
                     (name, owner, utc_now(), responsible['linear_itr'], responsible['brigadier'], secrets.token_urlsafe(16),
-                     person_ids['linear_itr'], person_ids['brigadier'])).lastrowid
+                     *bindings)).lastrowid
                 if ids:
                     db.executemany('''INSERT INTO crew_members(crew_id,worker_id) VALUES (?,?)
                         ON CONFLICT(worker_id) DO UPDATE SET crew_id=excluded.crew_id''', [(crew_id, i) for i in ids])
@@ -620,6 +755,9 @@ def register_crew_routes(app, get_db, roles_required, utc_now):
             if len(members) != len(ids):
                 abort(409, description="Состав бригады изменился. Обновите список.")
             require_workers(db, ids)
+            if site is not None:
+                from gdlr_api import require_staffing_workers
+                require_staffing_workers(db, ids)
             current_rows = db.execute(
                 f"""SELECT * FROM assignments WHERE work_date = ?
                     AND (CASE WHEN shift = 'Ночная смена' THEN '2 смена' ELSE shift END) = ?

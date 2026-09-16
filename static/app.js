@@ -1,10 +1,13 @@
 (() => {
   "use strict";
+  const MF = window.MultiFilter;
   const $ = (s) => document.querySelector(s);
   const all = (s) => [...document.querySelectorAll(s)];
   const root = $(".app-shell");
   if (!root) return;
+  MF.enable($('#dashboard-category'));
   const role = root.dataset.role;
+  const readOnly = role === 'hr_viewer';
   const state = { crews: [], crew: null, members: [], selected: new Set(), candidates: [],
     sites: [], objects: [], subs: [], busy: false, boardRequest: 0, location: null,
     display: "total", summaryMode: "week", calendars: {}, expanded: { plan: new Set(), dashboard: new Set() },
@@ -55,7 +58,7 @@
     if (window.backupsScreen && !window.backupsScreen.canLeave()) return;
     if (window.locationsScreen && !window.locationsScreen.canLeave()) return;
     if (window.catalogsScreen && !window.catalogsScreen.canLeave()) return;
-    if (!$("#view-" + view)) view = role === "viewer" ? "dashboard" : "placement";
+    if (!$("#view-" + view)) view = role === "viewer" ? "dashboard" : readOnly ? "staffing" : "placement";
     if (state.busy) { toast("Дождитесь сохранения."); return; }
     if (state.pendingPlans) await new Promise((resolve) => state.planWaiters.push(resolve));
     if ((state.planErrors.size || state.planDrafts.size) && view !== "plan") { toast("Завершите ввод в несохранённых ячейках плана.", true); return; }
@@ -68,6 +71,7 @@
         if (staffingFilter) await window.staffingScreen.openFromCalendar(staffingFilter);
         else await window.staffingScreen.load();
       }
+      if (view === "verification") await window.placementVerificationScreen.load();
       if (view === "outstaff") await window.outstaffScreen.load();
       if (view === "employees") await window.employeesScreen.load();
       if (view === "analytics") await window.personnelDashboard.load();
@@ -79,6 +83,7 @@
       if (view === "plan" || view === "dashboard") await loadCalendar(view);
     } catch (error) { toast(error.message, true); }
   }
+  window.openStaffingReport = filter => switchView('staffing', filter);
   all("[data-view]").forEach((el) => el.addEventListener("click", () => switchView(el.dataset.view)));
   $(".brand").addEventListener("click", (event) => { event.preventDefault(); switchView(role === "viewer" ? "dashboard" : "staffing"); });
   function setBusy(busy) {
@@ -280,21 +285,27 @@
     const facts = new Map();
     data.facts.forEach((f) => {
       const key = calendarKey(f.subobject_id, f.work_date);
-      const entry = facts.get(key) || { day: 0, night: 0, orgs: new Map() };
+      const entry = facts.get(key) || { day: 0, night: 0, orgs: new Map(), companies: new Map() };
       entry.day += f.day_count; entry.night += f.night_count;
-      entry.orgs.set(f.employer, { day: f.day_count, night: f.night_count });
+      const org = entry.orgs.get(f.employer) || {day: 0, night: 0};
+      org.day += f.day_count; org.night += f.night_count; entry.orgs.set(f.employer, org);
+      const company = entry.companies.get(f.contractor) || {day: 0, night: 0, orgs: new Map()};
+      company.day += f.day_count; company.night += f.night_count;
+      const companyOrg = company.orgs.get(f.employer) || {day: 0, night: 0};
+      companyOrg.day += f.day_count; companyOrg.night += f.night_count;
+      company.orgs.set(f.employer, companyOrg); entry.companies.set(f.contractor, company);
       facts.set(key, entry);
     });
     return { ...data, plansByKey: plans, factsByKey: facts };
   }
   async function loadCalendar(view) {
-    if (view === 'dashboard' && state.summaryMode === 'placement') return window.placementReport.load();
+    if (view === 'dashboard' && ['placement', 'category'].includes(state.summaryMode)) return window.placementReport.load();
     const report = view === "dashboard" && state.summaryMode === "date";
     const dateInput = report ? $("#report-date") : $("#" + view + "-start");
     if (state.pendingPlans) await new Promise((resolve) => state.planWaiters.push(resolve));
     if (state.pendingPlans || state.planErrors.size || state.planDrafts.size) {
       if (state.calendars[view]?.dates) dateInput.value = state.calendars[view].dates[0];
-      if (view === "dashboard") $("#dashboard-category").value = state.calendars[view]?.categorySelection || "";
+      if (view === "dashboard") MF.set($("#dashboard-category"), state.calendars[view]?.categorySelection || "");
       toast("Сначала завершите ввод в плане."); return;
     }
     const start = dateInput.value;
@@ -304,9 +315,9 @@
       if (view === "dashboard") $("#dashboard-absences").replaceChildren();
       status("#" + view + "-status", "Укажите дату.", true); return;
     }
-    const categorySelection = view === "dashboard" ? $("#dashboard-category").value : "";
+    const categorySelection = view === "dashboard" ? MF.get($("#dashboard-category")) : "";
     const query = new URLSearchParams({start, days: report ? '1' : '7'});
-    if (categorySelection) query.set('category', JSON.parse(categorySelection));
+    MF.params(query, 'category', categorySelection, value => JSON.parse(value));
     status("#" + view + "-status", "Загрузка…");
     if (view === "dashboard") $("#dashboard-absences").replaceChildren();
     const requestId = (state.calendars[view]?.requestId || 0) + 1;
@@ -318,16 +329,16 @@
       state.calendars[view] = { ...calendarIndex(data), requestId, categorySelection, summaryMode: report ? 'date' : 'week' };
       if (view === "dashboard") {
         const categories = [...data.categories];
-        const selected = categorySelection ? JSON.parse(categorySelection) : null;
-        if (selected !== null && !categories.includes(selected)) categories.push(selected);
+        const selected = MF.values(categorySelection).map(value => JSON.parse(value));
+        selected.forEach(value => { if(!categories.includes(value)) categories.push(value); });
         $("#dashboard-category").replaceChildren(E('option', {value: ''}, 'Все категории'),
           ...categories.map(category => E('option', {value: JSON.stringify(category)}, category || 'Без категории')));
-        $("#dashboard-category").value = categorySelection;
+        MF.set($("#dashboard-category"), categorySelection);
         const note = $("#dashboard-category-note");
         note.hidden = !categorySelection;
-        note.textContent = categorySelection ? 'Факт: ' + (selected || 'Без категории') + (report ? '.' : '. План — общий по всем категориям.') : '';
+        note.textContent = categorySelection ? 'Факт: ' + selected.map(value => value || 'Без категории').join(', ') + (report ? '.' : '. План — общий по всем категориям.') : '';
       }
-      renderCalendar(view); status("#" + view + "-status", "Актуально");
+      renderCalendar(view); status("#" + view + "-status", view === "dashboard" ? "" : "Актуально");
     } catch (error) {
       if (state.calendars[view].requestId !== requestId) return;
       $("#" + view + "-table").replaceChildren(E("div", { className: "empty-state" }, E("p", {}, error.message),
@@ -336,13 +347,14 @@
     } finally { if (state.calendars[view].requestId === requestId) $("#" + view + "-table").inert = false; }
   }
   const columns = () => state.display === "total" ? ["Всего"] : state.display === "shifts" ? ["День", "Ночь"] : ["День", "Ночь", "Всего"];
-  function aggregate(data, ids, day, organization) {
+  function aggregate(data, ids, day, organization, contractor) {
     let planned = 0, hasPlan = false, actualDay = 0, actualNight = 0;
     ids.forEach((id) => {
       const plan = data.plansByKey.get(calendarKey(id, day));
-      if (plan && organization === undefined) { hasPlan = true; planned += plan.planned_count; }
+      if (plan && organization === undefined && contractor === undefined) { hasPlan = true; planned += plan.planned_count; }
       const fact = data.factsByKey.get(calendarKey(id, day));
-      const source = organization === undefined ? fact : fact?.orgs.get(organization);
+      const source = contractor === undefined ? (organization === undefined ? fact : fact?.orgs.get(organization))
+        : organization === undefined ? fact?.companies.get(contractor) : fact?.companies.get(contractor)?.orgs.get(organization);
       actualDay += source?.day || 0; actualNight += source?.night || 0;
     });
     return { planned: hasPlan ? planned : null, day: actualDay, night: actualNight };
@@ -373,14 +385,20 @@
     }
     if (view === "dashboard" && data.summaryMode === 'date') return;
     const isPlan = view === "plan", cols = isPlan ? ["План"] : columns(), width = cols.length;
+    const contractors = [...new Set(data.facts.map(f => f.contractor))].sort((a,b) => a.localeCompare(b, 'ru'));
+    const companyColumns = isPlan ? [undefined] : [...contractors, undefined];
+    const dateWidth = width * companyColumns.length;
     const query = $("#" + view + "-search").value;
     const table = E("table", { className: "calendar-table " + (isPlan ? "plan-table" : "fact-table") });
-    const head = E("thead"), main = E("tr", {}, E("th", { className: "structure", rowSpan: isPlan ? 1 : 2, scope: "col" }, "Объект / подобъект"));
-    if (!isPlan) main.append(E("th", { className: "kind-head", rowSpan: 2, scope: "col" }, ""));
-    data.dates.forEach((day) => main.append(E("th", { colSpan: width, scope: "colgroup", className: "date-heading" }, humanDate(day),
+    const head = E("thead"), main = E("tr", {}, E("th", { className: "structure", rowSpan: isPlan ? 1 : 3, scope: "col" }, "Объект / подобъект"));
+    if (!isPlan) main.append(E("th", { className: "kind-head", rowSpan: 3, scope: "col" }, ""));
+    data.dates.forEach((day) => main.append(E("th", { colSpan: dateWidth, scope: "colgroup", className: "date-heading" }, humanDate(day),
       E("small", {}, new Date(day + "T12:00:00").toLocaleDateString("ru-RU", { weekday: "short" })))));
     head.append(main);
-    if (!isPlan) head.append(E("tr", {}, data.dates.flatMap(() => cols.map((name) => E("th", { scope: "col", className: "shift-heading" }, name)))));
+    if (!isPlan) {
+      head.append(E("tr", {}, data.dates.flatMap(() => companyColumns.map(company => E("th", {colSpan: width, scope: "colgroup", className: "company-heading"}, company === undefined ? "Общий итог" : company || "Подрядчик не указан")))));
+      head.append(E("tr", {}, data.dates.flatMap(() => companyColumns.flatMap(() => cols.map(name => E("th", {scope: "col", className: "shift-heading"}, name))))));
+    }
     table.append(head);
     const body = E("tbody");
     const appendRows = (label, ids, level, expanded, toggle, organization, totalKey) => {
@@ -388,7 +406,7 @@
         const row = E("tr", { className: level === 0 ? "object-row" : "subobject-row" }, labelCell(label, level, expanded, toggle));
         data.dates.forEach((day) => {
           const td = E("td", { className: "num" });
-          if (level === 1) {
+          if (level === 1 && !readOnly) {
             const key = calendarKey(ids[0], day), plan = data.plansByKey.get(key);
             const input = E("input", { type: "text", inputMode: "numeric", pattern: "[0-9]*",
               className: "plan-cell", value: plan ? String(plan.planned_count) : "",
@@ -421,9 +439,11 @@
       const actual = E("tr", { className: "actual-row " + (level === 0 ? "object-row" : "") }, E("th", { className: "kind", scope: "row" }, "Факт"));
       data.dates.forEach((day) => {
         const values = aggregate(data, ids, day, organization);
-        planned.append(E("td", { colSpan: width, className: "num daily-plan", title: "Общий план на сутки" }, values.planned === null ? "—" : String(values.planned)));
+        planned.append(E("td", { colSpan: dateWidth, className: "num daily-plan", title: "Общий план на сутки" }, values.planned === null ? "—" : String(values.planned)));
+        companyColumns.forEach(contractor => {
+        const companyValues = aggregate(data, ids, day, organization, contractor);
         cols.forEach((col) => {
-          const value = col === "День" ? values.day : col === "Ночь" ? values.night : values.day + values.night;
+          const value = col === "День" ? companyValues.day : col === "Ночь" ? companyValues.night : companyValues.day + companyValues.night;
           const shift = col === "День" ? '1 смена' : col === "Ночь" ? '2 смена' : '';
           const caption = 'Показать сотрудников: ' + label + ', ' + humanDate(day) + ', ' + col + ', ' + value + ' чел.';
           actual.append(E("td", { className: "num" + (value === 0 ? " zero" : "") },
@@ -431,8 +451,9 @@
               title: caption, 'aria-label': caption,
               onclick: () => switchView('staffing', {sites: ids, date: day, shift,
                 label: organization === undefined ? label : state.subs.find(site => site.id === ids[0]).name + ' · ' + label,
-                employer: organization,
-                category: data.categorySelection ? JSON.parse(data.categorySelection) : undefined})}, String(value)) : String(value)));
+                employer: organization, contractor,
+                category: data.categorySelection ? MF.values(data.categorySelection).map(value => JSON.parse(value)) : undefined})}, String(value)) : String(value)));
+        });
         });
       });
       body.append(planned, actual);
@@ -442,7 +463,7 @@
       (!query || matches(normalized(object.name + " " + s.name), query)) &&
       (!onlyWithActivity || hasDashboardActivity(data, s.id))) })).filter((item) => item.subs.length);
     if (!visible.length) {
-      body.append(E("tr", {}, E("td", { colSpan: (isPlan ? 1 : 2) + data.dates.length * width, className: "calendar-empty" },
+      body.append(E("tr", {}, E("td", { colSpan: (isPlan ? 1 : 2) + data.dates.length * dateWidth, className: "calendar-empty" },
         onlyWithActivity ? "Нет объектов с планом или фактом за выбранную неделю." : "По вашему запросу ничего не найдено.")));
       table.append(body);
       $("#" + view + "-table").replaceChildren(table);
@@ -471,6 +492,7 @@
     $("#" + view + "-table").replaceChildren(table);
   }
   async function savePlanCell(input, site, day) {
+    if (readOnly) return;
     const key = calendarKey(site, day), data = state.calendars.plan;
     const old = data.plansByKey.get(key), text = input.value.trim();
     if (!/^\d*$/.test(text) || (text !== "" && Number(text) > 100000)) {
@@ -520,14 +542,18 @@
   $("#report-date").addEventListener("change", () => loadCalendar("dashboard"));
   all("[data-summary-mode]").forEach(button => button.addEventListener("click", () => {
     if (state.pendingPlans || state.planErrors.size || state.planDrafts.size) { toast("Завершите ввод в плане."); return; }
+    const previousMode = state.summaryMode;
     state.summaryMode = button.dataset.summaryMode;
-    const placement = state.summaryMode === 'placement';
+    const placement = ['placement', 'category'].includes(state.summaryMode);
+    window.placementReport.setMode(state.summaryMode);
     $('#placement-report').hidden = !placement;
     $('#dashboard-calendar-panel').hidden = placement;
     if (placement) {
       state.calendars.dashboard = {...state.calendars.dashboard, requestId: (state.calendars.dashboard?.requestId || 0) + 1};
       all('[data-summary-mode]').forEach(item => item.setAttribute('aria-pressed', String(item === button)));
-      $('#view-dashboard .page-heading p').textContent = 'Расставленные, нерасставленные и неявки по ГДЛР и ППС';
+      $('#view-dashboard .page-heading p').textContent = state.summaryMode === 'category' ? 'Расставленные и нерасставленные по категориям ГДТЛР на выбранную дату' : 'Расставленные, нерасставленные и неявки по ГДЛР и ППС';
+      const selectedDate = $('#report-date').value;
+      if (state.summaryMode === 'category' && previousMode === 'date' && selectedDate) $('#placement-report-date').value = selectedDate;
       status('#dashboard-status', '');
       window.placementReport.load();
       return;
@@ -562,6 +588,7 @@
     const accessByUser = new Map(access.rows.map(item => [item.user_id, item]));
     const scopeEditor = user => {
       const saved = accessByUser.get(user.id);
+      if (user.role === 'hr_viewer') return E('p', {className: 'account-scope'}, 'Просмотр всех СМУ. Изменение данных недоступно.');
       if (user.role === 'viewer' || user.role === 'super_admin') return E('p', {className: 'account-scope'},
         user.role === 'viewer' ? 'Только просмотр — редактирование недоступно.' : 'Редактирование всех СМУ — супер-администратор.');
       if (role !== 'super_admin') {
@@ -611,7 +638,7 @@
       update();
       return editor;
     };
-    const labels = { super_admin: "Супер-администратор", admin: "Администратор", foreman: "Прораб", viewer: "Просмотр" };
+    const labels = { super_admin: "Супер-администратор", admin: "Администратор", foreman: "Прораб", viewer: "Просмотр", hr_viewer: "Управление по работе с персоналом" };
     const canManage = () => role === 'super_admin';
     const roleEditor = (user) => {
       if (!canManage(user)) return null;

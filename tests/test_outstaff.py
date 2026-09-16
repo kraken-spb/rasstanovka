@@ -52,8 +52,8 @@ class OutstaffTest(unittest.TestCase):
             self.module.init_db()
             db = self.module.get_db()
             self.admin = db.execute("SELECT id FROM users WHERE role='admin'").fetchone()[0]
-            self.cat = db.execute('''INSERT INTO gdlr_categories(name,name_key,edit_token,updated_by,updated_at)
-                VALUES ('Монтажник','монтажник','category-token',?,'now')''', (self.admin,)).lastrowid
+            self.cat = db.execute('''INSERT INTO gdlr_categories(name,name_key,staffing_allowed,edit_token,updated_by,updated_at)
+                VALUES ('Монтажник','монтажник',1,'category-token',?,'now')''', (self.admin,)).lastrowid
             db.execute('''INSERT INTO workers(full_name,personnel_no,department,category,profession)
                 VALUES ('Образец категории','DEPT-1','Строительно-монтажный участок № 15.1','Монтажник','Монтажник 5 разряда')''')
             db.commit()

@@ -8,6 +8,42 @@ from flask import abort, g, jsonify, request
 from backup_api import create_backup
 
 
+STAFFING_CATEGORY_NAMES = (
+    'Арматурщик', 'Бетонщик', 'Монтажник СиЖБК', 'Монтажник ТТ',
+    'Прочие монтажники', 'Прочие основные рабочие', 'Прочие сварщики и газорезчики',
+    'Сварщик АиПАМ', 'Сварщик МК', 'Сварщик ТТ', 'Электромонтажник', 'Изолировщик',
+)
+
+
+def staffing_eligible_sql(worker='w'):
+    """Current catalog binding is authoritative; source text never grants access."""
+    return f'''EXISTS (SELECT 1 FROM employee_gdlr staffing_binding
+        JOIN gdlr_categories staffing_category ON staffing_category.id=staffing_binding.category_id
+        WHERE staffing_binding.worker_id={worker}.id
+          AND staffing_category.active=1 AND staffing_category.staffing_allowed=1)'''
+
+
+def require_staffing_workers(db, ids):
+    count = db.execute(f'''SELECT COUNT(*) FROM workers w
+        WHERE w.id IN ({','.join('?' for _ in ids)}) AND {staffing_eligible_sql()}''', ids).fetchone()[0]
+    if count != len(set(ids)):
+        abort(409, description='Категория ГДЛР сотрудника не допускается в расстановку. '
+              'Проверьте категорию в списке сотрудников и обновите таблицу.')
+
+
+def bind_import_category(db, worker_id, user_id, stamp):
+    """Bind an exact catalog match only when the worker has no current binding."""
+    row = db.execute('''SELECT w.category FROM workers w WHERE w.id=?
+        AND NOT EXISTS (SELECT 1 FROM employee_gdlr e WHERE e.worker_id=w.id)''', (worker_id,)).fetchone()
+    if row is None:
+        return
+    key = unicodedata.normalize('NFC', ' '.join((row['category'] or '').split())).casefold()
+    category = db.execute('SELECT id FROM gdlr_categories WHERE name_key=? AND active=1', (key,)).fetchone()
+    if category:
+        db.execute('''INSERT INTO employee_gdlr(worker_id,category_id,edit_token,updated_by,updated_at)
+            VALUES (?,?,?,?,?)''', (worker_id, category['id'], secrets.token_hex(16), user_id, stamp))
+
+
 def migrate_gdlr(db):
     db.executescript("""
         CREATE TABLE IF NOT EXISTS gdlr_categories (
@@ -22,6 +58,11 @@ def migrate_gdlr(db):
         );
         CREATE INDEX IF NOT EXISTS idx_employee_gdlr_category ON employee_gdlr(category_id);
     """)
+    if 'staffing_allowed' not in {r['name'] for r in db.execute('PRAGMA table_info(gdlr_categories)')}:
+        db.execute('''ALTER TABLE gdlr_categories ADD COLUMN staffing_allowed INTEGER
+            NOT NULL DEFAULT 0 CHECK(staffing_allowed IN (0,1))''')
+        keys = [name.casefold() for name in STAFFING_CATEGORY_NAMES]
+        db.execute(f"UPDATE gdlr_categories SET staffing_allowed=1 WHERE name_key IN ({','.join('?' for _ in keys)})", keys)
 
 
 def register_gdlr_routes(app, get_db, roles_required, utc_now):
@@ -47,8 +88,8 @@ def register_gdlr_routes(app, get_db, roles_required, utc_now):
             if not actor or not actor['active'] or actor['role'] not in ('admin', 'super_admin', 'foreman'):
                 abort(403, description='Нет права изменять категории сотрудников.')
             category = db.execute('SELECT * FROM gdlr_categories WHERE id=?', (data['category_id'],)).fetchone()
-            if not category or not category['active']:
-                abort(400, description='Категория отсутствует или отключена. Обновите справочник.')
+            if not category or not category['active'] or not category['staffing_allowed']:
+                abort(400, description='Категория отсутствует, отключена или не допускается в расстановку. Выберите категорию из списка.')
             if data.get('category_token') != category['edit_token']:
                 abort(409, description='Категория изменена. Обновите справочник и повторите выбор.')
             workers = db.execute(f'''SELECT w.id,w.active,m.crew_id,c.owner_user_id,e.edit_token
@@ -104,8 +145,8 @@ def register_gdlr_routes(app, get_db, roles_required, utc_now):
             if 'expected_token' not in data or data['expected_token'] != (old['edit_token'] if old else None):
                 abort(409, description='Категория сотрудника уже изменена. Обновите расстановку.')
             category = db.execute('SELECT * FROM gdlr_categories WHERE id=?', (data['category_id'],)).fetchone()
-            if not category or not category['active']:
-                abort(400, description='Категория отсутствует или отключена. Обновите справочник.')
+            if not category or not category['active'] or not category['staffing_allowed']:
+                abort(400, description='Категория отсутствует, отключена или не допускается в расстановку. Выберите категорию из списка.')
             if data.get('category_token') != category['edit_token']:
                 abort(409, description='Категория изменена. Обновите справочник и повторите выбор.')
             token = secrets.token_hex(16)

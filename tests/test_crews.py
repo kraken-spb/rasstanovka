@@ -48,6 +48,22 @@ class CrewWorkflowTest(unittest.TestCase):
                     (f"Crew Worker {number}", f"crew-test-{number}", "Test employer"),
                 )
                 self.worker_ids.append(cursor.lastrowid)
+            self.staffing_category_token = 'crew-fixture-category'
+            category_name = 'Монтажник'
+            self.staffing_category_id = db.execute(
+                '''INSERT INTO gdlr_categories
+                   (name,name_key,active,staffing_allowed,edit_token,updated_by,updated_at)
+                   VALUES (?,?,1,1,?,?,?)''',
+                (category_name, category_name.casefold(), self.staffing_category_token,
+                 self.admin_id, 'now'),
+            ).lastrowid
+            for worker_id in self.worker_ids:
+                db.execute(
+                    '''INSERT INTO employee_gdlr(worker_id,category_id,edit_token,updated_by,updated_at)
+                       VALUES (?,?,?,?,?)''',
+                    (worker_id, self.staffing_category_id, self.staffing_category_token,
+                     self.admin_id, 'now'),
+                )
             object_id = db.execute("INSERT INTO objects(name) VALUES ('Crew test object')").lastrowid
             self.sites = [
                 db.execute("INSERT INTO subobjects(object_id, name) VALUES (?, ?)",
@@ -78,7 +94,8 @@ class CrewWorkflowTest(unittest.TestCase):
             db.execute("UPDATE workers SET category='Категория из файла'")
             db.commit()
             self.module.init_db()
-        self.assertEqual(self.admin.get('/api/gdlr-categories').get_json()['rows'], [])
+        rows = self.admin.get('/api/gdlr-categories').get_json()['rows']
+        self.assertEqual([row['id'] for row in rows], [self.staffing_category_id])
         url = '/api/gdlr-categories'
         self.assertEqual(self.viewer.get(url).status_code, 403)
         self.assertEqual(self.write(self.foreman_a, 'POST', url, {'name': 'Монтажники'}).status_code, 403)
@@ -87,7 +104,7 @@ class CrewWorkflowTest(unittest.TestCase):
             self.assertEqual(self.write(self.catalog_admin(), 'POST', url, {'name': name}).status_code, 400)
         self.assertEqual(self.write(self.catalog_admin(), 'POST', url, {'name': 'Монтажники'}).status_code, 201)
         self.assertEqual(self.write(self.catalog_admin(), 'POST', url, {'name': '  МОНТАЖНИКИ  '}).status_code, 409)
-        category = self.admin.get(url).get_json()['rows'][0]
+        category = next(row for row in self.admin.get(url).get_json()['rows'] if row['name'] == 'Монтажники')
         update = {'name': 'Монтажники ТТ', 'active': True, 'expected_token': category['edit_token']}
         self.assertEqual(self.write(self.catalog_admin(), 'PATCH', url + '/' + str(category['id']), update).status_code, 200)
         self.assertEqual(self.write(self.catalog_admin(), 'PATCH', url + '/' + str(category['id']), update).status_code, 409)
@@ -97,7 +114,11 @@ class CrewWorkflowTest(unittest.TestCase):
         worker = self.worker_ids[0]
         catalog_url = '/api/gdlr-categories'
         self.write(self.catalog_admin(), 'POST', catalog_url, {'name': 'Монтажники ТТ'})
-        category = self.admin.get(catalog_url).get_json()['rows'][0]
+        category = next(row for row in self.admin.get(catalog_url).get_json()['rows'] if row['name'] == 'Монтажники ТТ')
+        with self.module.app.app_context():
+            db = self.module.get_db()
+            db.execute('UPDATE gdlr_categories SET staffing_allowed=1 WHERE id=?', (category['id'],))
+            db.commit()
         url = f'/api/employees/{worker}/category'
         payload = {'category_id': category['id'], 'category_token': category['edit_token'],
                    'expected_token': self.employee(worker)['membership_token']}
@@ -387,7 +408,7 @@ class CrewWorkflowTest(unittest.TestCase):
                        ('Монтажник ТТ', 'Участок № 15', 'Монтажник', worker))
             db.commit()
         row = self.employee(worker)
-        self.assertEqual(row['category'], 'Монтажник ТТ')
+        self.assertEqual(row['category'], 'Монтажник')
         self.assertEqual(row['department'], 'Участок № 15')
         self.assertIsNone(row['crew_id'])
         self.assertFalse(row['can_edit'])

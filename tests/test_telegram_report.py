@@ -89,7 +89,7 @@ class TelegramReportTest(unittest.TestCase):
             db.execute("INSERT INTO user_smu_access(user_id,mode,departments_json,edit_token,updated_by,updated_at) VALUES (?,'selected','[\"СМУ 19\"]','t',?,'now')",(self.user,self.fixture.admin))
             db.execute('DELETE FROM telegram_requests');db.commit()
         captured.clear();self.handle(self.update('/report 13.09.2026',2),render)
-        self.assertEqual(captured[0][0]['totals']['total'],2)
+        self.assertEqual(captured[0][0]['totals']['total'],1)
         self.assertFalse(captured[0][1])
 
     def test_revocation_before_delivery_and_unlink_stop_reports(self):

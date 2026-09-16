@@ -126,6 +126,11 @@ class EmployeeRestoreTest(unittest.TestCase):
         with self.app.app_context():
             db = self.module.get_db()
             worker = db.execute("INSERT INTO workers(full_name,personnel_no,active) VALUES ('Отключённый вручную','restore-only',0)").lastrowid
+            category = db.execute(
+                'SELECT id FROM gdlr_categories WHERE active=1 AND staffing_allowed=1 ORDER BY id LIMIT 1'
+            ).fetchone()[0]
+            db.execute('''INSERT INTO employee_gdlr(worker_id,category_id,edit_token,updated_by,updated_at)
+                VALUES (?,?,'restore-only-category',?,'now')''', (worker, category, self.admin_id))
             db.commit()
         self.row = {'id': worker}
         self.url = f'/api/employees/{worker}'

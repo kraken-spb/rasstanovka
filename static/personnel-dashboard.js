@@ -1,5 +1,6 @@
 (() => {
   'use strict';
+  const MF = window.MultiFilter;
   const $ = id => document.getElementById(id);
   if (!$('view-analytics')) return;
   let data = null, requestId = 0;
@@ -44,19 +45,20 @@
     });
     return svg;
   }
+  MF.enable($('analytics-user'));
   function render() {
     if (!data) return;
-    const chosen = $('analytics-user').value;
+    const chosen = MF.get($('analytics-user'));
     const user = data.users.find(item => item.id === chosen);
     const counts = user ? user.counts : data.counts;
     const unique = user ? user.unique_count : data.unique_count;
     const last = counts.at(-1), change = last - counts[0];
     const metrics = [['На конец периода', number(last)], ['Изменение за период', delta(change)],
-      ['Уникальных за период', number(unique)], ['Авторов с назначениями', number(data.users.filter(item => item.unique_count && item.id !== 'unknown' && (!chosen || item.id === chosen)).length)]];
+      ['Уникальных за период', number(unique)], ['Авторов с назначениями', number(data.users.filter(item => item.unique_count && item.id !== 'unknown' && MF.matches(chosen,item.id)).length)]];
     $('analytics-stats').replaceChildren(...metrics.map(([label, value]) => {
       const item = node('div', null, 'analytics-metric'); item.append(node('span', label), node('strong', value)); return item;
     }));
-    $('analytics-chart-title').textContent = user ? user.full_name : 'Весь расставленный персонал';
+    $('analytics-chart-title').textContent = user ? user.full_name : chosen ? 'Персонал выбранных пользователей' : 'Весь расставленный персонал';
     $('analytics-period').textContent = human(data.dates[0]) + ' — ' + human(data.dates.at(-1));
     $('analytics-chart').replaceChildren(chart(counts, data.dates));
     $('analytics-chart-note').textContent = unique ? 'Человек на каждую дату. Точные значения доступны в подсказках точек графика.' : 'За выбранный период назначений нет.';
@@ -68,14 +70,14 @@
     headers.forEach(label => { const th = node('th', label); th.scope = 'col'; heading.append(th); });
     head.append(heading); table.append(head);
     const body = node('tbody');
-    const users = data.users.filter(item => !chosen || item.id === chosen).slice().sort((a, b) => b.counts[dayIndex] - a.counts[dayIndex] || b.unique_count - a.unique_count || a.full_name.localeCompare(b.full_name, 'ru'));
+    const users = data.users.filter(item => MF.matches(chosen,item.id)).slice().sort((a, b) => b.counts[dayIndex] - a.counts[dayIndex] || b.unique_count - a.unique_count || a.full_name.localeCompare(b.full_name, 'ru'));
     const names = new Map();
     for (const item of data.users) names.set(item.full_name, (names.get(item.full_name) || 0) + 1);
     users.forEach(item => {
       const row = node('tr');
       const nameCell = node('td'); nameCell.dataset.label = headers[0];
       const button = node('button', item.full_name + (names.get(item.full_name) > 1 ? ' · №' + item.id : ''), 'text-button analytics-user-button');
-      button.type = 'button'; button.addEventListener('click', () => { $('analytics-user').value = item.id; render(); });
+      button.type = 'button'; button.addEventListener('click', () => { MF.set($('analytics-user'), item.id); load(); });
       nameCell.append(button); row.append(nameCell);
       [number(item.counts[dayIndex]), delta(item.counts[dayIndex] - item.counts[0]), chart(item.counts, data.dates, true), number(item.unique_count)].forEach((value, i) => {
         const cell = node('td'); cell.dataset.label = headers[i + 1]; cell.append(value); row.append(cell);
@@ -92,18 +94,18 @@
     $('analytics-content').hidden = true;
     const start = $('analytics-start').value, end = $('analytics-end').value;
     try {
-      const response = await fetch('/api/personnel-dashboard?' + new URLSearchParams({start, end}), {cache: 'no-store'});
+      const response = await fetch('/api/personnel-dashboard?' + MF.params(new URLSearchParams({start, end}), 'user', MF.get($('analytics-user'))), {cache: 'no-store'});
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Не удалось загрузить дашборд.');
       if (current !== requestId) return;
       data = result;
-      const chosen = $('analytics-user').value;
+      const chosen = MF.get($('analytics-user'));
       const all = node('option', 'Все пользователи'); all.value = '';
       const names = new Map(); data.users.forEach(item => names.set(item.full_name, (names.get(item.full_name) || 0) + 1));
       $('analytics-user').replaceChildren(all, ...data.users.map(item => {
         const option = node('option', item.full_name + (names.get(item.full_name) > 1 ? ' · №' + item.id : '')); option.value = item.id; return option;
       }));
-      $('analytics-user').value = data.users.some(item => item.id === chosen) ? chosen : '';
+      MF.set($('analytics-user'),chosen);
       const detail = $('analytics-detail-date'); detail.min = data.dates[0]; detail.max = data.dates.at(-1);
       if (!data.dates.includes(detail.value)) detail.value = detail.max;
       render(); $('analytics-content').hidden = false;
@@ -116,7 +118,7 @@
   const initial = new Date($('analytics-end').value + 'T12:00:00Z');
   initial.setUTCDate(initial.getUTCDate() - 13); $('analytics-start').value = initial.toISOString().slice(0, 10);
   $('analytics-form').addEventListener('submit', event => { event.preventDefault(); load(); });
-  $('analytics-user').addEventListener('change', render);
+  $('analytics-user').addEventListener('change', load);
   $('analytics-detail-date').addEventListener('change', () => {
     if (!data) return;
     if (!data.dates.includes($('analytics-detail-date').value)) $('analytics-detail-date').value = data.dates.at(-1);

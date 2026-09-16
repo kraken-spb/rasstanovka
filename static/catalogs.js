@@ -3,15 +3,18 @@
   const $ = id => document.getElementById(id);
   if (!$('view-catalogs')) return;
   let section = 'categories';
-  const canLeave = () => window.smuScreen.canLeave() && window.categoriesScreen.canLeave() && window.contractorsScreen.canLeave() && window.locationsScreen.canLeave();
+  const canLeave = () => window.crewCatalogScreen.canLeave() && window.smuScreen.canLeave() && window.categoriesScreen.canLeave() && window.contractorsScreen.canLeave() && window.locationsScreen.canLeave();
   async function show(next = section) {
     if (!canLeave()) return;
     section = next;
+    if ($('catalog-permission-note')) $('catalog-permission-note').hidden = section === 'crews';
     document.querySelectorAll('[data-catalog]').forEach(button => {
       const selected = button.dataset.catalog === section;
       button.classList.toggle('active', selected);
       button.setAttribute('aria-pressed', String(selected));
     });
+    $('view-crew-catalog').hidden = section !== 'crews';
+    $('view-crew-catalog').classList.toggle('active', section === 'crews');
     $('view-categories').hidden = section !== 'categories';
     $('view-categories').classList.toggle('active', section === 'categories');
     $('view-smu').hidden = section !== 'smu';
@@ -25,6 +28,7 @@
     $('catalog-location-title').textContent = {stages: 'Этапы', groups: 'Группы подобъектов', subobjects: 'Подобъекты'}[section] || '';
     window.locationsScreen.setSection(section);
     if (section === 'categories') await window.categoriesScreen.load();
+    else if (section === 'crews') await window.crewCatalogScreen.load();
     else if (section === 'smu') await window.smuScreen.load();
     else if (section === 'contractors') await window.contractorsScreen.load();
     else await window.locationsScreen.load();

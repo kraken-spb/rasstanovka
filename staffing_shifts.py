@@ -40,6 +40,30 @@ def canonical_shift(value):
     return '2 смена' if value == 'Ночная смена' else value
 
 
+def responsible_ref(row, field):
+    """Public reference namespaces never confuse workforce IDs with file-person IDs."""
+    worker = row[field + '_worker_id']
+    return 'outstaff:' + str(worker) if worker is not None else row[field + '_person_id']
+
+
+def resolve_responsible(db, reference, name):
+    if reference is None:
+        return None, None
+    if isinstance(reference, str) and re.fullmatch(r'outstaff:[1-9][0-9]{0,17}', reference):
+        worker = int(reference.split(':')[1])
+        row = db.execute('''SELECT w.full_name FROM workers w JOIN outstaff_members o ON o.worker_id=w.id
+            WHERE w.id=? AND w.active=1''', (worker,)).fetchone()
+        if not row or row['full_name'] != name:
+            abort(409, description='Сотрудник аутстаффа изменён или недоступен. Обновите список и выберите его заново.')
+        return None, worker
+    if type(reference) is not int:
+        abort(400, description='Выберите ответственного из списка.')
+    person = db.execute('SELECT full_name FROM staffing_people WHERE id=?', (reference,)).fetchone()
+    if not person or person['full_name'] != name:
+        abort(400, description='ФИО не соответствует выбранному сотруднику. Выберите его заново.')
+    return reference, None
+
+
 def responsibility_states(db, ids):
     if not ids:
         return {}
@@ -48,15 +72,22 @@ def responsibility_states(db, ids):
             c.linear_itr,c.linear_itr_person_id,c.brigadier,c.brigadier_person_id,
             d.linear_itr_override,d.linear_itr_person_id row_itr_id,d.brigadier_override,
             d.brigadier_person_id row_brigadier_id,d.edit_token,
-            p.personnel_no itr_number,p.full_name itr_person_name,p.id itr_person_id
+            p.personnel_no itr_number,p.full_name itr_person_name,p.id itr_person_id,
+            c.linear_itr_worker_id,c.brigadier_worker_id,d.linear_itr_worker_id row_itr_worker_id,
+            d.brigadier_worker_id row_brigadier_worker_id, ow.id itr_worker_id,ow.personnel_no itr_worker_number
         FROM workers w LEFT JOIN crew_members m ON m.worker_id=w.id LEFT JOIN crews c ON c.id=m.crew_id
         LEFT JOIN staffing_row_details d ON d.worker_id=w.id
         LEFT JOIN staffing_people p ON p.id=CASE WHEN d.linear_itr_override IS NULL
             THEN c.linear_itr_person_id ELSE d.linear_itr_person_id END
+        LEFT JOIN workers ow ON ow.id=CASE WHEN d.linear_itr_override IS NULL
+            THEN c.linear_itr_worker_id ELSE d.linear_itr_worker_id END
         WHERE w.id IN ({','.join('?' for _ in ids)})''', ids):
         name = row['linear_itr_override'] if row['linear_itr_override'] is not None else row['linear_itr'] or ''
         if not name:
             identity, label = ['none'], 'Линейный ИТР не указан'
+        elif row['itr_worker_id'] is not None:
+            identity = ['outstaff', row['itr_worker_id']]
+            label = name + ' · Аутстафф · ' + row['itr_worker_number']
         elif row['itr_person_id'] is not None:
             identity = ['person', row['itr_number'] or row['itr_person_id'], row['itr_person_name'].strip().casefold()]
             label = name + (' · таб. № ' + row['itr_number'] if row['itr_number'] else '')
@@ -158,6 +189,9 @@ def register_shift_routes(app, get_db, roles_required, utc_now):
                 if member['crew_id'] != expected_crew:
                     abort(409, description='Состав бригады изменился. Обновите таблицу.')
             require_workers(db, ids)
+            if operation == 'shift' or (operation == 'place' and site is not None):
+                from gdlr_api import require_staffing_workers
+                require_staffing_workers(db, ids)
             if operation == 'place' and site is not None and not db.execute('SELECT id FROM subobjects WHERE id=?', (site,)).fetchone():
                 abort(400, description='Подобъект не найден в текущем справочнике. Обновите страницу и выберите подобъект заново.')
             states = day_states(db, day, ids)

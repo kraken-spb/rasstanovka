@@ -171,6 +171,8 @@ def migrate_staffing(db):
         for field in ("linear_itr", "brigadier"):
             if field + "_person_id" not in columns:
                 db.execute(f"ALTER TABLE {table} ADD COLUMN {field}_person_id INTEGER REFERENCES staffing_people(id)")
+            if field + "_worker_id" not in columns:
+                db.execute(f"ALTER TABLE {table} ADD COLUMN {field}_worker_id INTEGER REFERENCES workers(id)")
 
 
 def import_conflicts(db, parsed):
@@ -234,8 +236,9 @@ def import_crew_key(row, label):
     return label + ':' + key if label else key
 
 
-def apply_attendance(db, parsed, user_id, utc_now, authorize=None):
+def apply_attendance(db, parsed, user_id, utc_now, authorize=None, review_fingerprint=None, decisions=None):
     import json
+    from import_reconciliation import check_review
     label = parsed.get('source_label', '')
     if label not in ('', 'ППС15', 'ППС19'):
         raise ImportProblem('Выберите ППС15 или ППС19.')
@@ -254,9 +257,12 @@ def apply_attendance(db, parsed, user_id, utc_now, authorize=None):
                 db.execute('BEGIN IMMEDIATE')
                 if authorize:
                     authorize(db)
+                if review_fingerprint is not None:
+                    check_review(db, parsed, decisions, review_fingerprint)
                 store_people(db, existing['id'], parsed)
         return result
-    issues = import_conflicts(db, parsed)
+    plan = check_review(db, parsed, decisions, review_fingerprint) if review_fingerprint is not None else None
+    issues = plan['issues'] if plan else import_conflicts(db, parsed)
     if issues:
         raise ImportProblem("\n".join(issues[:20]))
     backup = backup_database(db)
@@ -271,32 +277,52 @@ def apply_attendance(db, parsed, user_id, utc_now, authorize=None):
                 raise ImportProblem('Этот файл уже загружен с другой отметкой ППС.')
             store_people(db, existing['id'], parsed)
             return {"id": existing["id"], "already_imported": True, "selected": parsed["summary"]["selected"]}
-        issues = import_conflicts(db, parsed)
+        plan = check_review(db, parsed, decisions, review_fingerprint) if review_fingerprint is not None else None
+        issues = plan['issues'] if plan else import_conflicts(db, parsed)
         if issues:
             raise ImportProblem("\n".join(issues[:20]))
         summary = removal_import_summary(db, parsed)
+        if plan:
+            summary['reconciliation'] = {k: plan[k] for k in ('fingerprint', 'counts', 'added', 'missing', 'manual_kept')}
+            summary['reconciliation']['decisions'] = decisions or {}
+            summary['reconciliation']['identity_changes'] = [r for r in plan['matched'] if r['name_will_change'] or r['number_will_change']]
         batch = db.execute("""INSERT INTO staffing_imports(sha256,filename,imported_by,imported_at,selected_count,summary_json,source_label)
                             VALUES (?,?,?,?,?,?,?)""", (parsed["sha256"], parsed["filename"], user_id, utc_now(),
                             summary['selected'], json.dumps(summary, ensure_ascii=False), label)).lastrowid
         store_people(db, batch, parsed)
         crews = {r["import_key"]: r["id"] for r in db.execute("SELECT id,import_key FROM crews WHERE import_key IS NOT NULL")}
         removed = {r[0].casefold() for r in db.execute('SELECT w.personnel_no FROM employee_removals er JOIN workers w ON w.id=er.worker_id')}
+        actions = {a['source_row']: a for a in plan['actions']} if plan else {}
         for row in parsed["rows"]:
             if row['personnel_no'].casefold() in removed:
                 continue
+            action = actions.get(row['source_row'])
+            current_crew = db.execute('SELECT crew_id FROM crew_members WHERE worker_id=?',
+                                     (action['worker_id'],)).fetchone() if action and action['worker_id'] else None
             key = import_crew_key(row, label)
-            if key not in crews:
+            if not current_crew and key not in crews:
                 crews[key] = db.execute("INSERT INTO crews(name,owner_user_id,created_at,import_key) VALUES (?,?,?,?)",
                                        ((label + ' · ' if label else '') + (row["crew_name"] or "Бригада не указана"), user_id, utc_now(), key)).lastrowid
-            db.execute("""INSERT INTO workers(full_name,personnel_no,contractor,employer,profession,category,department)
+            if action and action['worker_id']:
+                worker = action['worker_id']
+                db.execute('''UPDATE workers SET personnel_no=?,full_name=CASE WHEN ? THEN ? ELSE full_name END,
+                    contractor=?,employer=?,profession=?,department=?,pps=? WHERE id=?''',
+                    (row['personnel_no'], action['update_name'], row['full_name'], row['contractor'], row['employer'],
+                     row['profession'], row['department'], label, worker))
+            else:
+                db.execute("""INSERT INTO workers(full_name,personnel_no,contractor,employer,profession,category,department)
                 VALUES (:full_name,:personnel_no,:contractor,:employer,:profession,:category,:department)
                 ON CONFLICT(personnel_no) DO UPDATE SET contractor=excluded.contractor,employer=excluded.employer,
-                profession=excluded.profession,category=excluded.category,department=excluded.department""", row)
-            worker = db.execute("SELECT id FROM workers WHERE personnel_no=? COLLATE NOCASE", (row["personnel_no"],)).fetchone()["id"]
+                profession=excluded.profession,department=excluded.department""", row)
+                worker = db.execute("SELECT id FROM workers WHERE personnel_no=? COLLATE NOCASE", (row["personnel_no"],)).fetchone()["id"]
             db.execute('UPDATE workers SET pps=? WHERE id=?', (label, worker))
-            db.execute("INSERT OR IGNORE INTO crew_members(crew_id,worker_id) VALUES (?,?)", (crews[key], worker))
+            from gdlr_api import bind_import_category
+            bind_import_category(db, worker, user_id, utc_now())
+            if not db.execute('SELECT 1 FROM crew_members WHERE worker_id=?', (worker,)).fetchone():
+                db.execute("INSERT INTO crew_members(crew_id,worker_id) VALUES (?,?)", (crews[key], worker))
             db.execute("INSERT INTO staffing_import_members(import_id,worker_id,source_row,source_crew) VALUES (?,?,?,?)",
                        (batch, worker, row["source_row"], row["crew_name"]))
         from contractor_api import sync_contractors
         sync_contractors(db, user_id)
-    return {"id": batch, "selected": summary['selected'], 'skipped_removed': summary['skipped_removed'], "backup": backup.name, "already_imported": False}
+    return {"id": batch, "selected": summary['selected'], 'skipped_removed': summary['skipped_removed'],
+            'reconciliation': plan['counts'] if plan else None, "backup": backup.name, "already_imported": False}

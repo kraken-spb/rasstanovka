@@ -4,6 +4,7 @@
   const mobile = matchMedia('(max-width: 900px)');
   const nav = document.querySelector('.mobile-nav');
   const view = $('view-staffing');
+  const readOnly = document.querySelector('.app-shell')?.dataset.role === 'hr_viewer';
   const moved = [];
   let picking = null, active = false, latest = {count: 0, hidden: 0, filters: 0};
   const el = (tag, props = {}, ...children) => {
@@ -42,8 +43,8 @@
   function syncSelection(detail = latest) {
     latest = detail;
     selected.hidden = !active || !detail.count || !view?.classList.contains('active');
-    selected.querySelector('summary').textContent = 'Выбрано: ' + detail.count + ' · Действия';
-    hiddenNote.textContent = detail.hidden ? 'Скрыты текущими фильтрами: ' + detail.hidden + '. Действия затронут всех выбранных.' : 'Действия применяются только к выбранным сотрудникам.';
+    selected.querySelector('summary').textContent = 'Выбрано: ' + detail.count + (readOnly ? '' : ' · Действия');
+    hiddenNote.textContent = readOnly ? (detail.hidden ? 'Скрыты текущими фильтрами: ' + detail.hidden + '.' : 'Выделенные сотрудники доступны для просмотра.') : detail.hidden ? 'Скрыты текущими фильтрами: ' + detail.hidden + '. Действия затронут всех выбранных.' : 'Действия применяются только к выбранным сотрудникам.';
     filters.querySelector('summary').textContent = detail.filters ? 'Фильтры · ' + detail.filters : 'Фильтры';
     document.body.classList.toggle('mobile-has-selection', !selected.hidden);
     if (!detail.count) selected.open = false;
@@ -67,14 +68,14 @@
     move($('staffing-search')?.closest('label'), search);
     move($('staffing-unassigned')?.closest('label'), quick);
     move($('staffing-refresh'), quick);
-    for (const id of ['grouping', 'category', 'department', 'employer', 'pps', 'author', 'freshness', 'regex']) {
+    for (const id of ['grouping', 'category', 'department', 'employer', 'contractor', 'pps', 'author', 'freshness', 'regex']) {
       move($('staffing-' + id)?.closest('label'), filters.lastElementChild);
     }
     move($('staffing-reset-filters'), filters.lastElementChild);
     move($('staffing-freshness-help'), filters.lastElementChild);
     for (const id of ['collapse', 'expand', 'undo', 'redo', 'columns-toggle']) move($('staffing-' + id), tools.lastElementChild);
     move(view.querySelector('.staffing-transfers'), tools.lastElementChild);
-    for (const id of ['transfer-selected', 'transfer-tomorrow', 'category-selected', 'work-selected', 'clear-selected']) {
+    for (const id of ['transfer-selected', 'transfer-tomorrow', 'category-selected', 'employer-selected', 'work-selected', 'clear-selected']) {
       move($('staffing-' + id), selected.lastElementChild);
     }
     selected.lastElementChild.prepend(hiddenNote);

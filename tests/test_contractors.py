@@ -82,7 +82,7 @@ class ContractorTest(unittest.TestCase):
         response = self.admin.get('/api/staffing/export?date=2026-09-12&shift=all')
         self.assertEqual(response.status_code, 200)
         book = openpyxl.load_workbook(io.BytesIO(response.data))
-        self.assertEqual(book.active['D2'].value, 'Новый подрядчик')
+        self.assertEqual(book['Список сотрудников']['D2'].value, 'Новый подрядчик')
         with self.app.app_context():
             self.assertEqual(before, [tuple(row) for row in self.module.get_db().execute('SELECT * FROM assignments')])
 

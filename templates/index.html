@@ -1,3 +1,4 @@
+{% set hr_readonly = user.role == 'hr_viewer' %}
 <!doctype html>
 <html lang="ru">
 <head>
@@ -5,38 +6,48 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Бригады и расстановка</title>
   <link rel="stylesheet" href="{{ asset_url('styles.css') }}">
+  <link rel="stylesheet" href="{{ asset_url('catalog-layout.css') }}">
+  <link rel="stylesheet" href="{{ asset_url('crew-catalog.css') }}">
+  <link rel="stylesheet" href="{{ asset_url('multi-filter.css') }}">
   <link rel="stylesheet" href="{{ asset_url('user-smu-access.css') }}">
   {% if user.role == 'super_admin' %}<link rel="stylesheet" href="{{ asset_url('backups.css') }}">{% endif %}
   <link rel="stylesheet" href="{{ asset_url('staffing-transfers.css') }}">
+  <link rel="stylesheet" href="{{ asset_url('report-export.css') }}">
+  <link rel="stylesheet" href="{{ asset_url('staffing-top-compact.css') }}">
+  <link rel="stylesheet" href="{{ asset_url('staffing-hierarchy.css') }}">
   {% if user.role in ('admin', 'super_admin') %}<link rel="stylesheet" href="{{ asset_url('employee-create.css') }}">{% endif %}
   {% if user.role in ('admin', 'super_admin') %}<link rel="stylesheet" href="{{ asset_url('crew-create.css') }}">{% endif %}
   <link rel="stylesheet" href="{{ asset_url('personnel-dashboard.css') }}">
-  {% if user.role in ('admin', 'super_admin') %}<link rel="stylesheet" href="{{ asset_url('user-activity.css') }}">{% endif %}
+  {% if user.role in ('admin', 'super_admin', 'hr_viewer') %}<link rel="stylesheet" href="{{ asset_url('user-activity.css') }}">{% endif %}
   <link rel="stylesheet" href="{{ asset_url('report-date-summary.css') }}">
   <link rel="stylesheet" href="{{ asset_url('placement-report.css') }}">
+  <link rel="stylesheet" href="{{ asset_url('placement-verification.css') }}">
   <link rel="stylesheet" href="{{ asset_url('telegram-report.css') }}">
   <link rel="stylesheet" href="{{ asset_url('attendance-status.css') }}">
   <link rel="stylesheet" href="{{ asset_url('employee-removal.css') }}">
-  {% if user.role in ('admin', 'super_admin') %}<link rel="stylesheet" href="{{ asset_url('logs.css') }}">{% endif %}
+  {% if user.role in ('admin', 'super_admin', 'hr_viewer') %}<link rel="stylesheet" href="{{ asset_url('logs.css') }}">{% endif %}
   <link rel="stylesheet" href="{{ asset_url('outstaff.css') }}">
   <link rel="stylesheet" href="{{ asset_url('employee-layout.css') }}">
   <link rel="stylesheet" href="{{ asset_url('mobile-placement.css') }}">
+  <link rel="stylesheet" href="{{ asset_url('action-icons.css') }}">
+  <link rel="stylesheet" href="{{ asset_url('table-pagination.css') }}">
+  <link rel="stylesheet" href="{{ asset_url('user-profile.css') }}">
 </head>
 <body>
   <header class="topbar">
     <a class="brand" href="{{ '#dashboard' if user.role == 'viewer' else '#staffing' }}"><span class="brand-mark">Р</span><strong>Расстановка</strong></a>
     <nav class="desktop-nav" aria-label="Разделы">
-      {% if user.role != 'viewer' %}<button data-view="staffing">Расстановка</button>{% endif %}
+      {% if user.role != 'viewer' %}<button data-view="staffing">Расстановка</button><button data-view="verification">Верификация</button>{% endif %}
       {% if user.role != 'viewer' %}<button data-view="employees">Сотрудники</button><button data-view="outstaff">Аутстафф</button>{% endif %}
-      <button data-view="dashboard">Сводная таблица</button>
+      <button data-view="dashboard">Отчеты</button>
       <button data-view="analytics">Дашборд</button>
-      {% if user.role in ('admin', 'super_admin') %}<button data-view="plan">План</button><button data-view="catalogs">Справочники</button><button data-view="accounts">Управление</button><button data-view="logs">Логи</button>{% endif %}{% if user.role == 'super_admin' %}<button data-view="backups">Резервные копии</button>{% endif %}
+      {% if user.role in ('admin', 'super_admin', 'hr_viewer') %}<button data-view="plan">План</button><button data-view="catalogs">Справочники</button><button data-view="accounts">Управление</button><button data-view="logs">Логи</button>{% endif %}{% if user.role == 'super_admin' %}<button data-view="backups">Резервные копии</button>{% endif %}
     </nav>
-    <div class="user-menu"><span>{{ user.full_name }}<small>{{ {'super_admin':'Супер-администратор','admin':'Администратор','foreman':'Прораб','viewer':'Просмотр'}[user.role] }}</small></span>
+    <div class="user-menu"><button id="user-profile-open" data-readonly="{{ 'true' if hr_readonly else 'false' }}" type="button" class="user-profile-trigger" aria-label="Мой профиль и настройки" title="Мой профиль и настройки"><span class="profile-avatar" aria-hidden="true">{{ user.full_name[:1] }}</span><span class="profile-trigger-name">{{ user.full_name }}<small>{{ {'super_admin':'Супер-администратор','admin':'Администратор','foreman':'Ответственный','viewer':'Просмотр','hr_viewer':'Управление по работе с персоналом'}[user.role] }}</small></span></button>
       <form method="post" action="{{ url_for('logout') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="icon-button" aria-label="Выйти" title="Выйти">↗</button></form>
     </div>
   </header>
-  <main class="app-shell" data-role="{{ user.role }}" data-user-id="{{ user.id }}" data-today="{{ today }}" data-csrf="{{ csrf_token() }}">
+  <main class="app-shell" data-role="{{ user.role }}" data-readonly="{{ 'true' if hr_readonly else 'false' }}" data-user-id="{{ user.id }}" data-today="{{ today }}" data-csrf="{{ csrf_token() }}">
     {% if user.role != 'viewer' %}
     <section id="view-employees" class="view">
       <div class="page-heading"><div><h1>Сотрудники</h1><p>Полный справочник сотрудников расстановки · текущий состав бригад</p>
@@ -48,19 +59,15 @@
       </div>
       <p id="employees-stats-note" class="table-note">Состав сотрудников — текущий. Расставленные учитываются один раз за обе смены отчётной даты.</p>
       <div class="employees-toolbar panel">
-        <label class="employees-search">Поиск по всем полям<input id="employees-search" type="search" maxlength="300" placeholder="ФИО, табельный номер, бригада, категория ГДЛР" aria-describedby="employees-search-help employees-error"></label>
+        <label class="employees-search">Поиск по всем полям<input id="employees-search" type="search" maxlength="300" placeholder="ФИО, табельный номер, бригада, категория ГДЛР" aria-describedby="employees-error" title="Regex без учёта регистра: Иванов Петров — несколько фамилий через пробел или запятую; ^000 — начало табельного номера. Для пробела внутри шаблона используйте [ ]. Проверяется каждое поле отдельно."></label>
         <label class="check-label"><input id="employees-regex" type="checkbox"> Regex</label>
         <label>Бригада<select id="employees-crew-filter"><option value="">Все бригады</option></select></label>
         <label>Категория ГДЛР<select id="employees-category"><option value="">Все категории</option></select></label>
         <label>Статус<select id="employees-active"><option value="">Все сотрудники</option><option value="1" selected>Действующие</option><option value="0">Удалённые / отключённые</option></select></label>
       </div>
-      <p id="employees-search-help" class="table-note">Regex без учёта регистра: Иванов Петров — несколько фамилий через пробел или запятую; ^000 — начало табельного номера. Для пробела внутри шаблона используйте [ ]. Проверяется каждое поле отдельно.</p>
-      <p class="table-note">Категорию ГДЛР выберите из справочника в строке — изменение сохранится автоматически. Ручная привязка сохраняется при следующем импорте.</p>
-      <p class="table-note">Выберите бригаду в строке — изменение сохранится автоматически. Назначения на даты и индивидуальные ответственные сохраняются; ответственные «как у бригады» берутся из новой бригады.</p>
       <p id="employees-error" class="error-text" role="alert" hidden></p>
       <p id="employees-status" class="save-status" role="status"></p>
       <div id="employees-list" tabindex="0" role="region" aria-label="Список сотрудников"></div>
-      <div class="employees-pagination"><button id="employees-prev" class="secondary-button">Назад</button><span id="employees-total" aria-live="polite"></span><button id="employees-next" class="secondary-button">Далее</button></div>
     </section>
     <section id="view-outstaff" class="view">
       <div class="page-heading"><div><h1>Аутстафф</h1><p>Импортированные сотрудники аутстаффа · доступны в общей расстановке</p>
@@ -72,23 +79,21 @@
       </div>
       <p id="outstaff-stats-note" class="table-note">Состав сотрудников — текущий. Расставленные учитываются один раз за обе смены отчётной даты.</p>
       <div class="employees-toolbar panel">
-        <label class="employees-search">Поиск по всем полям<input id="outstaff-search" type="search" maxlength="300" placeholder="ФИО, код, бригада, категория ГДЛР, СМУ, контрагент" aria-describedby="outstaff-search-help outstaff-error"></label>
+        <label class="employees-search">Поиск по всем полям<input id="outstaff-search" type="search" maxlength="300" placeholder="ФИО, код, бригада, категория ГДЛР, СМУ, контрагент" aria-describedby="outstaff-error" title="Regex без учёта регистра: Иванов Петров — несколько фамилий через пробел или запятую; ^OUT — начало кода сотрудника. Для пробела внутри шаблона используйте [ ]. Проверяется каждое поле отдельно."></label>
         <label class="check-label"><input id="outstaff-regex" type="checkbox"> Regex</label>
         <label>Бригада<select id="outstaff-crew-filter"><option value="">Все бригады</option></select></label>
         <label>Категория ГДЛР<select id="outstaff-category"><option value="">Все категории</option></select></label>
         <label>Статус<select id="outstaff-active"><option value="">Все сотрудники</option><option value="1" selected>Действующие</option><option value="0">Удалённые / отключённые</option></select></label>
       </div>
-      <p id="outstaff-search-help" class="table-note">Regex без учёта регистра: Иванов Петров — несколько фамилий через пробел или запятую; ^OUT — начало кода сотрудника. Для пробела внутри шаблона используйте [ ]. Проверяется каждое поле отдельно.</p>
-      <p class="table-note">Категорию ГДЛР выберите из справочника в строке — изменение сохранится автоматически. Ручная привязка сохраняется при следующем импорте.</p>
-      <p class="table-note">Выберите бригаду в строке — изменение сохранится автоматически. Назначения на даты и индивидуальные ответственные сохраняются; ответственные «как у бригады» берутся из новой бригады.</p>
       <p id="outstaff-error" class="error-text" role="alert" hidden></p>
       <p id="outstaff-status" class="save-status" role="status"></p>
       <div id="outstaff-list" tabindex="0" role="region" aria-label="Список сотрудников аутстаффа"></div>
-      <div class="employees-pagination"><button id="outstaff-prev" class="secondary-button">Назад</button><span id="outstaff-total" aria-live="polite"></span><button id="outstaff-next" class="secondary-button">Далее</button></div>
     </section>
     {% if user.role in ('admin', 'super_admin') %}
     {% endif %}
     <script id="staffing-preferences-data" type="application/json">{{ staffing_preferences | tojson }}</script>
+    <section id="view-verification" class="view" aria-label="Верификация"></section>
+
     <section id="view-staffing" class="view">
       <div class="page-heading">
         <div><h1>Расстановка персонала</h1><p id="staffing-source">Численность с листа «Явка»</p></div>
@@ -96,7 +101,6 @@
           <label>Дата<input type="date" id="staffing-date" value="{{ today }}" required></label>
           <label>Фильтр смен<select id="staffing-shift"><option value="">Все смены</option><option value="1 смена">День</option><option value="2 смена">Ночь</option><option value="none">Без смены</option></select></label>
         </div>
-      </div>
       <div class="staffing-transfers">
       {% if user.role in ('admin', 'super_admin') %}<button id="staffing-create-crew" type="button" class="secondary-button">+ Создать бригаду</button>{% endif %}
       {% if user.role in ('admin', 'super_admin') %}
@@ -116,23 +120,7 @@
         </div>
       </details>
       {% endif %}
-      <details id="staffing-export" class="staffing-export">
-        <summary aria-controls="staffing-export-window"><span>Экспорт</span></summary>
-        <div id="staffing-export-window" class="transfer-window" role="region" aria-label="Экспорт расстановки">
-        <h2>Экспорт расстановки</h2>
-        <p id="staffing-export-help">Один Excel-файл: «Список сотрудников» и «Сводная таблица» по этому списку. Дата, СМУ, смена и категория применяются к обеим вкладкам.</p>
-        <form id="staffing-export-form" class="staffing-export-controls" aria-describedby="staffing-export-help">
-          <label id="staffing-export-category-label">Категория ГДЛР<select id="staffing-export-category"><option value="">Все категории</option></select></label>
-          <label>Дата расстановки<input id="staffing-export-date" name="date" type="date" value="{{ today }}" required></label>
-          <label>СМУ<select id="staffing-export-department" name="department"><option value="">Все СМУ</option></select></label>
-          <label>Компания-подрядчик<select id="staffing-export-contractor" name="contractor"><option value="">Все компании-подрядчики</option></select></label>
-          <label>Смена<select id="staffing-export-shift" name="shift"><option value="all">Обе смены</option><option value="1 смена">День</option><option value="2 смена">Ночь</option></select></label>
-          <label id="staffing-export-unassigned-label"><input id="staffing-export-unassigned" type="checkbox"><span>Включить нерасставленных сотрудников<small>В сводной они будут показаны отдельной группой «Не расставлены».</small></span></label>
-          <button id="staffing-export-submit" type="submit" class="primary-button">Скачать Excel</button>
-        </form>
-        <p id="staffing-export-status" role="status" aria-live="polite"></p>
-        </div>
-      </details>
+      </div>
       </div>
       <div class="staffing-stats" id="staffing-stats" aria-live="polite"></div>
       <div id="staffing-calendar-filter" class="staffing-calendar-filter" hidden>
@@ -140,7 +128,7 @@
         <button id="staffing-calendar-filter-clear" type="button" class="text-button">Снять фильтр позиции</button>
       </div>
       <div class="staffing-toolbar">
-        <label>Группировка<select id="staffing-grouping"><option value="crew">По бригаде</option><option value="itr">По линейному ИТР</option></select></label>
+        <label>Группировка<span class="staffing-grouping-controls"><select id="staffing-grouping"><option value="hierarchy">Линейный ИТР → Бригада</option><option value="crew">По бригаде</option><option value="itr">По линейному ИТР</option></select><button id="staffing-hierarchy-settings" type="button" class="secondary-button" aria-label="Настроить иерархию" title="Выбрать уровни и порядок группировки"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4 7v12h4M4 12h4"/><rect x="2" y="2" width="6" height="5" rx="1"/><rect x="8" y="10" width="12" height="4" rx="1"/><rect x="8" y="17" width="12" height="4" rx="1"/></svg></button></span></label>
         <label>Категория ГДЛР<select id="staffing-category"><option value="">Все категории</option></select></label>
         <label>Строительный участок<select id="staffing-department"><option value="">Все строительные участки</option></select></label>
         <label>Кто расставил<select id="staffing-author"><option value="">Все авторы</option></select></label>
@@ -151,7 +139,7 @@
         <button id="staffing-collapse" class="secondary-button" title="Свернуть все бригады">Свернуть</button>
         <button id="staffing-expand" class="secondary-button" title="Развернуть все бригады">Развернуть</button>
         <button id="staffing-refresh" class="secondary-button">Обновить</button>
-        <button id="staffing-clear-selected" class="secondary-button" disabled>Сбросить расстановку (0)</button>
+        <button id="staffing-clear-selected" {% if hr_readonly %}hidden{% endif %} class="secondary-button" disabled>Сбросить расстановку (0)</button>
         <button id="staffing-columns-toggle" type="button" class="secondary-button" aria-expanded="false" aria-controls="staffing-columns-panel">Столбцы</button>
       </div>
       <p id="staffing-preferences-status" class="table-note" role="status"></p>
@@ -174,6 +162,7 @@
       <div id="staffing-table" class="staffing-table-scroll" tabindex="0" aria-label="Таблица расстановки с прокруткой"></div>
       <p id="staffing-total" class="table-note" aria-live="polite"></p>
     </section>
+    {% if not hr_readonly %}
     <section id="view-placement" class="view active">
       <div class="page-heading">
         <div><h1>Мои бригады</h1><p>Люди и их места работы</p></div>
@@ -210,6 +199,7 @@
       <p id="board-status" class="save-status" role="status"></p>
     </section>
     {% endif %}
+    {% endif %}
     <section id="view-analytics" class="view">
       <div class="page-heading"><div><h1>Динамика расстановки</h1><p>Численность персонала по датам и авторам назначения</p></div></div>
       <form id="analytics-form" class="analytics-filters">
@@ -233,7 +223,7 @@
         </section>
         <p class="table-note">Учитываются действующие назначения на даты расстановки, а не число действий в приложении. Один сотрудник в двух сменах считается один раз за день. Если смены назначали разные пользователи, он учитывается у каждого из них, но в общем итоге — один раз. Снятые назначения не входят в численность.</p>
       </div>
-      {% if user.role in ('admin', 'super_admin') %}
+      {% if user.role in ('admin', 'super_admin', 'hr_viewer') %}
       <section id="user-activity-panel" class="panel" aria-labelledby="user-activity-title">
         <div class="analytics-chart-heading"><div><h2 id="user-activity-title">Активность пользователей</h2><p class="table-note">Успешные входы за выбранную дату. Статус онлайн — на текущий момент.</p></div></div>
         <form id="user-activity-form" class="analytics-filters">
@@ -249,20 +239,45 @@
       {% endif %}
     </section>
     <section id="view-dashboard" class="view{% if user.role == 'viewer' %} active{% endif %}">
-      <div class="page-heading"><div><h1>Сводная таблица</h1><p>План и факт по объектам за каждый день</p></div><span id="dashboard-status" class="save-status" role="status"></span></div>
+      <div class="page-heading"><div><h1>Отчеты</h1><p>План и факт по объектам за каждый день</p></div><span id="dashboard-status" class="save-status" role="status"></span>
+      <details id="staffing-export" class="staffing-export">
+        <summary aria-controls="staffing-export-window"><span>Экспорт</span></summary>
+        <div id="staffing-export-window" class="transfer-window" role="region" aria-label="Экспорт расстановки">
+        <h2>Экспорт расстановки</h2>
+        <p id="staffing-export-help">Один Excel-файл: «Список сотрудников» и «Сводная таблица» по этому списку. Дата, СМУ, смена и категория применяются к обеим вкладкам.</p>
+        <form id="staffing-export-form" class="staffing-export-controls" aria-describedby="staffing-export-help">
+          <label id="staffing-export-category-label">Категория ГДЛР<select id="staffing-export-category"><option value="">Все категории</option></select></label>
+          <label>Дата расстановки<input id="staffing-export-date" name="date" type="date" value="{{ today }}" required></label>
+          <label>СМУ<select id="staffing-export-department" name="department"><option value="">Все СМУ</option></select></label>
+          <label>Компания-подрядчик<select id="staffing-export-contractor" name="contractor"><option value="">Все компании-подрядчики</option></select></label>
+          <label>Смена<select id="staffing-export-shift" name="shift"><option value="all">Обе смены</option><option value="1 смена">День</option><option value="2 смена">Ночь</option></select></label>
+          <label id="staffing-export-unassigned-label"><input id="staffing-export-unassigned" type="checkbox"><span>Включить нерасставленных сотрудников<small>В сводной они будут показаны отдельной группой «Не расставлены».</small></span></label>
+          <button id="staffing-export-submit" type="submit" class="primary-button">Скачать Excel</button>
+        </form>
+        <p id="staffing-export-status" role="status" aria-live="polite"></p>
+        </div>
+      </details>
+      </div>
       <div class="segmented report-summary-modes" role="group" aria-label="Раздел сводной таблицы">
         <button type="button" data-summary-mode="week" aria-pressed="true">По дням</button>
         <button type="button" data-summary-mode="date" aria-pressed="false">На отчётную дату</button>
+        <button type="button" data-summary-mode="category" aria-pressed="false">По категориям ГДТЛР</button>
         <button type="button" data-summary-mode="placement" aria-pressed="false">Отчёт по расстановке</button>
       </div>
       <section id="placement-report" hidden aria-label="Отчёт по расстановке">
         <form id="placement-report-filters" class="placement-report-filters">
-          <label>Дата отчёта<input id="placement-report-date" type="date" value="{{ today }}" required></label>
+          <label class="placement-period-control">Период с<input id="placement-report-start" type="date"></label>
+          <label><span id="placement-report-date-label">По дату</span><input id="placement-report-date" type="date" value="{{ today }}" required></label>
+          <label class="placement-period-control">Показатель<select id="placement-report-metric"><option value="assigned">Расставлены</option><option value="unassigned">Не расставлены</option><option value="absent">Неявка</option><option value="total">Всего сотрудников</option></select></label>
           <label>ППС<select id="placement-report-pps"><option value="">Все ППС</option></select></label>
           <label>Категория ГДЛР<select id="placement-report-category"><option value="">Все категории</option></select></label>
+          <label>Кто расставил<select id="placement-report-author"><option value="">Все авторы</option></select></label>
           <button type="submit" class="secondary-button">Обновить</button>
           <button id="placement-report-pdf" type="button" class="primary-button" disabled>Скачать PDF</button>
+          <div class="placement-report-checks">
           <label class="placement-report-pdf-details"><input id="placement-report-pdf-details" type="checkbox">Включить списки ФИО в PDF</label>
+          <label class="placement-report-pdf-details placement-period-control"><input id="placement-report-pps-details" type="checkbox">Детализация до ППС</label>
+          </div>
         </form>
         <p id="placement-report-status" role="status" aria-live="polite"></p>
         <div id="placement-report-totals" class="placement-report-totals"></div>
@@ -285,20 +300,21 @@
       <section id="dashboard-absences" aria-label="Неявки"></section>
       </div>
     </section>
-    {% if user.role in ('admin', 'super_admin') %}
+    {% if user.role in ('admin', 'super_admin', 'hr_viewer') %}
     <section id="view-plan" class="view">
-      <div class="page-heading"><div><h1>Плановая численность</h1><p>Введите число в ячейку подобъекта. Enter — следующая дата, Tab — следующая ячейка.</p></div><span id="plan-status" class="save-status" role="status"></span></div>
+      <div class="page-heading"><div><h1>Плановая численность</h1><p>{% if hr_readonly %}Просмотр плановой численности по объектам и датам.{% else %}Введите число в ячейку подобъекта. Enter — следующая дата, Tab — следующая ячейка.{% endif %}</p></div><span id="plan-status" class="save-status" role="status"></span></div>
       <div class="calendar-toolbar">
         <div class="period-controls"><button class="icon-button" data-week-step="-7" data-calendar="plan" aria-label="Предыдущая неделя плана">‹</button><label>Неделя с<input id="plan-start" type="date" value="{{ today }}"></label><button class="icon-button" data-week-step="7" data-calendar="plan" aria-label="Следующая неделя плана">›</button></div>
         <input id="plan-search" type="search" placeholder="Найти объект или подобъект" aria-label="Поиск в плане">
       </div>
-      <p class="table-note">Объекты суммируются автоматически. Пустая ячейка — план не задан, 0 — людей не требуется. Значения сохраняются после выхода из ячейки.</p>
+      <p class="table-note">Объекты суммируются автоматически. Пустая ячейка — план не задан, 0 — людей не требуется. {% if not hr_readonly %}Значения сохраняются после выхода из ячейки.{% endif %}</p>
       <div id="plan-table" class="table-scroll" tabindex="0" aria-label="Таблица суточного плана с прокруткой"></div>
     </section>
     <section id="view-catalogs" class="view">
-      <div class="page-heading"><div><h1>Справочники</h1><p>Категории сотрудников, подрядчики, СМУ, группы подобъектов и подобъекты.</p>{% if user.role != 'super_admin' %}<p class="table-note">Только просмотр. Редактирование доступно супер-администратору.</p>{% endif %}</div></div>
+      <div class="page-heading"><div><h1>Справочники</h1><p>Категории сотрудников, бригады, подрядчики, СМУ, этапы и подобъекты.</p>{% if user.role != 'super_admin' %}<p id="catalog-permission-note" class="table-note">Только просмотр. Редактирование доступно супер-администратору.</p>{% endif %}</div></div>
       <nav class="catalog-subnav" aria-label="Подразделы справочников">
         <button type="button" data-catalog="categories" aria-pressed="true" class="secondary-button active">ГДТЛР</button>
+        <button type="button" data-catalog="crews" aria-pressed="false" class="secondary-button">Бригады</button>
         <button type="button" data-catalog="smu" aria-pressed="false" class="secondary-button">СМУ</button>
         <button type="button" data-catalog="contractors" aria-pressed="false" class="secondary-button">Подрядчики</button>
         <button type="button" data-catalog="stages" aria-pressed="false" class="secondary-button">Этапы</button>
@@ -315,6 +331,14 @@
         <p id="categories-empty" class="empty-state" hidden>Справочник пока пуст. Категории добавляет супер-администратор.</p>
         <div id="category-catalog-list"></div>
       </section>
+    </section>
+    <section id="view-crew-catalog" class="catalog-category-section panel" hidden>
+      <div class="crew-catalog-toolbar"><button id="crew-catalog-add" {% if hr_readonly %}hidden{% endif %} type="button" class="primary-button">Создать бригаду</button>
+        <label>Поиск по бригадам<input id="crew-catalog-search" type="search" placeholder="Название, ИТР, бригадир, СМУ"></label>
+        <label class="check-label"><input id="crew-catalog-regex" type="checkbox">Regex</label>
+        <button id="crew-catalog-refresh" type="button" class="secondary-button">Обновить</button></div>
+      <p id="crew-catalog-status" class="save-status" role="status"></p>
+      <p id="crew-catalog-count" class="table-note"></p><div id="crew-catalog-list"></div>
     </section>
     <section id="view-smu" class="catalog-category-section" hidden>
       <div class="page-heading"><div><h2>СМУ</h2><p>СМУ связаны с сотрудниками по заполненным значениям.</p></div><button id="smu-refresh" type="button" class="secondary-button">Обновить справочник</button></div>
@@ -392,7 +416,7 @@
         <form id="account-form" class="stack-form" aria-label="Новая учётная запись">
           <label>ФИО<input id="account-name" required></label><label>Логин<input id="account-username" minlength="3" required autocomplete="off"></label>
           <label>Пароль<input id="account-password" type="password" minlength="10" required autocomplete="new-password"></label>
-          <label>Роль<select id="account-role"><option value="foreman">Прораб</option><option value="viewer">Только просмотр</option><option value="admin">Администратор</option>{% if user.role == 'super_admin' %}<option value="super_admin">Супер-администратор</option>{% endif %}</select></label>
+          <label>Роль<select id="account-role"><option value="foreman">Прораб</option><option value="viewer">Только просмотр</option><option value="hr_viewer">Управление по работе с персоналом</option><option value="admin">Администратор</option>{% if user.role == 'super_admin' %}<option value="super_admin">Супер-администратор</option>{% endif %}</select></label>
           <button class="primary-button">Создать учётную запись</button>
         </form>
       </details>
@@ -412,7 +436,7 @@
     </form>
   </dialog>
   {% endif %}
-  {% if user.role != 'viewer' %}
+  {% if user.role not in ('viewer', 'hr_viewer') %}
   <dialog id="recruit-dialog" class="app-dialog">
     <div class="dialog-heading"><div><h2>Добавить в бригаду</h2><p>Нажмите на сотрудника — он сразу появится в составе.</p></div><button class="icon-button" data-close="recruit-dialog" aria-label="Закрыть список сотрудников">×</button></div>
     <input id="recruit-search" type="search" aria-label="Поиск сотрудника" placeholder="ФИО, табельный номер, профессия" autocomplete="off">
@@ -438,33 +462,43 @@
   </dialog>
   {% endif %}
   <nav class="mobile-nav" aria-label="Разделы на телефоне">
-    {% if user.role != 'viewer' %}<button data-view="staffing">Расстановка</button><button data-view="employees">Сотрудники</button><button data-view="outstaff">Аутстафф</button>{% endif %}<button data-view="dashboard">Сводка</button>
+    {% if user.role != 'viewer' %}<button data-view="staffing">Расстановка</button><button data-view="verification">Верификация</button><button data-view="employees">Сотрудники</button><button data-view="outstaff">Аутстафф</button>{% endif %}<button data-view="dashboard">Отчеты</button>
     <button data-view="analytics">Дашборд</button>
-    {% if user.role in ('admin', 'super_admin') %}<button data-view="plan">План</button><button data-view="catalogs">Справочники</button><button data-view="accounts">Управление</button><button data-view="logs">Логи</button>{% endif %}{% if user.role == 'super_admin' %}<button data-view="backups">Резервные копии</button>{% endif %}
+    {% if user.role in ('admin', 'super_admin', 'hr_viewer') %}<button data-view="plan">План</button><button data-view="catalogs">Справочники</button><button data-view="accounts">Управление</button><button data-view="logs">Логи</button>{% endif %}{% if user.role == 'super_admin' %}<button data-view="backups">Резервные копии</button>{% endif %}
   </nav>
   <div id="toast" class="toast" role="status"></div>
+  <script src="{{ asset_url('multi-filter.js') }}" defer></script>
   <script src="{{ asset_url('search-regex.js') }}" defer></script>
   <script src="{{ asset_url('reference-cache.js') }}" defer></script>
-  {% if user.role in ('admin', 'super_admin') %}<script src="{{ asset_url('locations.js') }}" defer></script>{% endif %}
+  {% if user.role in ('admin', 'super_admin', 'hr_viewer') %}<script src="{{ asset_url('locations.js') }}" defer></script>{% endif %}
   {% if user.role in ('admin', 'super_admin') %}<script src="{{ asset_url('employee-create.js') }}" defer></script>{% endif %}
+  <script src="{{ asset_url('table-pagination.js') }}" defer></script>
   <script src="{{ asset_url('employees.js') }}" defer></script>
-  {% if user.role in ('admin', 'super_admin') %}<script src="{{ asset_url('smu.js') }}" defer></script><script src="{{ asset_url('categories.js') }}" defer></script>{% endif %}
-  {% if user.role in ('admin', 'super_admin') %}<script src="{{ asset_url('contractors.js') }}" defer></script>{% endif %}
+  {% if user.role in ('admin', 'super_admin', 'hr_viewer') %}<script src="{{ asset_url('smu.js') }}" defer></script><script src="{{ asset_url('categories.js') }}" defer></script>{% endif %}
+  {% if user.role in ('admin', 'super_admin', 'hr_viewer') %}<script src="{{ asset_url('contractors.js') }}" defer></script>{% endif %}
   <script src="{{ asset_url('staffing-preferences.js') }}" defer></script>
   <script src="{{ asset_url('staffing-columns.js') }}" defer></script>
   {% if user.role in ('admin', 'super_admin') %}<script src="{{ asset_url('crew-create.js') }}" defer></script>{% endif %}
+  <script src="{{ asset_url('staffing-hierarchy.js') }}" defer></script>
   <script src="{{ asset_url('staffing.js') }}" defer></script>
+  <script src="{{ asset_url('report-export.js') }}" defer></script>
+  <script src="{{ asset_url('position-cards.js') }}" defer></script>
   <script src="{{ asset_url('user-activity.js') }}" defer></script>
   <script src="{{ asset_url('personnel-dashboard.js') }}" defer></script>
   <script src="{{ asset_url('report-date-summary.js') }}" defer></script>
+  <script src="{{ asset_url('category-placement.js') }}" defer></script>
   <script src="{{ asset_url('placement-report.js') }}" defer></script>
-  <script src="{{ asset_url('telegram-report.js') }}" defer></script>
+  <script src="{{ asset_url('placement-verification.js') }}" defer></script>
+  {% if not hr_readonly %}<script src="{{ asset_url('telegram-report.js') }}" defer></script>{% endif %}
   <script src="{{ asset_url('attendance-summary.js') }}" defer></script>
-  {% if user.role in ('admin', 'super_admin') %}<script src="{{ asset_url('catalogs.js') }}" defer></script>{% endif %}
-  {% if user.role in ('admin', 'super_admin') %}<script src="{{ asset_url('logs.js') }}" defer></script>{% endif %}
+  {% if user.role in ('admin', 'super_admin', 'hr_viewer') %}<script src="{{ asset_url('crew-catalog.js') }}" defer></script><script src="{{ asset_url('catalogs.js') }}" defer></script>{% endif %}
+  {% if user.role in ('admin', 'super_admin', 'hr_viewer') %}<script src="{{ asset_url('logs.js') }}" defer></script>{% endif %}
   {% if user.role == 'super_admin' %}<script src="{{ asset_url('backups.js') }}" defer></script>{% endif %}
   {% if user.role in ('admin', 'super_admin') %}<script src="{{ asset_url('outstaff-import.js') }}" defer></script>{% endif %}
   <script src="{{ asset_url('app.js') }}" defer></script>
+  <script src="{{ asset_url('staffing-toolbar.js') }}" defer></script>
   <script src="{{ asset_url('mobile-placement.js') }}" defer></script>
+  <script src="{{ asset_url('action-icons.js') }}" defer></script>
+  <script src="{{ asset_url('user-profile.js') }}" defer></script>
 </body>
 </html>

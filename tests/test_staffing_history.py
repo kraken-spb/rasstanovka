@@ -109,7 +109,7 @@ class StaffingHistoryTest(unittest.TestCase):
     def test_category_restore_removes_override_and_rejects_inactive_redo(self):
         with self.module.app.app_context():
             db = self.module.get_db()
-            category = db.execute("INSERT INTO gdlr_categories(name,name_key,edit_token,updated_by,updated_at) VALUES ('Новая','новая','catalog-token',?,'now')", (self.fixture.admin_id,)).lastrowid
+            category = db.execute("INSERT INTO gdlr_categories(name,name_key,staffing_allowed,edit_token,updated_by,updated_at) VALUES ('Новая','новая',1,'catalog-token',?,'now')", (self.fixture.admin_id,)).lastrowid
             db.commit()
         self.assertEqual(self.change('category', category).status_code, 200)
         self.assertEqual(self.replay('undo').status_code, 200)

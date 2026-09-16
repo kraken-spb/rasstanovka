@@ -1,3 +1,4 @@
+from filter_values import argument as filter_argument, values as filter_values, matches as filter_matches, label as filter_label
 """Distinct people by report date and actual assignment author."""
 from datetime import date, timedelta
 
@@ -35,9 +36,10 @@ def register_personnel_dashboard(app, get_db, roles_required):
             WHERE a.work_date BETWEEN ? AND ?''' + scope, params).fetchall()
         authors = assignment_authors(db, dates[0], rows, dates[-1])
         groups = {}
-        if g.user['role'] in ('super_admin', 'admin', 'viewer'):
+        if g.user['role'] in ('super_admin', 'admin', 'viewer', 'hr_viewer'):
             for user in db.execute("SELECT id,full_name FROM users WHERE active=1 AND role IN ('super_admin','admin','foreman')"):
                 groups[str(user['id'])] = {'id': str(user['id']), 'full_name': user['full_name'], 'days': {}, 'people': set()}
+        chosen = filter_argument('user',ignore_empty=True)
         total_days, total_people = {}, set()
         for row in rows:
             author = authors.get(row['assignment_id'])
@@ -46,8 +48,9 @@ def register_personnel_dashboard(app, get_db, roles_required):
             group = groups.setdefault(key, {'id': key, 'full_name': name, 'days': {}, 'people': set()})
             group['days'].setdefault(row['work_date'], set()).add(row['id'])
             group['people'].add(row['id'])
-            total_days.setdefault(row['work_date'], set()).add(row['id'])
-            total_people.add(row['id'])
+            if filter_matches(chosen,key):
+                total_days.setdefault(row['work_date'], set()).add(row['id'])
+                total_people.add(row['id'])
         def series(days):
             return [len(days.get(day, ())) for day in dates]
         users = [{'id': group['id'], 'full_name': group['full_name'], 'counts': series(group['days']),

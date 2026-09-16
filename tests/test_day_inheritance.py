@@ -25,11 +25,19 @@ class DayInheritanceTest(unittest.TestCase):
             self.admin_id = db.execute("SELECT id FROM users WHERE role='admin'").fetchone()[0]
             self.foreman_id = db.execute("INSERT INTO users(username,password_hash,full_name,role,created_at) VALUES ('inherit-f','unused','Прораб','foreman','now')").lastrowid
             self.viewer_id = db.execute("INSERT INTO users(username,password_hash,full_name,role,created_at) VALUES ('inherit-v','unused','Просмотр','viewer','now')").lastrowid
+            from gdlr_api import STAFFING_CATEGORY_NAMES
+            category_name = STAFFING_CATEGORY_NAMES[0]
+            category_id = db.execute('''INSERT INTO gdlr_categories
+                (name,name_key,active,staffing_allowed,edit_token,updated_by,updated_at)
+                VALUES (?,?,1,1,'inherit-fixture',?,'now')''',
+                (category_name, ' '.join(category_name.split()).casefold(), self.admin_id)).lastrowid
             self.crew_id = db.execute("INSERT INTO crews(name,owner_user_id,created_at) VALUES ('Тестовая бригада',?,'now')", (self.foreman_id,)).lastrowid
             self.ids = []
             for number in ('inherit-1', 'inherit-2'):
                 worker_id = db.execute("INSERT INTO workers(full_name,personnel_no) VALUES ('Тестовый сотрудник',?)", (number,)).lastrowid
                 self.ids.append(worker_id)
+                db.execute('''INSERT INTO employee_gdlr(worker_id,category_id,edit_token,updated_by,updated_at)
+                    VALUES (?,?,'inherit-fixture',?,'now')''', (worker_id, category_id, self.admin_id))
                 db.execute('INSERT INTO crew_members VALUES (?,?)', (self.crew_id, worker_id))
                 db.execute('''INSERT INTO assignments(work_date,shift,subobject_id,worker_id,employer,foreman_user_id,created_at,crew_id,edit_token)
                     VALUES ('2026-09-13','2 смена',1,?,'ЛГСС',?,'old',?,'old-assignment')''', (worker_id, self.foreman_id, self.crew_id))

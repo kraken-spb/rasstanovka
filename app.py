@@ -108,7 +108,7 @@ def init_db():
             username TEXT NOT NULL UNIQUE COLLATE NOCASE,
             password_hash TEXT NOT NULL,
             full_name TEXT NOT NULL,
-            role TEXT NOT NULL CHECK(role IN ('super_admin', 'admin', 'foreman', 'viewer')),
+            role TEXT NOT NULL CHECK(role IN ('super_admin', 'admin', 'foreman', 'viewer', 'hr_viewer')),
             active INTEGER NOT NULL DEFAULT 1,
             created_at TEXT NOT NULL
         );
@@ -203,6 +203,8 @@ def init_db():
     migrate_gdlr(db)
     from contractor_api import migrate_contractors
     migrate_contractors(db)
+    from employer_api import migrate_employers
+    migrate_employers(db)
     from location_api import migrate_locations
     migrate_locations(db)
     from attendance_status import migrate_attendance_status
@@ -221,6 +223,8 @@ def init_db():
     migrate_outstaff(db)
     from user_preferences import migrate_preferences
     migrate_preferences(db)
+    from user_profile import migrate_user_profile
+    migrate_user_profile(db)
     from manual_employees import migrate_manual_employees
     migrate_manual_employees(db)
     from user_smu_access import migrate_smu_access
@@ -229,6 +233,8 @@ def init_db():
     migrate_smu_catalog(db)
     from telegram_api import migrate_telegram
     migrate_telegram(db)
+    from placement_verification import migrate_verification
+    migrate_verification(db)
     # Additive migration: existing assignments retain their date, owner and site.
     columns = {row["name"] for row in db.execute("PRAGMA table_info(assignments)")}
     if "crew_id" not in columns:
@@ -301,6 +307,9 @@ def login_required(view):
                 return jsonify({"error": "Требуется вход"}), 401
             return redirect(url_for("login"))
         g.user = user
+        from user_roles import HR_VIEWER, hr_request_allowed
+        if user['role'] == HR_VIEWER and not hr_request_allowed(request.endpoint, request.method):
+            return jsonify({'error': 'Для этой роли доступен только просмотр данных.'}), 403
         return view(*args, **kwargs)
 
     return wrapped
@@ -313,7 +322,9 @@ def roles_required(*roles):
         @login_required
         @wraps(view)
         def wrapped(*args, **kwargs):
-            if g.user["role"] not in roles:
+            from user_roles import HR_VIEWER
+            # login_required has already checked the read-only endpoint allowlist.
+            if g.user["role"] not in roles and g.user['role'] != HR_VIEWER:
                 return jsonify({"error": "Недостаточно прав"}), 403
             return view(*args, **kwargs)
 
@@ -503,12 +514,13 @@ def users():
 @app.post("/api/users")
 @roles_required("super_admin")
 def create_user():
+    from user_roles import USER_ROLES
     payload = request.get_json(silent=True) or {}
     username = str(payload.get("username", "")).strip()
     full_name = str(payload.get("full_name", "")).strip()
     password = str(payload.get("password", ""))
     role = str(payload.get("role", "foreman"))
-    if len(username) < 3 or not full_name or len(password) < 10 or role not in {"super_admin", "admin", "foreman", "viewer"}:
+    if len(username) < 3 or not full_name or len(password) < 10 or role not in USER_ROLES:
         return jsonify({"error": "Проверьте поля. Пароль должен содержать не менее 10 символов."}), 400
     db = get_db()
     try:
@@ -531,6 +543,7 @@ def create_user():
 @app.patch("/api/users/<int:user_id>")
 @roles_required("super_admin")
 def update_user(user_id):
+    from user_roles import USER_ROLES
     payload = request.get_json(silent=True) or {}
     if not isinstance(payload, dict):
         return jsonify({"error": "Некорректные данные пользователя."}), 400
@@ -552,7 +565,7 @@ def update_user(user_id):
         fields.append("active = ?")
         params.append(1 if payload["active"] else 0)
     if 'role' in payload:
-        if not isinstance(payload['role'], str) or payload['role'] not in {'super_admin', 'admin', 'foreman', 'viewer'}:
+        if not isinstance(payload['role'], str) or payload['role'] not in USER_ROLES:
             return jsonify({'error': 'Выберите роль из списка.'}), 400
         if 'expected_role' not in payload:
             return jsonify({'error': 'Обновите список пользователей перед сменой роли.'}), 400
@@ -606,11 +619,15 @@ from outstaff_api import register_outstaff_routes
 register_outstaff_routes(app, get_db, roles_required, utc_now)
 from user_preferences import register_preferences
 register_preferences(app, get_db, roles_required, utc_now)
+from user_profile import register_user_profile
+register_user_profile(app, get_db, roles_required, utc_now)
 from user_smu_access import register_smu_access
 register_smu_access(app, get_db, roles_required, utc_now)
 register_crew_routes(app, get_db, roles_required, utc_now)
 register_gdlr_routes(app, get_db, roles_required, utc_now)
 register_contractor_routes(app, get_db, roles_required, utc_now)
+from employer_api import register_employer_routes
+register_employer_routes(app, get_db, roles_required, utc_now)
 from smu_api import register_smu_routes
 register_smu_routes(app, get_db, roles_required, utc_now)
 register_backup_routes(app, get_db, roles_required)
@@ -625,6 +642,10 @@ register_day_inheritance(app, get_db, roles_required, utc_now)
 register_personnel_dashboard(app, get_db, roles_required)
 register_user_activity(app, get_db, login_required, roles_required)
 register_staffing_export_route(app, get_db, roles_required)
+from position_cards import register_position_cards_route
+register_position_cards_route(app, get_db, roles_required)
+from placement_verification import register_verification
+register_verification(app, get_db, roles_required, utc_now)
 from placement_report import register_placement_report
 register_placement_report(app, get_db, roles_required)
 from telegram_api import register_telegram

@@ -39,6 +39,116 @@ class SmuCatalogTest(unittest.TestCase):
         return db.execute('INSERT INTO workers(full_name,personnel_no,department) VALUES (?,?,?)',
                           (name, name, department)).lastrowid
 
+    def user_id(self, role='foreman'):
+        with self.module.app.app_context():
+            return self.module.get_db().execute('SELECT id FROM users WHERE role=?', (role,)).fetchone()[0]
+
+    def test_chief_round_trip_clear_and_stale_protection(self):
+        chief = self.user_id()
+        response = self.client.post('/api/smu', json={'name': 'СМУ с начальником', 'site_chief_user_id': chief}, headers=self.headers)
+        self.assertEqual(response.status_code, 201, response.json)
+        row = next(r for r in self.rows() if r['id'] == response.json['id'])
+        self.assertEqual(row['site_chief_user_id'], chief)
+        self.assertEqual(row['site_chief_name'], 'foreman')
+        self.assertEqual(row['site_chief_active'], 1)
+        self.assertEqual(self.update(row, row['name'], site_chief_user_id=self.user_id('viewer')).status_code, 200)
+        self.assertEqual(self.update(row, row['name'], site_chief_user_id=None).status_code, 409)
+        current = next(r for r in self.rows() if r['id'] == row['id'])
+        self.assertEqual(current['site_chief_user_id'], self.user_id('viewer'))
+        self.assertEqual(self.update(current, current['name'], site_chief_user_id=None).status_code, 200)
+        cleared = next(r for r in self.rows() if r['id'] == row['id'])
+        self.assertIsNone(cleared['site_chief_user_id'])
+        self.assertIsNone(cleared['site_chief_name'])
+
+    def test_chief_follows_user_name_and_survives_rename_disable_and_restart(self):
+        chief = self.user_id()
+        row = self.create('Первоначальное СМУ')
+        with self.module.app.app_context():
+            db = self.module.get_db()
+            worker = self.worker(db, 'Работник участка', row['name'])
+            db.commit()
+            original_access = [tuple(r) for r in db.execute('SELECT * FROM user_smu_access')]
+            original_crews = [tuple(r) for r in db.execute('SELECT * FROM crews')]
+        self.assertEqual(self.update(row, row['name'], site_chief_user_id=chief).status_code, 200)
+        with self.module.app.app_context():
+            db = self.module.get_db()
+            self.assertEqual([tuple(r) for r in db.execute('SELECT * FROM user_smu_access')], original_access)
+            self.assertEqual([tuple(r) for r in db.execute('SELECT * FROM crews')], original_crews)
+            self.assertEqual(db.execute('SELECT department FROM workers WHERE id=?', (worker,)).fetchone()[0], row['name'])
+            db.execute("UPDATE users SET full_name='Петров Пётр Петрович',active=0 WHERE id=?", (chief,))
+            db.commit()
+        current = next(r for r in self.rows() if r['id'] == row['id'])
+        self.assertEqual(current['site_chief_name'], 'Петров Пётр Петрович')
+        self.assertEqual(current['site_chief_active'], 0)
+        self.assertNotIn(chief, [u['id'] for u in self.client.get('/api/smu').json['chief_options']])
+        # An unrelated edit can retain its existing disabled chief, and old clients omit the field.
+        self.assertEqual(self.update(current, 'Переименованное СМУ', active=False, site_chief_user_id=chief).status_code, 200)
+        current = next(r for r in self.rows() if r['id'] == row['id'])
+        self.assertEqual(self.update(current, current['name'], active=True).status_code, 200)
+        with self.module.app.app_context():
+            self.module.init_db()
+        self.assertEqual(next(r for r in self.rows() if r['id'] == row['id'])['site_chief_user_id'], chief)
+
+    def test_chief_validation_and_failed_updates_are_atomic(self):
+        row = self.create('Проверка начальника')
+        inactive = self.user_id()
+        with self.module.app.app_context():
+            db = self.module.get_db()
+            db.execute('UPDATE users SET active=0 WHERE id=?', (inactive,))
+            db.commit()
+        for value in (True, False, 0, -1, '2', 1.5, [], {}, 999999, inactive):
+            with self.subTest(value=value):
+                self.assertEqual(self.update(row, row['name'], site_chief_user_id=value).status_code, 400)
+                response = self.client.post('/api/smu', json={'name': 'Не создавать', 'site_chief_user_id': value}, headers=self.headers)
+                self.assertEqual(response.status_code, 400)
+        self.assertEqual(next(r for r in self.rows() if r['id'] == row['id']), row)
+        self.assertFalse(any(r['name'] == 'Не создавать' for r in self.rows()))
+
+    def test_chief_permissions_csrf_and_public_options(self):
+        row = self.create('Права на начальника')
+        chief = self.user_id()
+        body = {'name': row['name'], 'active': True, 'site_chief_user_id': chief, 'expected_token': row['edit_token']}
+        url = '/api/smu/' + str(row['id'])
+        self.assertEqual(self.client.patch(url, json=body).status_code, 403)
+        for role in ('foreman', 'viewer'):
+            self.assertEqual(self.fixture.clients[role].patch(url, json=body, headers=self.headers).status_code, 403)
+        self.assertTrue(self.client.get('/api/smu').json['chief_options'])
+        self.assertEqual(self.fixture.clients['foreman'].get('/api/smu').json['chief_options'], [])
+        with self.module.app.app_context():
+            db = self.module.get_db()
+            db.execute("UPDATE users SET role='admin' WHERE id=?", (self.fixture.admin_id,))
+            db.commit()
+        self.assertEqual(self.client.patch(url, json=body, headers=self.headers).status_code, 403)
+        self.assertEqual(self.client.get('/api/smu').json['chief_options'], [])
+        self.assertIsNone(next(r for r in self.rows() if r['id'] == row['id'])['site_chief_user_id'])
+
+    def test_chief_migration_backup_idempotence_and_existing_data(self):
+        from smu_api import migrate_smu_catalog
+        db = sqlite3.connect(':memory:')
+        self.addCleanup(db.close)
+        db.executescript('''CREATE TABLE users(id INTEGER PRIMARY KEY);
+            CREATE TABLE workers(id INTEGER PRIMARY KEY,department TEXT);
+            CREATE TABLE smu_catalog(id INTEGER PRIMARY KEY,name TEXT NOT NULL UNIQUE,active INTEGER NOT NULL DEFAULT 1,
+                edit_token TEXT NOT NULL DEFAULT (lower(hex(randomblob(16)))),updated_by INTEGER,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+            INSERT INTO smu_catalog VALUES (8,'СМУ 8',1,'existing-token',NULL,'original-time');
+            INSERT INTO workers VALUES (3,'СМУ 8');
+            INSERT INTO users VALUES (4);''')
+        with patch('backup_api.create_backup', side_effect=OSError('backup unavailable')):
+            with self.assertRaises(OSError):
+                migrate_smu_catalog(db)
+        self.assertNotIn('site_chief_user_id', [r[1] for r in db.execute('PRAGMA table_info(smu_catalog)')])
+        with patch('backup_api.create_backup') as backup:
+            migrate_smu_catalog(db)
+            backup.assert_called_once_with(db, reason='smu-site-chief-migration')
+        self.assertEqual(db.execute('SELECT * FROM smu_catalog').fetchone(), (8, 'СМУ 8', 1, 'existing-token', None, 'original-time', None))
+        db.execute('UPDATE smu_catalog SET site_chief_user_id=4 WHERE id=8')
+        with patch('backup_api.create_backup') as backup:
+            migrate_smu_catalog(db)
+            backup.assert_not_called()
+        self.assertEqual(db.execute('SELECT site_chief_user_id FROM smu_catalog WHERE id=8').fetchone()[0], 4)
+        self.assertEqual(db.execute('SELECT * FROM workers').fetchall(), [(3, 'СМУ 8')])
+
     def test_backfill_exact_blanks_idempotent_and_source_unchanged(self):
         from smu_api import migrate_smu_catalog
         db = sqlite3.connect(':memory:')

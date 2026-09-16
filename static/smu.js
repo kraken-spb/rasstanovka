@@ -4,7 +4,7 @@
   if (!$('view-smu')) return;
   const root = document.querySelector('.app-shell');
   const canEdit = root.dataset.role === 'super_admin';
-  const state = {rows: [], drafts: new Map(), createDraft: '', busy: false};
+  const state = {rows: [], chiefOptions: [], drafts: new Map(), createDraft: '', createChief: null, busy: false};
   const el = (tag, props = {}, ...children) => {
     const node = document.createElement(tag);
     Object.entries(props).forEach(([key, value]) => {
@@ -16,7 +16,23 @@
     return node;
   };
   const visible = () => $('view-smu').classList.contains('active');
-  const hasDrafts = () => state.drafts.size || state.createDraft.length > 0;
+  const hasDrafts = () => state.drafts.size || state.createDraft.length > 0 || state.createChief !== null;
+  function setCatalog(data) { state.rows = data.rows; state.chiefOptions = data.chief_options || []; }
+  function fillChiefOptions(select, value, item = null) {
+    const options = [el('option', {value: ''}, 'Не назначено'), ...state.chiefOptions.map(user =>
+      el('option', {value: String(user.id)}, user.full_name + ' (' + user.username + ')'))];
+    if (value !== null && !state.chiefOptions.some(user => user.id === value)) {
+      const name = item?.site_chief_user_id === value ? item.site_chief_name : 'Выбранный пользователь';
+      options.push(el('option', {value: String(value), disabled: true}, (name || 'Пользователь') + ' (отключён)'));
+    }
+    select.replaceChildren(...options);
+    select.value = value === null ? '' : String(value);
+  }
+  function chiefSelect(value, item) {
+    const select = el('select', {style: 'width:100%;min-width:0;max-width:100%'});
+    fillChiefOptions(select, value, item);
+    return select;
+  }
   function status(message, isError = false) {
     const node = $('smu-status'); node.textContent = message; node.classList.toggle('error-text', isError);
   }
@@ -41,13 +57,14 @@
     if (!force && !canLeave()) return;
     state.busy = true; $('view-smu').inert = true; error(); status('Загрузка справочника…');
     try {
-      state.rows = (await api('/api/smu')).rows;
+      setCatalog(await api('/api/smu'));
       render(); status('');
     } catch (failure) { error(failure.message); }
     finally { state.busy = false; $('view-smu').inert = false; }
   }
   async function load() { await refresh(true); }
-  function rowDraft(item) { return state.drafts.get(item.id) || {name: item.name, active: !!item.active, expected_token: item.edit_token}; }
+  function rowDraft(item) { return state.drafts.get(item.id) || {name: item.name, active: !!item.active,
+    site_chief_user_id: item.site_chief_user_id ?? null, expected_token: item.edit_token}; }
   function render() {
     const count = state.rows.length;
     const bound = state.rows.reduce((total, item) => total + item.employee_count, 0);
@@ -55,25 +72,33 @@
     $('smu-bound').textContent = bound.toLocaleString('ru-RU');
     const create = $('smu-create-name');
     if (create.value !== state.createDraft) create.value = state.createDraft;
+    fillChiefOptions($('smu-create-chief'), state.createChief);
     const list = $('smu-catalog-list');
     list.replaceChildren(...state.rows.map(item => {
       if (!canEdit) return el('article', {className: 'category-catalog-row'},
         el('strong', {}, item.name), el('span', {}, item.active ? 'Доступно для выбора' : 'Отключено'),
+        el('span', {style: 'min-width:0;overflow-wrap:anywhere'}, 'Ответственное лицо: ' +
+          (item.site_chief_name ? item.site_chief_name + (item.site_chief_active ? '' : ' (отключён)') : 'Не назначено')),
         el('small', {}, 'Связано сотрудников: ' + item.employee_count));
       const draft = rowDraft(item);
       const name = el('input', {value: draft.name, maxLength: 500, required: true, 'aria-label': 'Название СМУ ' + item.name});
       const active = el('input', {type: 'checkbox', checked: draft.active, 'aria-label': 'Доступность СМУ ' + item.name});
+      const chief = chiefSelect(draft.site_chief_user_id, item);
+      chief.setAttribute('aria-label', 'Ответственное лицо СМУ ' + item.name);
       const save = el('button', {className: 'primary-button', disabled: !state.drafts.has(item.id), onclick: () => saveSmu(item)}, 'Сохранить');
       const cancel = el('button', {className: 'text-button', hidden: !state.drafts.has(item.id), onclick: () => {
         state.drafts.delete(item.id); render(); status('Изменение отменено. Обновите справочник, если нужно получить текущие данные.');
       }}, 'Отмена');
       const changed = () => {
-        if (name.value === item.name && active.checked === !!item.active) state.drafts.delete(item.id);
-        else state.drafts.set(item.id, {name: name.value, active: active.checked, expected_token: draft.expected_token});
+        const chiefId = chief.value ? Number(chief.value) : null;
+        if (name.value === item.name && active.checked === !!item.active && chiefId === (item.site_chief_user_id ?? null)) state.drafts.delete(item.id);
+        else state.drafts.set(item.id, {name: name.value, active: active.checked,
+          site_chief_user_id: chiefId, expected_token: draft.expected_token});
         save.disabled = !state.drafts.has(item.id); cancel.hidden = save.disabled;
       };
-      name.addEventListener('input', changed); active.addEventListener('change', changed);
+      name.addEventListener('input', changed); active.addEventListener('change', changed); chief.addEventListener('change', changed);
       return el('article', {className: 'category-catalog-row'}, el('label', {}, 'Название', name),
+        el('label', {}, 'Ответственное лицо', chief),
         el('label', {className: 'check-label'}, active, 'Доступно для выбора'),
         el('small', {}, 'Связано сотрудников: ' + item.employee_count), el('div', {className: 'category-actions'}, save, cancel,
           el('button', {type: 'button', className: 'text-button error-text', 'aria-label': 'Удалить СМУ ' + item.name,
@@ -100,7 +125,7 @@
     try {
       await api('/api/smu/' + item.id, {method: 'PATCH', body: JSON.stringify(draft)});
       state.drafts.delete(item.id);
-      state.rows = (await api('/api/smu')).rows;
+      setCatalog(await api('/api/smu'));
       render(); status('СМУ сохранено.');
     } catch (failure) { error(failure.message + ' Изменение осталось в поле: отмените его и обновите справочник для явной сверки.'); }
     finally { state.busy = false; $('view-smu').inert = false; }
@@ -111,12 +136,16 @@
     if (!canEdit || !name || state.busy) return;
     state.busy = true; $('view-smu').inert = true; error(); status('Добавление СМУ…');
     try {
-      await api('/api/smu', {method: 'POST', body: JSON.stringify({name})});
-      state.createDraft = ''; state.rows = (await api('/api/smu')).rows;
+      await api('/api/smu', {method: 'POST', body: JSON.stringify({name, site_chief_user_id: state.createChief})});
+      state.createDraft = ''; state.createChief = null; setCatalog(await api('/api/smu'));
       render(); status('СМУ добавлено.');
     } catch (failure) { error(failure.message + ' Название осталось в поле.'); }
     finally { state.busy = false; $('view-smu').inert = false; }
   }
+  const createChief = chiefSelect(null);
+  createChief.id = 'smu-create-chief';
+  createChief.addEventListener('change', () => { state.createChief = createChief.value ? Number(createChief.value) : null; });
+  $('smu-create-form').insertBefore(el('label', {}, 'Ответственное лицо', createChief), $('smu-create-form').querySelector('button'));
   $('smu-create-form').addEventListener('submit', create);
   $('smu-create-name').addEventListener('input', event => { state.createDraft = event.target.value; });
   $('smu-refresh').addEventListener('click', () => refresh());

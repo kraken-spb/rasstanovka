@@ -1,11 +1,13 @@
+from filter_values import argument as filter_argument, values as filter_values, matches as filter_matches, label as filter_label
 """Flat attendance-backed placement, with crew defaults and row corrections."""
 import json
 import secrets
 from datetime import date, datetime
-from user_smu_access import can_crew, require_crew, require_workers, worker_clause, legacy_foreman, require_all
+from user_smu_access import can_crew, require_crew, require_workers, worker_clause, legacy_foreman, require_all, allowed_workers
 
 from flask import abort, g, jsonify, request
 from itsdangerous import BadSignature, URLSafeTimedSerializer
+from gdlr_api import staffing_eligible_sql
 
 from attendance_status import attendance_states, register_attendance_routes
 from day_inheritance import freshness_states
@@ -13,7 +15,8 @@ from contractor_api import placement_company, placement_company_sql
 from performed_work import performed_work_states, register_performed_work_routes
 from staffing_import import removal_import_summary, ImportProblem, apply_attendance, import_conflicts, natural_key, parse_attendance
 from staffing_import import active_import_ids_sql, active_members_sql
-from staffing_shifts import canonical_shift, day_states, register_shift_routes, responsibility_states, validate_group_snapshot
+from import_reconciliation import reconcile
+from staffing_shifts import responsible_ref, resolve_responsible, canonical_shift, day_states, register_shift_routes, responsibility_states, validate_group_snapshot
 
 
 def assignment_authors(db, day, rows, end_day=None):
@@ -50,15 +53,7 @@ def register_staffing_routes(app, get_db, roles_required, utc_now):
     register_attendance_routes(app, get_db, roles_required, utc_now)
     register_performed_work_routes(app, get_db, roles_required, utc_now)
     def person_binding(payload, field, name):
-        person_id = payload.get(field + '_person_id')
-        if person_id is None:
-            return None
-        if type(person_id) is not int:
-            abort(400, description="Выберите сотрудника из файла.")
-        person = get_db().execute('SELECT full_name FROM staffing_people WHERE id=?', (person_id,)).fetchone()
-        if not person or person['full_name'] != name:
-            abort(400, description="ФИО не соответствует выбранному сотруднику. Выберите его заново.")
-        return person_id
+        return resolve_responsible(get_db(), payload.get(field + '_person_id'), name)
 
     @app.get('/api/staffing/people')
     @roles_required('admin', 'foreman')
@@ -70,6 +65,12 @@ def register_staffing_routes(app, get_db, roles_required, utc_now):
             FROM staffing_people p LEFT JOIN manual_staffing_people m ON m.person_id=p.id
             WHERE p.import_id IN ({active_import_ids_sql()}) OR m.person_id IS NOT NULL
             ORDER BY p.full_name,p.personnel_no,p.id""").fetchall() if batch else []
+        people = [dict(p) for p in people]
+        people.extend(dict(p) for p in db.execute('''SELECT 'outstaff:' || w.id id,w.id worker_id,
+            w.full_name,w.personnel_no,w.profession,w.department,'' qualification,COALESCE(c.name,'') source_crew,
+            w.employer,'outstaff' source_kind FROM workers w JOIN outstaff_members o ON o.worker_id=w.id
+            LEFT JOIN crew_members m ON m.worker_id=w.id LEFT JOIN crews c ON c.id=m.crew_id
+            WHERE w.active=1 ORDER BY w.full_name,w.personnel_no,w.id'''))
         return jsonify({'import_id': batch['id'] if batch else None, 'filename': batch['filename'] if batch else '',
                         'people': [dict(p) for p in people]})
 
@@ -93,6 +94,14 @@ def register_staffing_routes(app, get_db, roles_required, utc_now):
             abort(400, description="Выберите смену.")
         db = get_db()
         batch = db.execute("SELECT * FROM staffing_imports ORDER BY id DESC LIMIT 1").fetchone()
+        change = None
+        if 'change_metric' in request.args:
+            if shift != 'all' or 'calendar_sites' in request.args:
+                abort(400, description='Изменение сравнивается за день, по обеим сменам.')
+            from placement_report import report_changes, report_author_argument
+            db.execute('BEGIN')
+            change = report_changes(db, day, request.args['change_metric'],
+                pps=filter_argument('change_pps'), category=filter_argument('change_category'), author=report_author_argument('change_author'))
         calendar_sites = None
         if 'calendar_sites' in request.args:
             try:
@@ -105,13 +114,13 @@ def register_staffing_routes(app, get_db, roles_required, utc_now):
                 abort(400, description='Выберите смену для перехода из сводной таблицы.')
         if 'calendar_category' in request.args and calendar_sites is None:
             abort(400, description='Категория доступна только при переходе из сводной таблицы.')
-        calendar_category = request.args.get('calendar_category') if calendar_sites is not None and 'calendar_category' in request.args else None
+        calendar_category = filter_argument('calendar_category') if calendar_sites is not None else None
         if calendar_category is not None and len(calendar_category) > 200:
             abort(400, description='Категория не должна превышать 200 символов.')
         has_outstaff = db.execute('SELECT 1 FROM outstaff_members LIMIT 1').fetchone() is not None
         has_manual = db.execute('SELECT 1 FROM manual_employees LIMIT 1').fetchone() is not None
         has_restored = db.execute('SELECT 1 FROM employee_restorations LIMIT 1').fetchone() is not None
-        if not batch and not has_outstaff and not has_manual and not has_restored and calendar_sites is None:
+        if not batch and not has_outstaff and not has_manual and not has_restored and calendar_sites is None and change is None:
             return jsonify({"import": None, "crews": [], "rows": [], "index": []})
         source = f'''({active_members_sql()}
             UNION ALL SELECT om.worker_id,om.source_row,'' FROM outstaff_members om
@@ -126,7 +135,7 @@ def register_staffing_routes(app, get_db, roles_required, utc_now):
         assignment_join = """a.worker_id=w.id AND a.work_date=?
             AND ((?='all' AND a.id=(SELECT MIN(aa.id) FROM assignments aa WHERE aa.worker_id=w.id AND aa.work_date=a.work_date))
                 OR (CASE WHEN a.shift='Ночная смена' THEN '2 смена' ELSE a.shift END)=?)"""
-        where = 'w.active=1'
+        where = 'w.active=1 AND ' + staffing_eligible_sql()
         clause, params = '', [day, shift, shift]
         if calendar_sites is not None:
             # Drill through the actual assignments, including people outside the latest import.
@@ -139,6 +148,11 @@ def register_staffing_routes(app, get_db, roles_required, utc_now):
                 match_params.append(calendar_shift)
             else:
                 match += " AND aa.shift IN ('1 смена','2 смена','Ночная смена')"
+            if 'calendar_contractor' in request.args:
+                if len(request.args['calendar_contractor']) > 200:
+                    abort(400, description='Название подрядчика слишком длинное.')
+                match += " AND COALESCE(ct.name,w.contractor,'')=?"
+                match_params.append(request.args['calendar_contractor'])
             if 'calendar_employer' in request.args:
                 match += ' AND (' + placement_company_sql('aa.employer') + ')=?'
                 match_params.append(request.args['calendar_employer'])
@@ -146,9 +160,15 @@ def register_staffing_routes(app, get_db, roles_required, utc_now):
             where = "a.id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM staffing_attendance att WHERE att.worker_id=w.id AND att.work_date=a.work_date AND att.status<>'Явка')"
             params = [batch['id'] if batch else None, *match_params]
             if calendar_category is not None:
-                where += " AND COALESCE(gc.name,w.category,'')=?"
-                params.append(calendar_category)
-        access_clause, access_params = worker_clause(db)
+                where += " AND COALESCE(gc.name,w.category,'') IN (" + ','.join('?' for _ in filter_values(calendar_category)) + ')'
+                params.extend(filter_values(calendar_category))
+        if change is not None:
+            # Identities are derived by the report with the same date-specific read scope.
+            source = 'workers w LEFT JOIN staffing_import_members sm ON sm.worker_id=w.id AND sm.import_id=?'
+            ids = list(change['workers'])
+            where = 'w.id IN (' + ','.join('?' for _ in ids) + ')' if ids else '0'
+            params = [batch['id'] if batch else None, day, shift, shift, *ids]
+        access_clause, access_params = ('1', []) if change is not None else worker_clause(db)
         clause = ' AND (' + access_clause + ')'
         params.extend(access_params)
         if "crew_id" in request.args:
@@ -160,22 +180,26 @@ def register_staffing_routes(app, get_db, roles_required, utc_now):
                     crew_id = int(crew_id)
                 except ValueError:
                     abort(400, description="Укажите номер бригады.")
-                access(crew_id)
+                if change is None:
+                    access(crew_id)
                 clause += " AND m.crew_id=?"
                 params.append(crew_id)
         rows = db.execute(f"""
-            SELECT w.id,w.active,w.full_name,w.personnel_no,COALESCE(ct.name,w.contractor) contractor,ct.id contractor_id,ct.name_key contractor_key,ew.edit_token contractor_token,w.employer,w.profession,
+            SELECT w.id,w.active,{staffing_eligible_sql()} staffing_eligible,w.full_name,w.personnel_no,COALESCE(ct.name,w.contractor) contractor,ct.id contractor_id,ct.name_key contractor_key,ew.edit_token contractor_token,w.employer,ee.edit_token employer_edit_token,w.profession,
                 COALESCE(gc.name,w.category) category,ec.category_id,ec.edit_token category_binding_token,
                 w.category source_category,w.gsp_profession,w.department,w.pps,m.crew_id,sm.source_row,sm.source_crew,
                 c.name crew_name,c.linear_itr,c.brigadier,c.details_token,c.owner_user_id,
                 c.linear_itr_person_id crew_linear_itr_person_id,c.brigadier_person_id crew_brigadier_person_id,
                 d.brigadier_override,d.linear_itr_override,d.edit_token row_token,
                 d.linear_itr_person_id,d.brigadier_person_id,
+                c.linear_itr_worker_id crew_linear_itr_worker_id,c.brigadier_worker_id crew_brigadier_worker_id,
+                d.linear_itr_worker_id,d.brigadier_worker_id,
                 a.id assignment_id,a.subobject_id,a.edit_token,a.crew_id assignment_crew_id,a.foreman_user_id,
                 a.shift assignment_shift,a.created_at assignment_created_at,
                 s.name subobject_name,s.object_id,o.name object_name
             FROM {source}
             LEFT JOIN employee_contractors ew ON ew.worker_id=w.id
+            LEFT JOIN employee_employers ee ON ee.worker_id=w.id
             LEFT JOIN contractors ct ON ct.id=ew.contractor_id
             LEFT JOIN employee_gdlr ec ON ec.worker_id=w.id
             LEFT JOIN gdlr_categories gc ON gc.id=ec.category_id
@@ -190,6 +214,9 @@ def register_staffing_routes(app, get_db, roles_required, utc_now):
         freshness = freshness_states(db, day, [row['id'] for row in rows])
         works = performed_work_states(db, day, [row['id'] for row in rows])
         extra = {}
+        change_editable = allowed_workers(db, [row['id'] for row in rows]) if change is not None else set()
+        if change is not None:
+            extra['report_change'] = {key: value for key, value in change.items() if key != 'workers'}
         if calendar_sites is not None:
             site_set = set(calendar_sites)
             companies = {row['id']: (row['contractor'], row['contractor_key']) for row in rows}
@@ -204,6 +231,10 @@ def register_staffing_routes(app, get_db, roles_required, utc_now):
         result, crews = [], {}
         for row in rows:
             item = dict(row)
+            for field in ('linear_itr', 'brigadier', 'crew_linear_itr', 'crew_brigadier'):
+                item[field + '_person_id'] = responsible_ref(row, field)
+            from employer_api import employer_token
+            item['employer_token'] = employer_token(item['employer'], item.pop('employer_edit_token'))
             item.update(attendance[row['id']])
             item['freshness'] = freshness[row['id']]
             item.update(groups[row['id']])
@@ -214,7 +245,10 @@ def register_staffing_routes(app, get_db, roles_required, utc_now):
                 row["assignment_crew_id"] not in (None, row["crew_id"]) or (
                     row["assignment_crew_id"] is None and legacy_foreman(db)
                     and row["foreman_user_id"] != g.user["id"])))
-            item['locked'] = item['locked'] or not row['active'] or item.get('shift_conflict', False)
+            item['locked'] = item['locked'] or g.user['role'] == 'hr_viewer' or not row['active'] or not row['staffing_eligible'] or item.get('shift_conflict', False)
+            if change is not None:
+                item['report_change'] = change['workers'][row['id']]
+                item['locked'] = item['locked'] or row['id'] not in change_editable
             item.update(works.get((row['id'], item.get('employee_shift') if shift == 'all' else canonical_shift(shift)),
                                   {'performed_work': '', 'performed_work_token': None}))
             item["brigadier_name"] = row["brigadier_override"] if row["brigadier_override"] is not None else row["brigadier"] or ""
@@ -224,9 +258,9 @@ def register_staffing_routes(app, get_db, roles_required, utc_now):
             if key not in crews:
                 crews[key] = {"id": key, "name": row["crew_name"] or "Вне состава бригады", "count": 0,
                               "linear_itr": row["linear_itr"] or "", "brigadier": row["brigadier"] or "",
-                              "linear_itr_person_id": row['crew_linear_itr_person_id'], "brigadier_person_id": row['crew_brigadier_person_id'],
+                              "linear_itr_person_id": item['crew_linear_itr_person_id'], "brigadier_person_id": item['crew_brigadier_person_id'],
                               "details_token": row["details_token"], "assigned": 0,
-                              "can_edit_whole": bool(key and can_crew(db, key, whole=True))}
+                              "can_edit_whole": bool(g.user['role'] != 'hr_viewer' and key and can_crew(db, key, whole=True))}
             crews[key]["count"] += 1
             crews[key]["assigned"] += int(bool(row["assignment_id"]))
         ordered = sorted(crews.values(), key=lambda c: natural_key(c["name"]))
@@ -253,8 +287,8 @@ def register_staffing_routes(app, get_db, roles_required, utc_now):
             # Keep global filtering available without loading editable worker details.
             fields = ("full_name", "personnel_no", "profession", "category", "department", "employer", "pps",
                       "crew_name", "object_name", "subobject_name", "linear_itr_name", "brigadier_name")
-            index = [{**{key: row.get(key) for key in ("id", "crew_id", "number", "department", "employer", "category", "pps",
-                       "assignment_id", "assignment_author", "attendance_status", "attendance_token", "employee_shift", "itr_group_key", "itr_group_label", "group_token", "freshness")},
+            index = [{**{key: row.get(key) for key in ("id", "crew_id", "number", "department", "employer", "contractor", "category", "pps",
+                       "assignment_id", "assignment_author", "attendance_status", "attendance_token", "employee_shift", "itr_group_key", "itr_group_label", "group_token", "freshness", "report_change", "locked")},
                       "search_fields": [row.get(key) or "" for key in fields]} for row in result]
             return jsonify({"import": info, "crews": ordered, "rows": [], "index": index, **extra})
         return jsonify({"import": info, "crews": ordered, "rows": result, **extra})
@@ -278,8 +312,9 @@ def register_staffing_routes(app, get_db, roles_required, utc_now):
                 abort(409, description="Данные бригады изменены в другом окне. Обновите таблицу.")
             token = secrets.token_urlsafe(16)
             bindings = [person_binding(payload, field, values[field]) if field + '_person_id' in payload or values[field] != crew[field]
-                        else crew[field + '_person_id'] for field in ('linear_itr', 'brigadier')]
-            db.execute("UPDATE crews SET linear_itr=?,brigadier=?,details_token=?,linear_itr_person_id=?,brigadier_person_id=? WHERE id=?",
+                        else (crew[field + '_person_id'], crew[field + '_worker_id']) for field in ('linear_itr', 'brigadier')]
+            bindings = [value for pair in bindings for value in pair]
+            db.execute("UPDATE crews SET linear_itr=?,brigadier=?,details_token=?,linear_itr_person_id=?,linear_itr_worker_id=?,brigadier_person_id=?,brigadier_worker_id=? WHERE id=?",
                        (values["linear_itr"], values["brigadier"], token, *bindings, crew_id))
         return jsonify({**values, "details_token": token})
 
@@ -305,13 +340,13 @@ def register_staffing_routes(app, get_db, roles_required, utc_now):
                 abort(409, description="Ответственные в строке уже изменены. Обновите таблицу.")
             token = secrets.token_urlsafe(16)
             value = value.strip() if value is not None else None
-            person_id = person_binding(payload, field, value)
-            db.execute(f"""INSERT INTO staffing_row_details(worker_id,{override},edit_token,updated_by,updated_at,{field}_person_id)
-                        VALUES (?,?,?,?,?,?) ON CONFLICT(worker_id) DO UPDATE SET
+            person_id, responsible_worker_id = person_binding(payload, field, value)
+            db.execute(f"""INSERT INTO staffing_row_details(worker_id,{override},edit_token,updated_by,updated_at,{field}_person_id,{field}_worker_id)
+                        VALUES (?,?,?,?,?,?,?) ON CONFLICT(worker_id) DO UPDATE SET
                         {override}=excluded.{override},edit_token=excluded.edit_token,
-                        {field}_person_id=excluded.{field}_person_id,
+                        {field}_person_id=excluded.{field}_person_id,{field}_worker_id=excluded.{field}_worker_id,
                         updated_by=excluded.updated_by,updated_at=excluded.updated_at""",
-                       (worker_id, value, token, g.user["id"], utc_now(), person_id))
+                       (worker_id, value, token, g.user["id"], utc_now(), person_id, responsible_worker_id))
         return jsonify({"row_token": token, override: value,
                         field + "_name": crew[field] if value is None else value})
 
@@ -366,16 +401,16 @@ def register_staffing_routes(app, get_db, roles_required, utc_now):
                     abort(409, description='Состав бригады изменился. Обновите таблицу.')
             if any(expected[str(member['id'])] != member['edit_token'] for member in members):
                 abort(409, description='Ответственные изменены в другом окне. Обновите таблицу.')
-            person_id = person_binding(payload, field, value) if value is not None else None
+            person_id, responsible_worker_id = person_binding(payload, field, value) if value is not None else (None, None)
             # The field is restricted to the two names above; validate the whole batch before writing.
             override = field + '_override'
             for worker_id in ids:
-                db.execute(f'''INSERT INTO staffing_row_details(worker_id,{override},edit_token,updated_by,updated_at,{field}_person_id)
-                    VALUES (?,?,?,?,?,?) ON CONFLICT(worker_id) DO UPDATE SET
+                db.execute(f'''INSERT INTO staffing_row_details(worker_id,{override},edit_token,updated_by,updated_at,{field}_person_id,{field}_worker_id)
+                    VALUES (?,?,?,?,?,?,?) ON CONFLICT(worker_id) DO UPDATE SET
                     {override}=excluded.{override},edit_token=excluded.edit_token,
-                    {field}_person_id=excluded.{field}_person_id,
+                    {field}_person_id=excluded.{field}_person_id,{field}_worker_id=excluded.{field}_worker_id,
                     updated_by=excluded.updated_by,updated_at=excluded.updated_at''',
-                    (worker_id, value, secrets.token_urlsafe(16), g.user['id'], utc_now(), person_id))
+                    (worker_id, value, secrets.token_urlsafe(16), g.user['id'], utc_now(), person_id, responsible_worker_id))
         return jsonify({'updated': len(ids)})
 
     def uploaded():
@@ -388,15 +423,25 @@ def register_staffing_routes(app, get_db, roles_required, utc_now):
             raise ImportProblem('Выберите ППС15 или ППС19.')
         return parsed
 
+    def import_decisions():
+        try:
+            return json.loads(request.form.get('decisions', '{}'))
+        except (ValueError, TypeError):
+            raise ImportProblem('Не удалось прочитать решения сверки.')
+
     @app.post("/api/staffing/import/preview")
     @roles_required("admin")
     def preview_import():
+        require_all(get_db())
         try:
             parsed = uploaded()
-            issues = import_conflicts(get_db(), parsed)
+            decisions = import_decisions()
+            plan = reconcile(get_db(), parsed, decisions)
             signer = URLSafeTimedSerializer(app.secret_key, salt="attendance-import")
-            token = signer.dumps({"sha256": parsed["sha256"], "user_id": g.user["id"], 'source_label': parsed['source_label']})
-            return jsonify({"summary": removal_import_summary(get_db(), parsed), "groups": parsed["groups"], "issues": issues,
+            token = signer.dumps({"sha256": parsed["sha256"], "user_id": g.user["id"], 'source_label': parsed['source_label'],
+                                  'fingerprint': plan['fingerprint'], 'decisions': decisions})
+            return jsonify({"summary": removal_import_summary(get_db(), parsed), "groups": parsed["groups"], "issues": plan['issues'],
+                            'reconciliation': {k: v for k, v in plan.items() if k not in ('actions', 'fingerprint', 'issues')},
                             "filename": parsed["filename"], "preview_token": token})
         except ImportProblem as error:
             return jsonify({"error": str(error)}), 400
@@ -409,8 +454,10 @@ def register_staffing_routes(app, get_db, roles_required, utc_now):
             parsed = uploaded()
             signer = URLSafeTimedSerializer(app.secret_key, salt="attendance-import")
             signed = signer.loads(request.form.get("preview_token", ""), max_age=900)
-            if signed != {"sha256": parsed["sha256"], "user_id": g.user["id"], 'source_label': parsed['source_label']}:
+            if not isinstance(signed, dict) or any(signed.get(k) != v for k, v in
+                    {"sha256": parsed["sha256"], "user_id": g.user["id"], 'source_label': parsed['source_label']}.items()) or not signed.get('fingerprint'):
                 raise ImportProblem("Файл изменился. Проверьте импорт заново.")
-            return jsonify(apply_attendance(get_db(), parsed, g.user["id"], utc_now, authorize=require_all))
+            return jsonify(apply_attendance(get_db(), parsed, g.user["id"], utc_now, authorize=require_all,
+                review_fingerprint=signed['fingerprint'], decisions=signed.get('decisions', {})))
         except (ImportProblem, BadSignature) as error:
             return jsonify({"error": str(error) if isinstance(error, ImportProblem) else "Предпросмотр устарел. Проверьте файл заново."}), 400

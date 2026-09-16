@@ -26,6 +26,25 @@ class ExportUnassignedTest(unittest.TestCase):
             self.external = self.fixture.worker(db, 'Аутстафф без назначения', '000203')
             self.obsolete = self.fixture.worker(db, 'Старый импорт', '000204')
             self.attendance = self.fixture.worker(db, 'Явка без назначения', '000205')
+            category_id = db.execute(
+                'SELECT category_id FROM employee_gdlr WHERE worker_id=?',
+                (self.fixture.visible_worker,),
+            ).fetchone()[0]
+            db.execute('UPDATE gdlr_categories SET staffing_allowed=1 WHERE id=?', (category_id,))
+            category_id = db.execute('''INSERT INTO gdlr_categories
+                (name,name_key,staffing_allowed,edit_token,updated_by,updated_at)
+                VALUES ('Исходная ГДЛР','исходная гдлр',1,'source-category',?,'now')''',
+                (self.fixture.admin_id,)).lastrowid
+            for worker in (self.free, self.night, self.external, self.obsolete, self.attendance,
+                           self.fixture.inactive_worker):
+                db.execute(
+                    '''INSERT INTO employee_gdlr(worker_id,category_id,edit_token,updated_by,updated_at)
+                       VALUES (?,?,?,?,?)
+                       ON CONFLICT(worker_id) DO UPDATE SET category_id=excluded.category_id,
+                           edit_token=excluded.edit_token, updated_by=excluded.updated_by,
+                           updated_at=excluded.updated_at''',
+                    (worker, category_id, 'export-unassigned-category', self.fixture.admin_id, 'now'),
+                )
             for worker in (self.free, self.night, self.fixture.visible_worker, self.fixture.inactive_worker):
                 db.execute('INSERT INTO manual_employees(worker_id,created_by,created_at,request_key,payload_hash) VALUES (?, ?,\'now\',?,\'hash\')', (worker, self.fixture.admin_id, str(worker)))
             for worker, crew in ((self.free, self.fixture.crew_id), (self.night, self.fixture.other_crew_id)):
@@ -47,7 +66,7 @@ class ExportUnassignedTest(unittest.TestCase):
 
     def rows(self, response):
         self.assertEqual(response.status_code, 200, response.get_json(silent=True))
-        return list(self.fixture.workbook(response).active.iter_rows(min_row=2, values_only=True))
+        return list(self.fixture.workbook(response)['Список сотрудников'].iter_rows(min_row=2, values_only=True))
 
     def test_opt_in_current_sources_deduplicate_and_keep_assignments(self):
         response = self.export()
@@ -62,14 +81,14 @@ class ExportUnassignedTest(unittest.TestCase):
         self.assertEqual(unassigned[10:14], ('ИТР бригады', 'Бригадир бригады', 'День', 'СМУ тест'))
         self.assertEqual(unassigned[-1], 'Не расставлен')
         self.assertEqual(sum(r[-1] == 'Расставлен' for r in rows), 4)
-        sheet = self.fixture.workbook(response).active
+        sheet = self.fixture.workbook(response)['Список сотрудников']
         formula = next(r for r in sheet.iter_rows(min_row=2) if r[6].value == '000201')
         self.assertEqual(formula[5].data_type, 's')
         self.assertEqual(formula[6].number_format, '@')
         self.assertEqual(sheet.tables['StaffingSource'].autoFilter.ref, 'A1:P9')
         default = self.export(include_unassigned='0')
         self.assertEqual(default.headers['X-Export-Count'], '4')
-        self.assertEqual(self.fixture.workbook(default).active.max_column, 15)
+        self.assertEqual(self.fixture.workbook(default)['Список сотрудников'].max_column, 15)
 
     def test_shift_and_date_scope_no_opposite_shift_duplicates(self):
         night = self.rows(self.export(shift='2 смена'))
@@ -93,8 +112,11 @@ class ExportUnassignedTest(unittest.TestCase):
             db.commit()
         self.assertEqual({r[6] for r in self.rows(self.export())}, {'000201'})
 
-    def test_validation_and_viewer_rejection(self):
-        self.assertEqual(self.export(self.fixture.viewer).status_code, 403)
+    def test_validation_and_viewer_export(self):
+        viewer_export = self.export(self.fixture.viewer)
+        self.assertEqual(viewer_export.status_code, 200)
+        self.assertEqual(viewer_export.headers['X-Export-Count'], '8')
+        self.assertEqual(viewer_export.headers['X-Export-Unassigned-Count'], '4')
         self.assertEqual(self.export(kind='summary').status_code, 200)
         for value in ('true', '', '2', '-1'):
             self.assertEqual(self.export(include_unassigned=value).status_code, 400)
@@ -114,6 +136,13 @@ class ExportUnassignedTest(unittest.TestCase):
         with self.module.app.app_context():
             db = self.module.get_db()
             db.execute("UPDATE workers SET category='Только свободные' WHERE id=?", (self.free,))
+            category_id = db.execute('''INSERT INTO gdlr_categories
+                (name,name_key,active,staffing_allowed,edit_token,updated_by,updated_at)
+                VALUES ('Только свободные','только свободные',1,1,'free-category',?,'now')''',
+                (self.fixture.admin_id,)).lastrowid
+            db.execute('''UPDATE employee_gdlr SET category_id=?,edit_token='free-category',
+                updated_by=?,updated_at='now' WHERE worker_id=?''',
+                (category_id, self.fixture.admin_id, self.free))
             db.commit()
         response = self.export(category='Только свободные')
         self.assertEqual([row[6] for row in self.rows(response)], ['000201'])

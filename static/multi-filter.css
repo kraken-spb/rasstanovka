@@ -1,0 +1,12 @@
+.multi-filter-native { display: none !important; }
+.multi-filter-button { width: 100%; min-width: 0; min-height: 28px; padding: .2rem .4rem; border: 1px solid var(--line); border-radius: 5px; background: white; font: inherit; text-align: left; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.multi-filter-button::after { content: ' ▾'; }
+.multi-filter-dialog { position: fixed; inset: auto; margin: 0; box-sizing: border-box; max-width: calc(100vw - 24px); padding: .65rem; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); background: white; box-shadow: 0 6px 24px #102c3b26; overflow: auto; }
+.multi-filter-dialog > input, .multi-filter-dialog > p { width: 100%; margin: 0 0 .5rem; }
+.multi-filter-dialog > p { font-size: .8rem; color: var(--muted); }
+.multi-filter-options { max-height: 280px; overflow: auto; }
+.multi-filter-options label { display: flex; align-items: center; gap: .6rem; min-height: 44px; padding: .3rem; overflow-wrap: anywhere; }
+.multi-filter-options label span { min-width: 0; }
+.multi-filter-actions { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .5rem; }
+.multi-filter-actions button { flex: 1 1 110px; white-space: normal; min-height: 36px; padding: .35rem .5rem; font-size: .8rem; }
+@media (max-width: 900px) { .multi-filter-button { min-height: 44px; } }

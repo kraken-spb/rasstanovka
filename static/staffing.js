@@ -1,28 +1,41 @@
 (() => {
   "use strict";
+  const MF = window.MultiFilter;
+  const hierarchy = window.StaffingHierarchy;
   const $ = (id) => document.getElementById(id);
   if (!$('view-staffing')) return;
   const root = document.querySelector('.app-shell');
+  const readOnly = root.dataset.role === 'hr_viewer';
   const state = { rows: [], crews: [], crewOptions: [], collapsed: new Set(), selected: new Map(), drafts: new Map(), crewDrafts: new Map(),
     nodes: new Map(), crewNodes: new Map(), loadedCrews: new Set(), loadingCrews: new Map(), busy: false, request: 0,
-    details: null, reference: null, imported: null, preview: null, search: '', regex: null, regexMode: false, department: '', employer: '', author: '', category: '', unassigned: false,
-    date: $('staffing-date').value, shift: $('staffing-shift').value, freshness: '', calendarFilter: null, groupMode: 'crew', itrGroups: [], rowsByItr: new Map() };
+    details: null, reference: null, imported: null, preview: null, search: '', regex: null, regexMode: false, department: '', employer: '', contractor: '', author: '', category: '', unassigned: false,
+    date: $('staffing-date').value, shift: MF.get($('staffing-shift')), freshness: '', calendarFilter: null, groupMode: 'hierarchy', itrGroups: [], rowsByItr: new Map() };
+  ["staffing-shift", "staffing-category", "staffing-department", "staffing-author", "staffing-freshness"].forEach(id => MF.enable($(id), ''));
   const preferences = window.staffingPreferences;
   state.pps = preferences.get('pps', '');
   state.date = preferences.get('date', state.date);
   $('staffing-date').value = state.date;
-  for (const field of ['groupMode', 'department', 'employer', 'author', 'category', 'unassigned', 'search', 'regexMode', 'shift', 'freshness']) {
+  for (const field of ['groupMode', 'department', 'employer', 'contractor', 'author', 'category', 'unassigned', 'search', 'regexMode', 'shift', 'freshness']) {
     state[field] = preferences.get(field, state[field]);
   }
   if (state.shift === 'all') state.shift = '';
+  state.groupLevels = preferences.get('groupLevels', hierarchy.defaults);
+  if (!hierarchy.valid(state.groupLevels)) state.groupLevels = [...hierarchy.defaults];
+  updateHierarchyLabel();
   $('staffing-grouping').value = state.groupMode;
-  $('staffing-shift').value = state.shift;
-  $('staffing-freshness').value = state.freshness;
+  MF.set($('staffing-shift'), state.shift);
+  MF.set($('staffing-freshness'), state.freshness);
   $('staffing-unassigned').checked = state.unassigned;
   $('staffing-search').value = state.search;
   $('staffing-regex').checked = state.regexMode;
   try { state.regex = state.regexMode && state.search ? new RegExp(SearchRegex.source(state.search), 'iu') : null; }
   catch (_) { state.search = ''; state.regexMode = false; $('staffing-search').value = ''; $('staffing-regex').checked = false; }
+  state.page = 0; state.pageSize = 50;
+  const pager = window.TablePagination.mount($('staffing-table'), 'Расстановка', (page, size) => {
+    if (!canLeave()) return false;
+    state.page = page; state.pageSize = size; render();
+    $('staffing-table').scrollTop = 0;
+  });
   const headers = ['№п/п', 'Группа подобъектов', 'Подобъект', 'Компания подрядчик',
     'Организация-работодатель', 'ФИО работника', 'Таб. № с префиксом',
     'Категория ГДЛР', 'ФИО линейного ИТР', 'ФИО бригадира', 'Смена', 'Статус', 'Выполняемые работы', 'Кто назначил'];
@@ -38,20 +51,30 @@
   };
   const employerFilter = el('select', {id: 'staffing-employer'});
   $('staffing-department').closest('label').after(el('label', {}, 'Организация-работодатель', employerFilter));
+  MF.enable(employerFilter);
   employerFilter.addEventListener('change', () => {
-    if (!canLeave()) { employerFilter.value = state.employer; return; }
-    state.employer = employerFilter.value;
+    if (!canLeave()) { MF.set(employerFilter, state.employer); return; }
+    state.employer = MF.get(employerFilter);
     if (!state.calendarFilter) preferences.set({employer: state.employer});
+    render();
+  });
+  const contractorFilter = el('select', {id: 'staffing-contractor'});
+  $('staffing-department').closest('label').after(el('label', {}, 'Компания-подрядчик', contractorFilter));
+  MF.enable(contractorFilter);
+  contractorFilter.addEventListener('change', () => {
+    if (!canLeave()) { MF.set(contractorFilter, state.contractor); return; }
+    state.contractor = MF.get(contractorFilter);
+    if (!state.calendarFilter) preferences.set({contractor: state.contractor});
     render();
   });
   const ppsOptions = () => [el('option', {value: ''}, 'Все ППС'),
     el('option', {value: 'ППС15'}, 'ППС15'), el('option', {value: 'ППС19'}, 'ППС19')];
   const ppsFilter = el('select', {id: 'staffing-pps'}, ...ppsOptions());
-  ppsFilter.value = state.pps;
   $('staffing-department').closest('label').before(el('label', {}, 'ППС', ppsFilter));
+  MF.enable(ppsFilter); MF.set(ppsFilter, state.pps);
   ppsFilter.addEventListener('change', () => {
-    if (!canLeave()) { ppsFilter.value = state.pps; return; }
-    state.pps = ppsFilter.value;
+    if (!canLeave()) { MF.enable(ppsFilter); MF.set(ppsFilter, state.pps); return; }
+    state.pps = MF.get(ppsFilter);
     if (!state.calendarFilter) preferences.set({pps: state.pps});
     render();
   });
@@ -68,6 +91,7 @@
     $('staffing-status').classList.toggle('error-text', error);
   }
   async function api(url, options = {}) {
+    if (readOnly && !['GET', 'HEAD'].includes((options.method || 'GET').toUpperCase())) throw new Error('Доступен только просмотр данных.');
     const form = options.body instanceof FormData;
     const response = await fetch(url, {...options, cache: url === '/api/staffing/people' ? 'no-cache' : 'no-store', headers: {
       ...(!form ? {'Content-Type': 'application/json'} : {}), 'X-CSRF-Token': root.dataset.csrf, 'X-Staffing-Date': state.date }});
@@ -81,6 +105,7 @@
     if (state.createCrewEditor) { status('Завершите создание бригады или нажмите «Отмена».'); return false; }
     if (state.categoryEditor) { status('Сохраните категорию ГДЛР или нажмите «Отмена» в форме.'); return false; }
     if (state.transferEditor) { status('Завершите перенос или нажмите «Отмена» в форме.'); return false; }
+    if (state.employerEditor) { status('Сохраните работодателя или нажмите «Отмена» в форме.'); return false; }
     if (state.workEditor) { status('Сохраните выполняемые работы или нажмите «Отмена» в форме.'); return false; }
     if (state.busy) { status('Дождитесь завершения операции.'); return false; }
     if (state.details) { status('Завершите редактирование или нажмите «Отмена».'); return false; }
@@ -94,21 +119,30 @@
   }
   function calendarQuery() {
     if (!state.calendarFilter) return '';
+    if (state.calendarFilter.kind === 'changes') {
+      const query = new URLSearchParams({change_metric: state.calendarFilter.metric});
+      for (const key of ['category', 'pps', 'author']) if (state.calendarFilter[key] !== undefined) {
+        [].concat(state.calendarFilter[key]).forEach(value => query.append('change_' + key, value));
+      }
+      return '&' + query.toString();
+    }
     const query = new URLSearchParams({calendar_sites: state.calendarFilter.sites.join(','),
-      calendar_shift: $('staffing-shift').value || 'all'});
+      calendar_shift: MF.values(MF.get($('staffing-shift'))).length === 1 ? MF.get($('staffing-shift')) : 'all'});
+    if (state.calendarFilter.contractor !== undefined) query.set('calendar_contractor', state.calendarFilter.contractor);
     if (state.calendarFilter.employer !== undefined) query.set('calendar_employer', state.calendarFilter.employer);
-    if (state.calendarFilter.category !== undefined) query.set('calendar_category', state.calendarFilter.category);
+    if (state.calendarFilter.category !== undefined) [].concat(state.calendarFilter.category).forEach(value => query.append('calendar_category',value));
     return '&' + query.toString();
   }
   async function openFromCalendar(filter) {
-    state.pps = ''; ppsFilter.value = '';
+    state.pps = ''; MF.set(ppsFilter, '');
     state.calendarFilter = filter;
-    state.search = ''; state.regex = null; state.regexMode = false; state.department = ''; state.employer = ''; state.author = ''; state.category = ''; state.unassigned = false;
-    state.freshness = ''; $('staffing-freshness').value = '';
+    state.changeDirection = 'all';
+    state.search = ''; state.regex = null; state.regexMode = false; state.department = ''; state.employer = ''; state.contractor = ''; state.author = ''; state.category = ''; state.unassigned = false;
+    state.freshness = ''; MF.set($('staffing-freshness'), '');
     state.selected.clear();
     $('staffing-search').value = ''; $('staffing-regex').checked = false; $('staffing-unassigned').checked = false;
     $('staffing-search-error').hidden = true;
-    $('staffing-date').value = filter.date; $('staffing-shift').value = filter.shift;
+    $('staffing-date').value = filter.date; MF.set($('staffing-shift'), filter.shift);
     await load();
     $('staffing-calendar-filter').scrollIntoView({block: 'nearest'});
   }
@@ -124,7 +158,7 @@
       if (request !== state.request) return;
       state.reference = reference;
       state.contractors = contractors.rows;
-      state.categories = categories.rows;
+      state.categories = categories.rows.filter(item => item.staffing_allowed);
       state.crewOptions = crewOptions.rows;
       state.people = directory.people;
       state.peopleById = new Map(state.people.map(person => [person.id, person]));
@@ -145,6 +179,8 @@
         ' · назначений: ' + data.calendar_assignment_count + ' · сотрудников: ' + data.index.length +
         (state.calendarFilter.category !== undefined ? ' · ГДЛР: ' + (state.calendarFilter.category || 'Без категории') : '') +
         (root.dataset.role === 'foreman' ? ' · Только доступные вам бригады.' : '');
+      renderChangeFilter(data.report_change);
+      $('staffing-shift').disabled = !!data.report_change;
       const membership = new Map(state.rows.map(row => [row.id, row.crew_id]));
       for (const [id, crewId] of state.selected) if (membership.get(id) !== crewId) state.selected.delete(id);
       state.loadedCrews.clear(); state.loadingCrews.clear();
@@ -157,23 +193,44 @@
         state.rowsByCrew.get(row.crew_id).push(row);
         departments.set(row.department, (departments.get(row.department) || 0) + 1);
       });
-      if (state.department && !departments.has(state.department)) departments.set(state.department, 0);
+      MF.values(state.department).forEach(key => { if (!departments.has(key)) departments.set(key, 0); });
       $('staffing-department').replaceChildren(el('option', {value: ''}, 'Все строительные участки'),
         ...[...departments].sort(([a], [b]) => a.localeCompare(b, 'ru', {numeric: true})).map(([name, count]) =>
           el('option', {value: name}, name.replace(/^Строительно[-– ]монтажный участок\s*/i, 'СМУ ') + ' · ' + count + ' чел.')));
-      $('staffing-department').value = state.department;
-      state.date = $('staffing-date').value; state.shift = $('staffing-shift').value;
+      MF.set($('staffing-department'), state.department);
+      state.date = $('staffing-date').value; state.shift = MF.get($('staffing-shift'));
       $('staffing-source').textContent = state.calendarFilter ? 'Сотрудники с фактическими назначениями по выбранной позиции.' :
         data.import ? data.import.filename + (data.import.id ? ' · лист «Явка»' : '') + (data.import.has_outstaff && data.import.id ? ' + Аутстафф' : '') : 'Импортируйте численность с листа «Явка».';
-      for (const group of displayGroups().filter(crew => expanded.has(crew.id))) await loadGroup(group);
+      if (data.report_change) $('staffing-source').textContent = 'Пришли — вошли в выбранную группу отчёта; ушли — вышли из неё. Сравнение за день, по обеим сменам.';
+      await loadPageRows(pageRows(visibleRows()));
       if (request !== state.request) return;
       render();
-      status(state.calendarFilter ? 'Показаны назначения за выбранную дату и смену. Фильтр позиции можно снять над таблицей.' :
-        data.import ? 'Для переноса с предыдущего дня отметьте сотрудников и нажмите «Перенести со вчера». Выбор подобъекта сохраняется автоматически.' : 'После импорта здесь появятся сотрудники по бригадам.');
+      status(data.report_change ? 'Показаны только сотрудники, изменившие состав выбранного показателя относительно предыдущего дня.' : state.calendarFilter ? 'Показаны назначения за выбранную дату и смену. Фильтр позиции можно снять над таблицей.' :
+        readOnly ? 'Просмотр расстановки. Раскройте группу, чтобы увидеть сотрудников и их назначения.' : data.import ? 'Для переноса с предыдущего дня отметьте сотрудников и нажмите «Перенести со вчера». Выбор подобъекта сохраняется автоматически.' : 'После импорта здесь появятся сотрудники по бригадам.');
     } catch (error) {
       state.rows = []; state.crews = []; state.drafts.clear(); state.crewDrafts.clear(); render(); status(error.message, true);
       throw error;
     } finally { if (request === state.request) busy(false); }
+  }
+  function renderChangeFilter(change) {
+    let controls = $('staffing-change-controls');
+    if (!controls) {
+      controls = el('div', {id: 'staffing-change-controls', className: 'staffing-change-controls'});
+      $('staffing-calendar-filter-label').after(controls);
+    }
+    controls.replaceChildren(); controls.hidden = !change;
+    $('staffing-calendar-filter-clear').textContent = change ? 'Снять фильтр изменений' : 'Снять фильтр позиции';
+    if (!change) return;
+    const human = day => day.split('-').reverse().join('.');
+    $('staffing-calendar-filter-label').textContent = state.calendarFilter.label + ' · ' + human(change.date) + ' к ' + human(change.previous_date);
+    for (const [value, label, count] of [['all', 'Все изменения', change.arrived + change.left], ['arrived', 'Пришли', change.arrived], ['left', 'Ушли', change.left]]) {
+      const button = el('button', {type: 'button', className: 'secondary-button', 'aria-pressed': String((state.changeDirection || 'all') === value)}, label + ' (' + count + ')');
+      button.addEventListener('click', () => {
+        if (!canLeave()) return;
+        state.changeDirection = value; state.selected.clear(); renderChangeFilter(change); render();
+      });
+      controls.append(button);
+    }
   }
   function cell(index, content, className = '') {
     return el('td', {'data-label': headers[index], className}, content);
@@ -190,32 +247,55 @@
       state.rowsByItr.get(key).push(row);
     }
     state.itrGroups = [...groups.values()].sort((a,b) => a.name.localeCompare(b.name, 'ru'));
+    if (state.groupMode === 'hierarchy') state.hierarchy = hierarchy.build(state.rows, state.groupLevels, state.crews);
   }
-  function displayGroups() { return state.groupMode === 'itr' ? state.itrGroups : state.crews; }
-  function rowsForGroup(group) { return (group.itr ? state.rowsByItr : state.rowsByCrew)?.get(group.id) || []; }
-  function groupKey(row) { return state.groupMode === 'itr' ? row.itr_group_key : row.crew_id; }
+  function displayGroups() { return state.groupMode === 'hierarchy' ? state.hierarchy?.nodes || [] : state.groupMode === 'itr' ? state.itrGroups : state.crews; }
+  function rowsForGroup(group) { return group.hierarchical ? state.hierarchy?.byId.get(group.id)?.rows || [] : (group.itr ? state.rowsByItr : state.rowsByCrew)?.get(group.id) || []; }
+  function groupKey(row) { return state.groupMode === 'hierarchy' ? state.hierarchy.paths.get(row.id)?.at(-1) : state.groupMode === 'itr' ? row.itr_group_key : row.crew_id; }
+  function groupKeys(row) { return state.groupMode === 'hierarchy' ? state.hierarchy.paths.get(row.id) || [] : [groupKey(row)]; }
   function displayedGroup(row) { return displayGroups().find(group => group.id === groupKey(row)); }
   function batchSnapshot(rows) {
     return {expected_crews: Object.fromEntries(rows.map(row => [row.id, row.crew_id])),
       expected_group_tokens: Object.fromEntries(rows.map(row => [row.id, row.group_token]))};
   }
+  function pageRows(filtered) {
+    // Keep each leaf contiguous, including when the hierarchy is reordered.
+    const signature = JSON.stringify([state.date, state.groupMode, state.groupLevels, state.search, state.regexMode,
+      state.department, state.employer, state.contractor, state.pps, state.category, state.author,
+      state.unassigned, state.shift, state.freshness, state.calendarFilter, state.changeDirection]);
+    if (signature !== state.pageFilter) { state.page = 0; state.pageFilter = signature; }
+    const ranks = new Map(displayGroups().map((group, index) => [group.id, index]));
+    const ordered = [...filtered].sort((a, b) => (ranks.get(groupKey(a)) ?? 0) - (ranks.get(groupKey(b)) ?? 0));
+    const info = window.TablePagination.windowFor(ordered.length, state.page, state.pageSize);
+    state.page = info.page;
+    return ordered.slice(info.start, info.end);
+  }
+  function pageCrews(rows, includeCollapsed = false) {
+    const ids = new Set(rows.filter(row => includeCollapsed || groupKeys(row).every(key => !state.collapsed.has(key))).map(row => row.crew_id));
+    return state.crews.filter(crew => ids.has(crew.id) && !state.loadedCrews.has(crew.id));
+  }
+  async function loadPageRows(rows, includeCollapsed = false) {
+    const crews = pageCrews(rows, includeCollapsed);
+    const request = state.request;
+    for (let i = 0; i < crews.length; i += 4) {
+      await Promise.all(crews.slice(i, i + 4).map(loadCrew));
+      if (request !== state.request) return;
+    }
+  }
   async function loadGroup(group) {
-    if (!group.itr) return loadCrew(group);
-    const ids = new Set(rowsForGroup(group).map(row => row.crew_id));
-    const crews = state.crews.filter(crew => ids.has(crew.id));
-    for (let i = 0; i < crews.length; i += 4) await Promise.all(crews.slice(i, i + 4).map(loadCrew));
+    await loadPageRows(pageRows(visibleRows()).filter(row => groupKeys(row).includes(group.id)), true);
   }
   function selectedRows(crew, includeCrewless = false) {
     const rows = rowsForGroup(crew).filter(row => state.selected.has(row.id) && state.selected.get(row.id) === row.crew_id);
     return includeCrewless || rows.every(row => row.crew_id != null) ? rows : [];
   }
-  function selectionBox(crew, row = null) {
-    const rows = row ? [row] : rowsForGroup(crew);
+  function selectionBox(crew, row = null, filteredGroupRows = []) {
+    const rows = row ? [row] : filteredGroupRows;
     const count = rows.filter(item => state.selected.get(item.id) === item.crew_id).length;
     const box = el('input', {type: 'checkbox', className: row ? 'staffing-select-worker' : 'staffing-select-crew',
       checked: !!rows.length && count === rows.length, indeterminate: count > 0 && count < rows.length,
-      disabled: !rows.length, 'aria-label': row ? 'Выбрать сотрудника: ' + row.full_name : (crew.itr ? 'Выбрать всю группу ИТР: ' : 'Выбрать всю бригаду: ') + crew.name,
-      title: row ? row.full_name : state.calendarFilter ? 'Выбрать сотрудников бригады по позиции из сводной' : 'Выбрать весь состав, включая скрытых фильтром сотрудников'});
+      disabled: !rows.length, 'aria-label': row ? 'Выбрать сотрудника: ' + row.full_name : 'Выбрать сотрудников по фильтру: ' + crew.name,
+      title: row ? row.full_name : 'Выбрать сотрудников этой группы на текущей странице (' + rows.length + ')'});
     box.addEventListener('change', () => {
       if (!canLeave()) { box.checked = count === rows.length; box.indeterminate = count > 0 && count < rows.length; return; }
       rows.forEach(item => box.checked ? state.selected.set(item.id, item.crew_id) : state.selected.delete(item.id));
@@ -258,12 +338,14 @@
       const fields = [...(row.search_fields || [row.full_name, row.personnel_no, row.profession, row.category, row.department, row.employer,
         row.crew_name, row.object_name || '', row.subobject_name || '', row.linear_itr_name || '', row.brigadier_name || '']),
         row.assignment_author?.full_name || ''];
-      return (!state.pps || row.pps === state.pps) && (!state.category || categoryKey(row) === state.category) &&
-        (!state.department || row.department === state.department) && (!state.unassigned || !row.assignment_id) &&
-        (!state.employer || employerKey(row) === state.employer) &&
-        (!state.author || (row.assignment_id && authorKey(row) === state.author)) &&
-        (!state.freshness || row.freshness?.status === state.freshness) &&
-        (state.calendarFilter || !state.shift || (state.shift === 'none' ? !row.employee_shift : row.employee_shift === state.shift)) &&
+      return (state.calendarFilter?.kind !== 'changes' || !state.changeDirection || state.changeDirection === 'all' || row.report_change?.direction === state.changeDirection) &&
+        MF.matches(state.pps, row.pps) && MF.matches(state.category, categoryKey(row)) &&
+        MF.matches(state.department, row.department) && (!state.unassigned || !row.assignment_id) &&
+        MF.matches(state.employer, employerKey(row)) &&
+        MF.matches(state.contractor, contractorKey(row)) &&
+        MF.matches(state.author, row.assignment_id ? authorKey(row) : '') &&
+        MF.matches(state.freshness, row.freshness?.status) &&
+        (state.calendarFilter || MF.matches(state.shift, row.employee_shift || 'none')) &&
         (state.regex ? fields.some(value => state.regex.test(value)) : matches(fields.join(' '), state.search));
     });
   }
@@ -277,12 +359,29 @@
       const key = employerKey(row);
       counts.set(key, (counts.get(key) || 0) + 1);
     });
-    if (state.employer && !counts.has(state.employer)) counts.set(state.employer, 0);
+    MF.values(state.employer).forEach(key => { if (!counts.has(key)) counts.set(key, 0); });
     const entries = [...counts].sort(([a], [b]) => a === 'none' ? 1 : b === 'none' ? -1 : a.localeCompare(b, 'ru'));
     employerFilter.replaceChildren(el('option', {value: ''}, 'Все организации'),
       ...entries.map(([key, count]) => el('option', {value: key},
         (key === 'none' ? 'Не указана' : key.slice(5)) + ' · ' + count + ' чел.')));
-    employerFilter.value = state.employer;
+    MF.set(employerFilter, state.employer);
+  }
+  function contractorKey(row) {
+    const name = String(row.contractor || '').trim();
+    return name ? 'name:' + name : 'none';
+  }
+  function renderContractors() {
+    const counts = new Map();
+    state.rows.forEach(row => {
+      const key = contractorKey(row);
+      counts.set(key, (counts.get(key) || 0) + 1);
+    });
+    MF.values(state.contractor).forEach(key => { if (!counts.has(key)) counts.set(key, 0); });
+    const entries = [...counts].sort(([a], [b]) => a === 'none' ? 1 : b === 'none' ? -1 : a.localeCompare(b, 'ru'));
+    contractorFilter.replaceChildren(el('option', {value: ''}, 'Все подрядчики'),
+      ...entries.map(([key, count]) => el('option', {value: key},
+        (key === 'none' ? 'Не указана' : key.slice(5)) + ' · ' + count + ' чел.')));
+    MF.set(contractorFilter, state.contractor);
   }
   function categoryKey(row) {
     const name = String(row.category || '').trim();
@@ -295,12 +394,12 @@
       counts.set(key, (counts.get(key) || 0) + 1);
     }
     // Keep the selected category visible with zero results after data changes.
-    if (state.category && !counts.has(state.category)) counts.set(state.category, 0);
+    MF.values(state.category).forEach(key => { if (!counts.has(key)) counts.set(key, 0); });
     const entries = [...counts].sort(([a], [b]) => a === 'none' ? 1 : b === 'none' ? -1 : a.localeCompare(b, 'ru'));
     $('staffing-category').replaceChildren(el('option', {value: ''}, 'Все категории'),
       ...entries.map(([key, count]) => el('option', {value: key},
         (key === 'none' ? 'Без категории' : key.slice(5)) + ' · ' + count + ' чел.')));
-    $('staffing-category').value = state.category;
+    MF.set($('staffing-category'), state.category);
   }
   function authorKey(row) {
     return row.assignment_author?.user_id != null ? String(row.assignment_author.user_id) : 'unknown';
@@ -322,9 +421,8 @@
     const previous = select.selectedOptions[0]?.textContent || 'Выбранный автор';
     select.replaceChildren(el('option', {value: ''}, 'Все авторы'), ...entries.map(([id, author]) =>
       el('option', {value: id}, author.name + (names.get(author.name) > 1 ? ' · №' + id : '') + ' · ' + author.count + ' чел.')));
-    if (state.author && !authors.has(state.author)) select.append(el('option', {value: state.author},
-      previous.replace(/ · \d+ чел\.$/, '') + ' · 0 чел.'));
-    select.value = state.author;
+    MF.values(state.author).filter(id => !authors.has(id)).forEach(id => select.append(el('option', {value:id}, 'Автор №' + id + ' · 0 чел.')));
+    MF.set(select, state.author);
   }
   const freshnessLabels = {current: 'Актуальные', inherited: 'Со вчера', mixed: 'Частично обновлены',
     unknown: 'Источник не определён', empty: 'Нет данных на дату'};
@@ -336,7 +434,7 @@
     }
     $('staffing-freshness').replaceChildren(el('option', {value: ''}, 'Все данные'),
       ...Object.entries(freshnessLabels).map(([key, label]) => el('option', {value: key}, label + ' · ' + (counts.get(key) || 0))));
-    $('staffing-freshness').value = state.freshness;
+    MF.set($('staffing-freshness'), state.freshness);
   }
   function paintFreshness(tr, row) {
     const fresh = row.freshness || {status: 'unknown'};
@@ -352,8 +450,8 @@
       fresh.status === 'inherited' ? 'Перенесены с предыдущего дня, ещё не обновлялись.' : detail.textContent;
   }
   $('staffing-freshness').addEventListener('change', () => {
-    if (!canLeave()) { $('staffing-freshness').value = state.freshness; return; }
-    state.freshness = $('staffing-freshness').value;
+    if (!canLeave()) { MF.set($('staffing-freshness'), state.freshness); return; }
+    state.freshness = MF.get($('staffing-freshness'));
     if (!state.calendarFilter) preferences.set({freshness: state.freshness});
     render();
   });
@@ -361,10 +459,11 @@
     const rows = state.rows.filter(row => state.selected.get(row.id) === row.crew_id);
     const visible = new Set(filtered.map(row => row.id));
     return {count: rows.length, hidden: rows.filter(row => !visible.has(row.id)).length,
-      filters: ['department', 'employer', 'author', 'category', 'pps', 'freshness', 'shift', 'search', 'unassigned'].filter(key => !!state[key]).length};
+      filters: ['department', 'employer', 'contractor', 'author', 'category', 'pps', 'freshness', 'shift', 'search', 'unassigned'].filter(key => !!state[key]).length};
   }
   function updateTotals() {
     renderEmployers();
+    renderContractors();
     renderCategories();
     renderAuthors();
     renderFreshnessFilter();
@@ -376,6 +475,9 @@
     const unsupported = !selected.length || selected.some(row => row.crew_id == null);
     $('staffing-clear-selected').disabled = !selected.length;
     $('staffing-clear-selected').textContent = 'Сбросить расстановку (' + selected.length + ')';
+    // Collapsed crews contain summary rows; the editor loads and validates full details.
+    $('staffing-employer-selected').disabled = !selected.length;
+    $('staffing-employer-selected').textContent = 'Работодатель (' + selected.length + ')';
     $('staffing-work-selected').disabled = !selected.length;
     $('staffing-work-selected').textContent = 'Выполняемые работы (' + selected.length + ')';
     $('staffing-category-selected').disabled = unsupported;
@@ -390,20 +492,21 @@
       el('div', {}, el('strong', {}, String(count)), el('span', {}, label))));
     const counts = new Map();
     filtered.forEach(row => {
-      const key = groupKey(row);
-      if (!counts.has(key)) counts.set(key, {total: 0, assigned: 0});
-      const count = counts.get(key); count.total++; count.assigned += Number(!!row.assignment_id);
+      for (const key of groupKeys(row)) {
+        if (!counts.has(key)) counts.set(key, {total: 0, assigned: 0});
+        const count = counts.get(key); count.total++; count.assigned += Number(!!row.assignment_id);
+      }
     });
     const selectedCounts = new Map();
-    for (const row of selected) { const key = groupKey(row); selectedCounts.set(key, (selectedCounts.get(key) || 0) + 1); }
+    for (const row of selected) for (const key of groupKeys(row)) selectedCounts.set(key, (selectedCounts.get(key) || 0) + 1);
     document.querySelectorAll('[data-crew-count]').forEach(node => {
-      const crewId = state.groupMode === 'itr' ? node.dataset.crewCount : node.dataset.crewCount === 'null' ? null : Number(node.dataset.crewCount);
+      const crewId = state.groupMode !== 'crew' ? node.dataset.crewCount : node.dataset.crewCount === 'null' ? null : Number(node.dataset.crewCount);
       const count = counts.get(crewId);
       const selected = selectedCounts.get(crewId) || 0;
-      node.textContent = (count ? count.total + ' чел. · расставлено ' + count.assigned : '0 чел.') + (selected ? ' · выбрано ' + selected : '');
+      node.textContent = (count ? count.total + ' чел. · расставлено ' + count.assigned + (Number(node.dataset.pageCount) < count.total ? ' · на странице ' + node.dataset.pageCount : '') : '0 чел.') + (selected ? ' · выбрано ' + selected : '');
     });
-    $('staffing-total').textContent = 'По фильтру: ' + filtered.length + (state.groupMode === 'itr' ? ' чел., групп ИТР: ' : ' чел., групп бригад: ') + counts.size +
-      (state.calendarFilter ? '. Всего по выбранной позиции: ' : '. Всего в импортированной численности: ') + state.rows.length + ' чел.';
+    $('staffing-total').textContent = 'По фильтру: ' + filtered.length + (state.groupMode === 'hierarchy' ? ' чел., групп: ' : state.groupMode === 'itr' ? ' чел., групп ИТР: ' : ' чел., групп бригад: ') + counts.size +
+      (state.calendarFilter?.kind === 'changes' ? '. Всего с изменениями: ' : state.calendarFilter ? '. Всего по выбранной позиции: ' : '. Всего в импортированной численности: ') + state.rows.length + ' чел.';
   }
   function objectOptions() {
     const grouped = new Map();
@@ -448,6 +551,11 @@
     const draft = state.drafts.get(row.id);
     const objectId = draft ? draft.objectId : row.object_id;
     const object = state.objects.get(objectId);
+    if (readOnly) {
+      columnSettings.cell(tr, 1).textContent = object?.name || '—';
+      columnSettings.cell(tr, 2).textContent = state.sites.get(row.subobject_id)?.name || 'Без назначения';
+      return;
+    }
     const objectSelect = el('select', {className: 'staffing-object-select', disabled: row.locked || !row.employee_shift || !!draft?.uncertain,
       'aria-label': 'Группа подобъектов: ' + row.full_name, title: object?.name || 'Выберите группу подобъектов'},
       el('option', {value: '', disabled: true}, 'Выберите группу'), ...objectOptions());
@@ -703,14 +811,42 @@
   function render() {
     rebuildItrGroups();
     const filtered = visibleRows();
+    const page = pageRows(filtered);
+    const pageIds = new Set(page.map(row => row.id));
+    const elsewhere = [...state.selected.keys()].filter(id => !pageIds.has(id)).length;
+    pager.update(filtered.length, state.page, state.pageSize, elsewhere ? 'Выбрано вне этой страницы: ' + elsewhere + '. Массовые действия учитывают всех отмеченных.' : '');
+    if (pageCrews(page).length) {
+      if (state.pageLoading) return;
+      state.pageLoading = true;
+      const request = state.request;
+      const wasBusy = state.busy;
+      busy(true); status('Загрузка страницы…');
+      $('staffing-table').replaceChildren(el('div', {className: 'empty-state', role: 'status'}, 'Загрузка страницы…'));
+      loadPageRows(page).then(() => {
+        if (request === state.request) { state.pageLoading = false; render(); status('Страница загружена.'); }
+      }).catch(error => {
+        if (request === state.request) {
+          page.forEach(row => groupKeys(row).forEach(key => state.collapsed.add(key)));
+          state.pageLoading = false; render(); status(error.message + ' Повторите раскрытие группы.', true);
+        }
+      }).finally(() => { state.pageLoading = false; if (request === state.request) busy(wasBusy); });
+      return;
+    }
     const groups = new Map();
     state.nodes.clear();
     state.crewNodes.clear();
-    filtered.forEach(row => { const key = groupKey(row); if (!groups.has(key)) groups.set(key, []); groups.get(key).push(row); });
+    page.forEach(row => { for (const key of groupKeys(row)) { if (!groups.has(key)) groups.set(key, []); groups.get(key).push(row); } });
     const table = el('table', {className: 'staffing-table'}, el('thead', {}, el('tr', {}, ...headers.map(h => el('th', {scope: 'col'}, h)))));
-    displayGroups().filter(crew => groups.has(crew.id)).forEach(crew => {
+    displayGroups().filter(crew => groups.has(crew.id) &&
+      (!crew.hierarchical || !crew.ancestorIds.some(id => state.collapsed.has(id)))).forEach(crew => {
       const rows = groups.get(crew.id);
       const body = el('tbody', {'data-staffing-crew': String(crew.id)});
+      if (crew.hierarchical) {
+        body.classList.add('staffing-hierarchy-group');
+        body.classList.toggle('hierarchy-parent', !!crew.children.length);
+        body.style.setProperty('--group-depth', crew.depth);
+        body.dataset.groupLevel = crew.field;
+      }
       const expanded = !state.collapsed.has(crew.id);
       const toggle = el('button', {className: 'staffing-group-toggle', 'aria-expanded': String(expanded),
         'aria-label': 'Развернуть или свернуть ' + crew.name, onclick: async () => {
@@ -729,13 +865,13 @@
           }
         }}, el('span', {className: 'staffing-outline-icon', 'aria-hidden': 'true'}, expanded ? '−' : '+'), crew.name);
       body.append(el('tr', {className: 'staffing-group-row'}, el('th', {colSpan: headers.length, scope: 'rowgroup'},
-        el('div', {className: 'staffing-group-content'}, el('label', {className: 'check-label'}, selectionBox(crew)), toggle,
-          el('span', {'data-crew-count': String(crew.id)}, rows.length + ' чел.'),
-          ...(crew.itr ? [el('small', {}, 'Бригад: ' + new Set(rows.map(row => row.crew_id).filter(Boolean)).size)] :
-            [el('button', {className: 'text-button', disabled: !crew.id || crew.can_edit_whole === false,
+        el('div', {className: 'staffing-group-content'}, el('label', {className: 'check-label'}, selectionBox(crew, null, rows)), toggle,
+          el('span', {'data-crew-count': String(crew.id), 'data-page-count': rows.length}, rows.length + ' чел.'),
+          ...(!readOnly && crew.itr ? [el('small', {}, 'Бригад: ' + new Set(rows.map(row => row.crew_id).filter(Boolean)).size)] :
+            readOnly ? [] : [el('button', {className: 'text-button', disabled: !crew.id || crew.can_edit_whole === false,
               title: crew.can_edit_whole === false ? 'В бригаде есть сотрудники других СМУ. Выберите доступных сотрудников для изменения ответственных.' : '',
               onclick: () => openDetails(crew)}, 'Ответственные бригады')])))));
-      if (expanded) { body.append(crewPlaceRow(crew, rows.length)); rows.forEach(row => body.append(renderRow(row, state.crews.find(item => item.id === row.crew_id)))); }
+      if (expanded && (!crew.hierarchical || !crew.children.length)) { if (!readOnly) body.append(crewPlaceRow(crew, rows.length)); rows.forEach(row => body.append(renderRow(row, state.crews.find(item => item.id === row.crew_id)))); }
       table.append(body);
     });
     $('staffing-table').replaceChildren(filtered.length ? table : el('div', {className: 'empty-state'}, 'Нет сотрудников по выбранным условиям.'));
@@ -745,10 +881,12 @@
   function renderRow(row, crew) {
     const tr = el('tr', {className: 'staffing-worker-row' + (state.selected.get(row.id) === crew.id ? ' staffing-row-selected' : ''), 'data-worker-id': String(row.id)});
     tr.append(cell(0, el('label', {className: 'check-label'}, selectionBox(crew, row), String(row.number)), 'staffing-number'), cell(1, null), cell(2, null),
-      cell(3, contractorControl(row), 'staffing-secondary'), cell(4, row.employer, 'staffing-secondary'),
+      cell(3, contractorControl(row), 'staffing-secondary'), cell(4, employerControl(row), 'staffing-secondary'),
       cell(5, [el('strong', {}, row.full_name), row.pps ? el('small', {className: 'staffing-worker-crew'}, row.pps) : null,
+        row.report_change ? el('span', {className: 'staffing-change-badge ' + row.report_change.direction}, row.report_change.direction === 'arrived' ? 'Пришёл' : 'Ушёл') : null,
+        row.report_change ? el('small', {className: 'staffing-worker-crew'}, row.report_change.previous_status + ' → ' + row.report_change.current_status) : null,
         el('span', {className: 'staffing-placement-badge', hidden: true}, 'Расставлен'),
-        state.groupMode === 'itr' ? el('small', {className: 'staffing-worker-crew'}, row.crew_name || 'Без бригады') : null,
+        state.groupMode !== 'crew' ? el('small', {className: 'staffing-worker-crew'}, row.crew_name || 'Без бригады') : null,
         el('span', {className: 'staffing-freshness'}), el('small', {className: 'staffing-freshness-detail'})], 'staffing-name'), cell(6, row.personnel_no),
       cell(7, selectedCategoryButton(crew, row), 'staffing-secondary'),
       cell(8, responsibleButton(crew, row, 'linear_itr'), 'staffing-secondary'),
@@ -759,12 +897,13 @@
       more.textContent = expanded ? 'Скрыть дополнительные поля' : 'Все поля';
     }}, 'Все поля');
     columnSettings.cell(tr, 0).append(more);
-    if (row.locked) columnSettings.cell(tr, 0).append(el('small', {}, row.shift_conflict ? 'Несколько смен: уточните в составе бригад' : !row.active ? 'Сотрудник отключён' : 'Назначен другой бригадой'));
+    if (row.locked && !readOnly) columnSettings.cell(tr, 0).append(el('small', {}, row.shift_conflict ? 'Несколько смен: уточните в составе бригад' : !row.active ? 'Сотрудник отключён' : 'Назначен другой бригадой'));
     state.nodes.set(row.id, tr);
     paintPlace(row);
     return tr;
   }
   function selectedCategoryButton(crew, row = null) {
+    if (readOnly) return row?.category || '—';
     const targets = row ? [row] : selectedRows(crew);
     const value = targets.length && targets.every(item => item.category === targets[0].category) ? targets[0].category : '';
     return el('button', {className: 'staffing-cell-button', disabled: !crew.id || !targets.length,
@@ -793,7 +932,7 @@
     const snapshot = {worker_ids: rows.map(row => row.id), ...batchSnapshot(rows),
       expected_tokens: Object.fromEntries(rows.map(row => [row.id, row.category_binding_token]))};
     const select = el('select', {id: 'staffing-category-choice'}, el('option', {value: '', disabled: true}, 'Выберите категорию'),
-      ...catalog.rows.filter(item => item.active).map(item => el('option', {value: String(item.id)}, item.name)));
+      ...catalog.rows.filter(item => item.active && item.staffing_allowed).map(item => el('option', {value: String(item.id)}, item.name)));
     select.value = '';
     const message = el('p', {role: 'status'}, catalog.rows.some(item => item.active) ? '' : 'В справочнике нет доступных категорий.');
     const close = () => { if (state.busy) return; state.categoryEditor = null; dialog.close(); dialog.remove(); };
@@ -886,6 +1025,7 @@
     state.transferEditor = dialog; document.body.append(dialog); dialog.showModal();
   }
   function workControl(crew, row = null) {
+    if (readOnly) return el('span', {className: 'staffing-work-text'}, row?.performed_work || 'Не указаны');
     const rows = row ? [row] : selectedRows(crew, true);
     return el('div', {className: 'staffing-work-cell'},
       row ? el('span', {className: 'staffing-work-text'}, row.performed_work || 'Не указаны') : null,
@@ -1059,7 +1199,73 @@
     });
     return select;
   }
+  function employerControl(row) {
+    if (readOnly) return row.employer || 'Не указан';
+    return el('div', {className: 'staffing-work-cell'},
+      el('span', {className: 'staffing-work-text'}, row.employer || 'Не указан'),
+      el('button', {type: 'button', className: 'text-button', disabled: !row.active,
+        'aria-label': 'Работодатель: ' + row.full_name,
+        title: 'Изменить постоянную организацию-работодателя',
+        onclick: () => openEmployerEditor([row])}, 'Сменить'));
+  }
+  async function openEmployerEditor(targets) {
+    if (!canLeave() || !targets.length) return;
+    const ids = new Set(targets.map(row => row.id));
+    busy(true);
+    try {
+      const crewIds = new Set(targets.map(row => row.crew_id));
+      for (const crew of state.crews.filter(item => crewIds.has(item.id))) await loadCrew(crew);
+    } catch (error) { status(error.message, true); return; }
+    finally { busy(false); }
+    const rows = state.rows.filter(row => ids.has(row.id));
+    if (rows.length !== ids.size || rows.some(row => !row.active || !row.employer_token)) {
+      status('Состав сотрудников изменился. Обновите расстановку.', true); return;
+    }
+    const snapshot = {worker_ids: rows.map(row => row.id), ...batchSnapshot(rows),
+      expected_tokens: Object.fromEntries(rows.map(row => [row.id, row.employer_token]))};
+    const common = rows.every(row => row.employer === rows[0].employer);
+    const input = el('input', {id: 'staffing-employer-name', type: 'text', maxLength: 200,
+      value: common ? rows[0].employer || '' : '',
+      placeholder: 'Выберите или введите организацию'});
+    input.setAttribute('list', 'staffing-employer-suggestions');
+    input.style.cssText = 'width:100%;max-width:100%;box-sizing:border-box';
+    const suggestions = el('datalist', {id: 'staffing-employer-suggestions'},
+      ...[...new Set(state.rows.map(row => row.employer).filter(Boolean))].sort((a,b) => a.localeCompare(b, 'ru'))
+        .map(name => el('option', {value: name})));
+    const message = el('p', {role: 'status'});
+    const close = () => { if (state.busy) return; state.employerEditor = null; dialog.close(); dialog.remove(); };
+    const cancel = el('button', {type: 'button', className: 'secondary-button', onclick: close}, 'Отмена');
+    const save = el('button', {type: 'button', className: 'primary-button', disabled: !input.value.trim()}, 'Сохранить работодателя');
+    input.addEventListener('input', () => { save.disabled = !input.value.trim(); });
+    const visible = new Set(visibleRows().map(row => row.id));
+    const hidden = rows.filter(row => !visible.has(row.id)).length;
+    const dialog = el('dialog', {className: 'staffing-work-dialog', 'aria-labelledby': 'staffing-employer-title'},
+      el('h2', {id: 'staffing-employer-title'}, 'Организация-работодатель'),
+      el('p', {}, rows.length === 1 ? rows[0].full_name : 'Выбрано: ' + rows.length + ' чел.' +
+        (hidden ? ' Скрыты фильтром: ' + hidden + '.' : '')),
+      el('p', {}, 'Постоянная привязка в карточке сотрудника. Сохраняется при повторном импорте. Уже сохранённые назначения останутся с прежним работодателем.'),
+      !common ? el('p', {}, 'Сейчас у сотрудников разные работодатели. Новое значение будет назначено всем выбранным.') : null,
+      el('label', {htmlFor: input.id}, 'Организация-работодатель'), input, suggestions, message,
+      el('div', {className: 'staffing-work-actions'}, cancel, save));
+    dialog.addEventListener('cancel', event => { event.preventDefault(); close(); });
+    save.addEventListener('click', async () => {
+      if (state.busy || !input.value.trim()) return;
+      busy(true); save.disabled = true; cancel.disabled = true; input.disabled = true;
+      let saved = false;
+      try {
+        await api('/api/staffing/groups/employer', {method: 'PUT', body: JSON.stringify({...snapshot, employer: input.value})});
+        saved = true; state.employerEditor = null; dialog.close(); dialog.remove();
+        await load({skipInheritance: true});
+        status('Работодатель сохранён постоянно: ' + rows.length + ' чел.');
+      } catch (error) {
+        if (saved) status('Работодатель сохранён. Не удалось обновить таблицу: ' + error.message, true);
+        else { message.textContent = error.message; message.classList.add('error-text'); }
+      } finally { busy(false); save.disabled = !input.value.trim(); cancel.disabled = false; input.disabled = false; }
+    });
+    state.employerEditor = dialog; document.body.append(dialog); dialog.showModal(); input.focus();
+  }
   function contractorControl(row) {
+    if (readOnly) return row.contractor || 'Не указан';
     const select = el('select', {'aria-label': 'Подрядчик: ' + row.full_name,
       title: 'Подрядчик сотрудника. Изменение сохраняется для всех дат.',
       disabled: !row.active || (!['admin', 'super_admin'].includes(root.dataset.role) && !row.crew_id)},
@@ -1076,7 +1282,7 @@
           method: 'PUT', body: JSON.stringify({contractor_id: Number(select.value),
             expected_token: row.contractor_token, expected_crew_id: row.crew_id})});
         Object.assign(row, result);
-        if (state.calendarFilter) await load(); else paintCrewPlace(displayedGroup(row));
+        if (state.calendarFilter) await load(); else if (state.groupMode === 'hierarchy') render(); else paintCrewPlace(displayedGroup(row));
         status('Подрядчик сотрудника сохранён.');
       } catch (error) {
         select.value = previous;
@@ -1087,6 +1293,7 @@
   }
   function scrollEditor(id) { $(id).focus({preventScroll: true}); $(id).scrollIntoView({block: 'start', behavior: 'smooth'}); }
   function attendanceControl(crew, row = null) {
+    if (readOnly) return row?.attendance_status || '—';
     const rows = row ? [row] : selectedRows(crew);
     const common = rows.length && rows.every(r => r.attendance_status === rows[0].attendance_status) ? rows[0].attendance_status : '';
     const label = row ? row.full_name : crew.name;
@@ -1116,6 +1323,7 @@
     return el('div', {className: 'staffing-attendance-control'}, select, apply);
   }
   function shiftControl(crew, row = null) {
+    if (readOnly) return row?.employee_shift === '1 смена' ? 'День' : row?.employee_shift === '2 смена' ? 'Ночь' : 'Не указана';
     const rows = row ? [row] : selectedRows(crew, true);
     const common = rows.length && rows.every(r => r.employee_shift === rows[0].employee_shift) ? rows[0].employee_shift : '';
     const select = el('select', {className: row ? 'staffing-row-shift' : 'staffing-crew-shift',
@@ -1150,6 +1358,7 @@
     } finally { busy(false); }
   }
   function responsibleButton(crew, row, field) {
+    if (readOnly) return row?.[field + '_name'] || '—';
     const label = field === 'linear_itr' ? 'Линейный ИТР' : 'Бригадир';
     const supportsCrewless = field === 'linear_itr';
     const targets = row ? (supportsCrewless && row.crew_id == null ? [row] : null) : selectedRows(crew, supportsCrewless);
@@ -1182,7 +1391,7 @@
       state.details.picks[key] = {id: personId || null, dirty: false};
       $(inputId + '-manual').checked = false;
       $(inputId + '-results').replaceChildren();
-      $(inputId + '-message').textContent = personId ? 'Выбран сотрудник из файла. Привязка сохранится ' + (targets ? 'для выбранных сотрудников.' : row ? 'для этой строки.' : 'за бригадой.') : 'Поиск по всем сотрудникам листа «Явка». Выберите человека из списка.';
+      $(inputId + '-message').textContent = personId ? 'Выбран сотрудник из списка. Привязка сохранится ' + (targets ? 'для выбранных сотрудников.' : row ? 'для этой строки.' : 'за бригадой.') : 'Поиск по листу «Явка» и действующим сотрудникам аутстаффа. Выберите человека из списка.';
     }
     const onlyCrewless = targets?.every(item => item.crew_id == null);
     if (targets?.some(item => item.crew_id == null)) $('staffing-details-note').textContent =
@@ -1221,22 +1430,37 @@
     finally { busy(false); }
   }
   $('staffing-category').addEventListener('change', () => {
-    if (!canLeave()) { $('staffing-category').value = state.category; return; }
-    state.category = $('staffing-category').value;
+    if (!canLeave()) { MF.set($('staffing-category'), state.category); return; }
+    state.category = MF.get($('staffing-category'));
     if (!state.calendarFilter) preferences.set({category: state.category});
     render();
   });
   $('staffing-author').addEventListener('change', () => {
-    if (!canLeave()) { $('staffing-author').value = state.author; return; }
-    state.author = $('staffing-author').value;
+    if (!canLeave()) { MF.set($('staffing-author'), state.author); return; }
+    state.author = MF.get($('staffing-author'));
     if (!state.calendarFilter) preferences.set({author: state.author});
     render();
   });
   $('staffing-department').addEventListener('change', () => {
-    if (!canLeave()) { $('staffing-department').value = state.department; return; }
-    state.department = $('staffing-department').value;
+    if (!canLeave()) { MF.set($('staffing-department'), state.department); return; }
+    state.department = MF.get($('staffing-department'));
     if (!state.calendarFilter) preferences.set({department: state.department});
     render();
+  });
+  function updateHierarchyLabel() {
+    const option = $('staffing-grouping').querySelector('option[value="hierarchy"]');
+    option.textContent = hierarchy.describe(state.groupLevels);
+    $('staffing-grouping').title = option.textContent + ' → сотрудники';
+  }
+  $('staffing-hierarchy-settings').addEventListener('click', () => {
+    if (!canLeave()) return;
+    hierarchy.openEditor(state.groupLevels, levels => {
+      state.groupLevels = levels; state.groupMode = 'hierarchy';
+      preferences.set({groupMode: 'hierarchy', groupLevels: levels});
+      $('staffing-grouping').value = 'hierarchy'; updateHierarchyLabel();
+      rebuildItrGroups(); state.collapsed = new Set(displayGroups().map(group => group.id));
+      render(); status('Иерархия: ' + hierarchy.describe(levels) + '.');
+    }, $('staffing-hierarchy-settings'));
   });
   $('staffing-grouping').addEventListener('change', () => {
     if (!canLeave()) { $('staffing-grouping').value = state.groupMode; return; }
@@ -1245,7 +1469,7 @@
     rebuildItrGroups();
     state.collapsed = new Set(displayGroups().map(group => group.id));
     render();
-    status(state.groupMode === 'itr' ? 'Группы по фактическому линейному ИТР с учётом корректировок сотрудников. Раскройте группу и отметьте сотрудников для массового назначения.' : 'Группы по бригадам.');
+    status(state.groupMode === 'hierarchy' ? 'Иерархия: ' + hierarchy.describe(state.groupLevels) + '.' : state.groupMode === 'itr' ? 'Группы по фактическому линейному ИТР с учётом корректировок сотрудников. Раскройте группу и отметьте сотрудников для массового назначения.' : 'Группы по бригадам.');
   });
   $('staffing-unassigned').addEventListener('change', () => {
     if (!canLeave()) { $('staffing-unassigned').checked = state.unassigned; return; }
@@ -1273,7 +1497,7 @@
   $('staffing-search').addEventListener('input', searchTable);
   $('staffing-regex').addEventListener('change', searchTable);
   ['staffing-date'].forEach(id => $(id).addEventListener('change', () => {
-    if (!canLeave()) { $('staffing-date').value = state.date; $('staffing-shift').value = state.shift; return; }
+    if (!canLeave()) { $('staffing-date').value = state.date; MF.set($('staffing-shift'), state.shift); return; }
     if (!$('staffing-date').value) { $('staffing-date').value = state.date; return; }
     if (!$('staffing-date').validity.valid) { $('staffing-date').value = state.date; return; }
     preferences.set({date: $('staffing-date').value});
@@ -1282,15 +1506,15 @@
   async function resetFilters() {
     if (!canLeave()) return;
     const reload = !!state.calendarFilter;
-    const defaults = {department: '', employer: '', category: '', author: '', unassigned: false,
+    const defaults = {department: '', employer: '', contractor: '', category: '', author: '', unassigned: false,
       search: '', regexMode: false, shift: '', pps: ''};
-    ppsFilter.value = '';
+    MF.set(ppsFilter, '');
     if ($('staffing-freshness')) defaults.freshness = '';
     Object.assign(state, defaults, {regex: null, calendarFilter: null});
     state.selected.clear();
-    for (const [field, id] of [['department', 'staffing-department'], ['employer', 'staffing-employer'], ['category', 'staffing-category'],
+    for (const [field, id] of [['department', 'staffing-department'], ['employer', 'staffing-employer'], ['contractor', 'staffing-contractor'], ['category', 'staffing-category'],
       ['author', 'staffing-author'], ['search', 'staffing-search'], ['shift', 'staffing-shift'], ['freshness', 'staffing-freshness']]) {
-      if ($(id)) $(id).value = defaults[field];
+      if ($(id)) { if ($(id).multiple) MF.set($(id), defaults[field]); else $(id).value = defaults[field]; }
     }
     $('staffing-unassigned').checked = false; $('staffing-regex').checked = false;
     $('staffing-search').placeholder = 'Бригада, ФИО, табельный номер, должность';
@@ -1316,8 +1540,8 @@
     load().catch(() => {});
   });
   $('staffing-shift').addEventListener('change', () => {
-    if (!canLeave()) { $('staffing-shift').value = state.shift; return; }
-    state.shift = $('staffing-shift').value;
+    if (!canLeave()) { MF.set($('staffing-shift'), state.shift); return; }
+    state.shift = MF.get($('staffing-shift'));
     if (!state.calendarFilter) preferences.set({shift: state.shift});
     if (state.calendarFilter) load().catch(() => {});
     else render();
@@ -1328,7 +1552,7 @@
   });
   $('staffing-expand').addEventListener('click', async () => {
     if (!canLeave()) return;
-    const visible = new Set(visibleRows().map(groupKey));
+    const visible = new Set(pageRows(visibleRows()).flatMap(groupKeys));
     const crews = displayGroups().filter(crew => visible.has(crew.id));
     const request = state.request;
     busy(true); status('Загрузка состава бригад…');
@@ -1358,23 +1582,23 @@
     function searchPeople() {
       if (!state.details) return;
       results.replaceChildren();
-      if (manual.checked) { message.textContent = 'Ручное ФИО. Привязки к сотруднику файла не будет.'; return; }
+      if (manual.checked) { message.textContent = 'Ручное ФИО. Привязки к сотруднику не будет.'; return; }
       const query = input.value.trim();
       let expression;
       try { expression = regex.checked && query ? new RegExp(SearchRegex.source(query), 'iu') : null; }
       catch (_) { message.textContent = 'Ошибка Regex: исправьте регулярное выражение.'; return; }
       const found = (state.people || []).filter(person => {
-        const values = [person.full_name, person.personnel_no, person.profession, person.department, person.source_crew];
+        const values = [person.full_name, person.personnel_no, person.profession, person.department, person.source_crew, person.employer || ''];
         return expression ? values.some(value => expression.test(value)) : matches(values.join(' '), query);
       });
       message.textContent = found.length ? 'Найдено: ' + found.length + '. Выберите сотрудника.' : 'Совпадений нет. Измените поиск.';
-      if (!state.people?.length) message.textContent = 'Справочник ФИО ещё не загружен. Администратор может повторно импортировать исходный файл.';
+      if (!state.people?.length) message.textContent = 'Справочник ФИО ещё не загружен. Обновите расстановку или импортируйте сотрудников.';
       results.append(...found.slice(0, limit).map(person => el('button', {type: 'button', className: 'staffing-person-option', onclick: () => {
         input.value = person.full_name;
         state.details.picks[field] = {id: person.id, dirty: true};
         results.replaceChildren();
         message.textContent = 'Выбран: ' + person.full_name + ' · таб. № ' + person.personnel_no + ' · ' + person.profession;
-      }}, el('strong', {}, person.full_name), el('small', {}, 'Таб. № ' + person.personnel_no + ' · ' + person.profession + ' · ' + person.department + ' · ' + person.source_crew))));
+      }}, el('strong', {}, person.full_name), el('small', {}, (person.source_kind === 'outstaff' ? 'Аутстафф · ' + person.employer + ' · код ' : 'Таб. № ') + person.personnel_no + ' · ' + person.profession + ' · ' + person.department + ' · ' + person.source_crew))));
       if (found.length > limit) results.append(el('button', {type: 'button', className: 'text-button', onclick: () => { limit += 30; searchPeople(); }}, 'Показать ещё'));
     }
     input.addEventListener('input', () => {
@@ -1390,29 +1614,86 @@
   $('staffing-file')?.addEventListener('change', () => {
     state.preview = null; $('staffing-import-apply').hidden = true; $('staffing-import-report').replaceChildren();
   });
+  function renderImportComparison(plan) {
+    const report = $('staffing-import-report');
+    const person = row => (row.full_name || '') + ' · таб. № ' + (row.personnel_no || 'нет') +
+      (row.department ? ' · ' + row.department : '') + (row.crew_name ? ' · ' + row.crew_name : '');
+    const list = (title, rows, render) => {
+      const content = el('div', {className: 'import-comparison-list'});
+      let shown = 0;
+      const more = el('button', {type: 'button', className: 'text-button'}, 'Показать ещё');
+      const append = () => {
+        content.append(...rows.slice(shown, shown + 40).map(render)); shown += 40;
+        more.hidden = shown >= rows.length;
+      };
+      more.addEventListener('click', append); append();
+      report.append(el('details', {className: 'import-comparison-section'},
+        el('summary', {}, title + ': ' + rows.length), content, more));
+    };
+    report.append(el('p', {className: 'transfer-notice'}, 'Категории ГДЛР существующих сотрудников и текущие бригады сохраняются. ' +
+      'Отсутствующие в файле исключаются из актуального состава этой ППС; история назначений сохраняется. Ручные записи остаются.'));
+    if (plan.already_imported) report.append(el('p', {}, 'Этот файл уже импортирован. Повторная загрузка не заменит состав более новым или старым списком.'));
+    report.append(el('p', {className: 'import-comparison-totals'},
+      'Добавятся: ' + plan.counts.added + ' · Убавятся: ' + plan.counts.missing + ' · Сопоставлены: ' + plan.counts.matched +
+      ' · Ручные записи остаются: ' + plan.counts.manual_kept));
+    if (plan.unresolved) report.append(el('p', {className: 'error-text'}, 'Итог предварительный. Требуют решения: ' + plan.unresolved + '.'));
+    list('Добавятся в состав', plan.added, row => el('p', {}, person(row)));
+    list('Убавятся из состава', plan.missing, row => el('p', {}, person(row)));
+    list('Сопоставлены с системой', plan.matched, row => el('div', {className: 'import-comparison-person'},
+      el('p', {}, 'В системе: ' + person(row.system)), el('p', {}, 'В Excel: ' + person(row.file)),
+      el('p', {}, 'ГДЛР сохраняется: ' + (row.category_preserved || 'не назначена'))));
+    list('Ручные записи, которых нет в Excel', plan.manual_kept, row => el('p', {}, person(row)));
+    const reviews = el('div', {className: 'import-identity-reviews'});
+    for (const review of plan.reviews) {
+      const select = el('select', {'aria-label': 'Решение по строке ' + review.file.source_row},
+        el('option', {value: ''}, 'Выберите решение'), ...review.options.map(o => el('option', {value: o.value}, o.label)));
+      select.value = review.decision;
+      select.addEventListener('change', () => {
+        if (!state.preview) return;
+        if (select.value) state.preview.decisions[review.key] = select.value;
+        else delete state.preview.decisions[review.key];
+        state.preview.ready = false; $('staffing-import-apply').hidden = true;
+        $('staffing-preview').textContent = 'Пересчитать итог сверки';
+        hint.textContent = 'Решения изменены. Нажмите «Пересчитать итог сверки», затем подтвердите итог.';
+      });
+      reviews.append(el('div', {className: 'import-comparison-person'},
+        el('strong', {}, review.kind === 'manual' ? 'Возможная ручная запись' : 'Различается ФИО при одинаковом табельном номере'),
+        el('p', {}, 'Excel, строка ' + review.file.source_row + ': ' + person(review.file)),
+        ...review.candidates.map(row => el('p', {}, 'В системе: ' + person(row))),
+        el('label', {}, 'Подтвердите соответствие', select)));
+    }
+    const hint = el('p', {className: 'table-note'}, plan.reviews.length ?
+      'Совпадение имени — только подсказка. При связывании ручной записи ФИО и табельный номер берутся из Excel; её назначения и ГДЛР сохраняются.' : 'Проверьте списки перед подтверждением импорта.');
+    report.append(reviews, hint);
+  }
   $('staffing-preview')?.addEventListener('click', async () => {
     if (!canLeave()) return;
     if (!$('staffing-import-date').reportValidity()) return;
     const file = $('staffing-file').files[0];
     if (!file) { $('staffing-import-report').textContent = 'Выберите шаблон перевахтовки в формате XLSX.'; return; }
+    const decisions = state.preview?.decisions || {};
     busy(true); state.preview = null; $('staffing-import-apply').hidden = true;
     $('staffing-import-report').textContent = 'Проверка файла…';
     try {
       const body = new FormData(); body.append('file', file); body.append('source_label', importPps.value);
+      body.append('decisions', JSON.stringify(decisions));
       const result = await api('/api/staffing/import/preview', {method: 'POST', body});
-      state.preview = {file, token: result.preview_token, sourceLabel: importPps.value};
+      state.preview = {file, token: result.preview_token, sourceLabel: importPps.value, decisions,
+        ready: !result.issues.length && !result.reconciliation.unresolved};
       const count = result.summary;
       $('staffing-import-report').replaceChildren(el('p', {}, 'К импорту: ' + count.selected + ' чел., бригад: ' + count.crews + '. Без номера бригады: ' + (count.without_crew || 0) + '.'),
         el('p', {}, 'Исключено: другие подразделения — ' + (count.department_excluded || 0) + '; другая квалификация — ' + (count.qualification_excluded || 0) + '; водители, машинисты и вспомогательные — ' + (count.category_excluded || 0) + '.'),
         ...result.issues.map(message => el('p', {className: 'error-text'}, message)));
-      $('staffing-import-apply').hidden = !!result.issues.length;
-      $('staffing-import-apply').textContent = 'Импортировать ' + count.selected + ' чел.';
+      renderImportComparison(result.reconciliation);
+      $('staffing-preview').textContent = 'Пересчитать итог сверки';
+      $('staffing-import-apply').hidden = !state.preview.ready;
+      $('staffing-import-apply').textContent = 'Подтвердить изменения и импортировать';
       if (count.skipped_removed) $('staffing-import-report').append(el('p', {}, 'Ранее удалённые сотрудники будут пропущены: ' + count.skipped_removed + ' чел.'));
     } catch (error) { $('staffing-import-report').textContent = error.message; }
     finally { busy(false); }
   });
   $('staffing-import-apply')?.addEventListener('click', async () => {
-    if (!canLeave() || !state.preview) return;
+    if (!canLeave() || !state.preview?.ready) return;
     if (!$('staffing-import-date').reportValidity()) return;
     const importDate = $('staffing-import-date').value;
     busy(true);
@@ -1422,10 +1703,13 @@
       const result = await api('/api/staffing/import/apply', {method: 'POST', body});
       state.preview = null; $('staffing-import-apply').hidden = true;
       $('staffing-import-report').textContent = result.people_added ? 'Справочник ФИО дополнен: ' + result.people_added + ' чел. Расстановка сохранена.' : result.already_imported ? 'Этот файл уже импортирован.' : 'Импортировано ' + result.selected + ' чел. Резервная копия базы создана.';
+      if (result.reconciliation) $('staffing-import-report').append(el('p', {},
+        'Добавились: ' + result.reconciliation.added + ' · Убавились: ' + result.reconciliation.missing +
+        ' · Сопоставлены: ' + result.reconciliation.matched + '. Категории ГДЛР сохранены.'));
       $('staffing-date').value = importDate;
       preferences.set({date: importDate});
       await load();
-    } catch (error) { $('staffing-import-report').textContent = error.message; }
+    } catch (error) { state.preview = null; $('staffing-import-apply').hidden = true; $('staffing-import-report').textContent = error.message; }
     finally { busy(false); }
   });
   window.addEventListener('beforeunload', event => {
@@ -1445,77 +1729,15 @@
       if (menu.open) return;
       transferMenus.forEach(other => { if (other !== menu) other.open = false; });
       if (menu.id === 'staffing-import') $('staffing-import-date').value = $('staffing-date').value;
-      else {
-        $('staffing-export-date').value = $('staffing-date').value;
-        $('staffing-export-department').replaceChildren(...[...$('staffing-department').options].filter((option, index) => index === 0 || option.value).map(option => option.cloneNode(true)));
-        $('staffing-export-department').options[0].textContent = 'Все СМУ';
-        $('staffing-export-department').value = $('staffing-department').value;
-        const contractorFilter = $('staffing-export-contractor');
-        const selectedContractor = contractorFilter.value;
-        contractorFilter.replaceChildren(el('option', {value: ''}, 'Все компании-подрядчики'),
-          ...(state.contractors || []).map(item => el('option', {value: item.name}, item.name)));
-        contractorFilter.value = [...contractorFilter.options].some(option => option.value === selectedContractor) ? selectedContractor : '';
-        $('staffing-export-category').replaceChildren(...[...$('staffing-category').options].map(option => option.cloneNode(true)));
-        $('staffing-export-category').value = $('staffing-category').value;
-        const shift = $('staffing-shift').value;
-        $('staffing-export-shift').value = ['1 смена', '2 смена'].includes(shift) ? shift : 'all';
-      }
+
     });
   });
   document.addEventListener('click', event => {
-    if (!event.target.closest('.staffing-transfers')) closeTransferMenus();
+    if (!event.target.closest('.staffing-transfers, .multi-filter-dialog')) closeTransferMenus();
   });
   document.addEventListener('keydown', event => {
     if (event.key === 'Escape' && transferMenus.some(menu => menu.open) && !state.busy) {
       event.preventDefault(); closeTransferMenus(true);
-    }
-  });
-  $('staffing-export-form').addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const message = $('staffing-export-status');
-    if (!canLeave()) {
-      message.textContent = 'Завершите текущие изменения в расстановке перед экспортом.';
-      message.classList.add('error-text');
-      return;
-    }
-    const button = $('staffing-export-submit');
-    if (button.disabled) return;
-    const day = $('staffing-export-date').value;
-    const shift = $('staffing-export-shift').value;
-    button.disabled = true;
-    message.classList.remove('error-text');
-    message.textContent = 'Формируем файл…';
-    try {
-      const params = new URLSearchParams({date: day, shift});
-      const department = $('staffing-export-department').value;
-      if (department) params.set('department', department);
-      const contractor = $('staffing-export-contractor').value;
-      if (contractor) params.set('contractor', contractor);
-      const includeUnassigned = $('staffing-export-unassigned').checked;
-      if (includeUnassigned) params.set('include_unassigned', '1');
-      const selectedCategory = $('staffing-export-category').value;
-      if (selectedCategory) params.set('category', selectedCategory === 'none' ? '' : selectedCategory.slice(5));
-      const response = await fetch('/api/staffing/export?' + params, {cache: 'no-store'});
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.error || 'Не удалось сформировать файл.');
-      }
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const dateLabel = day.split('-').reverse().join('.');
-      const suffix = shift === 'all' ? '' : shift === '1 смена' ? ' — день' : ' — ночь';
-      const link = el('a', {href: url, download: 'Расстановка на ' + dateLabel + suffix + '.xlsx'});
-      document.body.append(link);
-      link.click();
-      link.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 60000);
-      message.textContent = 'Файл с двумя вкладками готов. Строк в списке: ' + response.headers.get('X-Export-Count') +
-        (includeUnassigned ? ', нерасставленных сотрудников: ' + response.headers.get('X-Export-Unassigned-Count') : '') + '. Загрузка началась.';
-    } catch (error) {
-      message.textContent = error.message;
-      message.classList.add('error-text');
-    } finally {
-      button.disabled = false;
     }
   });
   $('staffing-clear-selected').before(el('button', {id: 'staffing-work-selected', className: 'secondary-button', disabled: true,
@@ -1526,6 +1748,8 @@
       onclick: () => openSelectedTransfer('tomorrow')}, 'Перенести на завтра (0)'));
   $('staffing-work-selected').before(el('button', {id: 'staffing-category-selected', className: 'secondary-button', disabled: true,
     onclick: () => openSelectedCategory()}, 'Изменить ГДЛР (0)'));
+  $('staffing-work-selected').before(el('button', {id: 'staffing-employer-selected', className: 'secondary-button', disabled: true,
+    onclick: () => openEmployerEditor(state.rows.filter(row => state.selected.get(row.id) === row.crew_id))}, 'Работодатель (0)'));
   let historyState = {undo: null, redo: null}, historyRequest = 0;
   const historyButtons = {};
   for (const [direction, label] of [['undo', 'Отменить'], ['redo', 'Повторить']]) {
@@ -1535,6 +1759,7 @@
     $('staffing-refresh').before(button);
   }
   async function refreshHistory() {
+    if (readOnly) return;
     const requestId = ++historyRequest;
     try {
       const next = await api('/api/staffing/history');
@@ -1555,6 +1780,7 @@
     }
   }
   async function replayHistory(direction) {
+    if (readOnly) return;
     if (!canLeave() || !historyState[direction]) return;
     const action = historyState[direction];
     busy(true);
@@ -1570,13 +1796,18 @@
     finally { busy(false); await refreshHistory(); }
   }
   document.addEventListener('keydown', event => {
-    if (!event.ctrlKey && !event.metaKey || event.altKey || event.repeat || !$('view-staffing').classList.contains('active')) return;
+    if (readOnly || !event.ctrlKey && !event.metaKey || event.altKey || event.repeat || !$('view-staffing').classList.contains('active')) return;
     if (event.target.closest('input, textarea, select, [contenteditable="true"]')) return;
     const direction = event.code === 'KeyZ' ? (event.shiftKey ? 'redo' : 'undo') : event.code === 'KeyY' ? 'redo' : null;
     if (!direction) return;
     event.preventDefault(); replayHistory(direction);
   });
   $('staffing-refresh').addEventListener('click', refreshHistory);
+  if (readOnly) {
+    for (const id of ['undo', 'redo', 'transfer-selected', 'transfer-tomorrow', 'category-selected', 'employer-selected', 'work-selected', 'clear-selected']) {
+      $('staffing-' + id).hidden = true;
+    }
+  }
   refreshHistory();
   window.staffingScreen = {load, canLeave, openFromCalendar, mobileSelection, clearSelection: () => {
     if (!canLeave()) return;

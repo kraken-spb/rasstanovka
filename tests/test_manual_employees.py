@@ -21,7 +21,9 @@ class ManualEmployeeTest(unittest.TestCase):
 
     def payload(self, **fields):
         return {'request_key': str(uuid4()), 'full_name': 'Иванов Иван Иванович', 'personnel_no': 'MANUAL-001',
-                'profession': 'Монтажник', 'qualification': 'Рабочие', 'crew_id': self.f.crew_a, **fields}
+                'profession': 'Монтажник', 'qualification': 'Рабочие', 'crew_id': self.f.crew_a,
+                'category_id': self.f.staffing_category_id,
+                'category_token': self.f.staffing_category_token, **fields}
 
     def create(self, data, client=None):
         return self.f.write(client or self.f.admin, 'POST', '/api/employees', data)
@@ -75,7 +77,7 @@ class ManualEmployeeTest(unittest.TestCase):
     def test_catalog_bindings_are_atomic_and_check_stale_values(self):
         with self.f.module.app.app_context():
             db = self.f.module.get_db()
-            category = db.execute("INSERT INTO gdlr_categories(name,name_key,edit_token,updated_by,updated_at) VALUES ('Монтажники','монтажники','current',?,'now')", (self.f.admin_id,)).lastrowid
+            category = db.execute("INSERT INTO gdlr_categories(name,name_key,staffing_allowed,edit_token,updated_by,updated_at) VALUES ('Монтажники','монтажники',1,'current',?,'now')", (self.f.admin_id,)).lastrowid
             contractor = db.execute("INSERT INTO contractors(name,name_key,edit_token,updated_by,updated_at) VALUES ('ЛГСС','лгсс','current',?,'now')", (self.f.admin_id,)).lastrowid
             db.commit()
         data = self.payload(category_id=category, category_token='stale', contractor_id=contractor, contractor_token='current')

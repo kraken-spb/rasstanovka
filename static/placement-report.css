@@ -1,6 +1,21 @@
 .placement-report-filters {display:flex;flex-wrap:wrap;gap:.75rem;align-items:end;margin:1rem 0;}
 .placement-report-filters label {display:flex;flex:1 1 180px;flex-direction:column;gap:.3rem;min-width:0;}
 .placement-report-filters select {max-width:100%;}
+.category-mode .placement-period-control {display:none;}
+.placement-dynamics-scroll {max-height:70dvh;}
+.placement-dynamics-table {border-collapse:separate;border-spacing:0;}
+.placement-dynamics-table thead th {position:sticky;top:0;z-index:2;white-space:nowrap;}
+.placement-dynamics-table tr > :first-child {position:sticky;left:0;min-width:150px;max-width:240px;background:var(--paper);border-right:1px solid var(--line);z-index:1;}
+.placement-dynamics-table thead tr > :first-child {z-index:3;background:var(--mint);white-space:normal;}
+.placement-dynamics-category > * {background:#edf4f1;}
+.placement-dynamics-table .placement-dynamics-category > th {background:#edf4f1;font-weight:700;}
+.placement-dynamics-table .placement-dynamics-pps > th {padding-left:1.5rem;}
+.placement-category-toggle {border:0;background:transparent;color:var(--ink);text-align:left;white-space:normal;font:inherit;cursor:pointer;padding:.2rem;}
+.placement-dynamics-change {font-weight:700;}
+@media(max-width:640px) {
+  .placement-dynamics-table tr > :first-child {min-width:115px;max-width:130px;}
+  .placement-category-toggle {min-height:44px;}
+}
 .placement-report-filters .placement-report-pdf-details {flex-direction:row;align-items:center;flex-basis:100%;min-height:36px;}
 .placement-report-totals {display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.75rem;margin:1rem 0;}
 .placement-report-stat {display:flex;flex-direction:column;justify-content:space-between;background:white;border:1px solid var(--line);border-radius:12px;padding:1rem;}
@@ -33,4 +48,74 @@
   .placement-report-filters label,.placement-report-filters button {flex-basis:100%;width:100%;}
   .placement-report-people li {grid-template-columns:minmax(0,1fr);gap:.35rem;}
   .placement-report-category h3,.placement-report-line summary {padding:.65rem .75rem;}
+}
+
+.placement-report-matrix-scroll {max-width:100%;overflow:auto;border:1px solid var(--line);border-radius:10px;}
+.placement-report-matrix {border-collapse:collapse;width:100%;font-size:.85rem;}
+.placement-report-matrix th,.placement-report-matrix td {padding:.6rem;border:1px solid var(--line);min-width:90px;overflow-wrap:anywhere;}
+.placement-report-matrix thead th {background:var(--mint);text-align:center;max-width:180px;}
+.placement-report-matrix tbody th {text-align:left;font-weight:400;}
+.placement-report-matrix td {text-align:center;font-variant-numeric:tabular-nums;}
+.placement-report-matrix-total {background:#edf4f1;font-weight:700;}
+.placement-report-selected {margin-top:1rem;overflow-wrap:anywhere;}
+@media(max-width:640px) {.placement-report-matrix {font-size:.75rem;} .placement-report-matrix th,.placement-report-matrix td {padding:.35rem;min-width:76px;} .placement-report-matrix .report-fact-link {min-height:44px;}}
+
+.fact-table thead,.report-matrix thead {position:sticky;top:0;z-index:4;}
+.fact-table thead th,.report-matrix thead th {position:static;}
+
+.fact-table thead .company-heading {min-width:140px;max-width:220px;white-space:normal;overflow-wrap:anywhere;line-height:1.3;padding:.45rem .65rem;}
+
+.category-placement-scroll {max-width:100%;overflow:auto;border:1px solid var(--line);border-radius:12px;background:var(--surface);}
+.category-placement-table {width:100%;border-collapse:separate;border-spacing:0;font-size:.85rem;}
+.category-placement-table th,.category-placement-table td {padding:.65rem .75rem;border-bottom:1px solid var(--line);text-align:center;min-width:90px;}
+.category-placement-table thead th {background:var(--mint);color:var(--navy);white-space:normal;}
+.category-placement-table thead tr:nth-child(2) th {background:var(--paper);font-weight:500;}
+.category-placement-table tr > :first-child {text-align:left;}
+.category-placement-table tbody th {font-weight:500;min-width:150px;overflow-wrap:anywhere;}
+.category-placement-table td {font-variant-numeric:tabular-nums;}
+.category-placement-table .total {border-right:1px solid var(--line);background:var(--paper);font-weight:600;}
+.category-placement-table .unassigned {color:#995114;}
+.category-placement-table .absent {color:#68517f;}
+.category-placement-table .category-placement-total > * {background:var(--mint);font-weight:700;border-bottom:0;}
+#placement-report.category-mode #placement-report-pdf,#placement-report.category-mode .placement-report-pdf-details {display:none;}
+@media(max-width:640px) {
+  .category-placement-table {font-size:.8rem;}
+  .category-placement-table th,.category-placement-table td {padding:.4rem;min-width:82px;}
+  .category-placement-table .report-fact-link {min-height:44px;min-width:44px;}
+}
+
+.category-placement-table thead tr:first-child > th:first-child,.category-placement-table tbody > tr > th {position:sticky;left:0;z-index:1;background:var(--surface);border-right:1px solid var(--line);}
+.category-placement-table thead tr:first-child > th:first-child,.category-placement-table .category-placement-total > th {background:var(--mint);}
+.category-placement-table .report-fact-link {border:0;background:transparent;color:var(--teal);text-decoration:none;font:inherit;cursor:pointer;padding:.25rem .4rem;border-radius:5px;}
+.category-placement-table .report-fact-link:hover {background:var(--mint);text-decoration:underline;}
+.category-placement-table .report-fact-link:focus-visible {outline:2px solid var(--teal);outline-offset:2px;}
+@media(max-width:640px) {
+  .category-placement-table tbody th,.category-placement-table thead tr:first-child > th:first-child {min-width:110px;max-width:110px;}
+  .report-summary-modes {flex-wrap:wrap;}
+  .report-summary-modes button {flex-basis:calc(50% - .5rem);}
+}
+.staffing-change-controls {display:flex;flex-wrap:wrap;gap:.35rem;}
+.staffing-change-controls[hidden] {display:none;}
+.staffing-change-controls button {min-height:36px;}
+.staffing-change-controls button[aria-pressed="true"] {background:var(--mint);border-color:var(--teal);color:var(--teal);}
+.staffing-change-badge {display:inline-block;width:fit-content;padding:.1rem .35rem;border-radius:4px;font-size:.72rem;font-weight:600;}
+.staffing-change-badge.arrived {background:#d9f2e3;color:#155c38;}
+.staffing-change-badge.left {background:#fce6dc;color:#8a351b;}
+@media(max-width:700px){.staffing-change-controls button{min-height:44px;}}
+
+/* Keep report filters together and place display options on one compact row. */
+.placement-report-filters { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)) auto auto auto; gap:.45rem; margin:.65rem 0; }
+.placement-report-filters > label { min-width:0; gap:.2rem; font-size:.76rem; }
+.placement-report-filters > label > input,.placement-report-filters > label > select,.placement-report-filters .multi-filter-button { width:100%; min-width:0; height:34px; min-height:34px; font-size:.8rem; padding:.3rem .4rem; }
+.placement-report-filters > button { min-height:34px; padding:.3rem .5rem; }
+.placement-report-checks { grid-column:1/-1; display:flex; align-items:center; gap:1.2rem; }
+.placement-report-filters .placement-report-checks > label { flex:0 1 auto; width:auto; min-height:28px; margin:0; gap:.35rem; font-size:.8rem; }
+.placement-report-checks input[type=checkbox] { flex:0 0 18px; width:18px; height:18px; min-height:18px; margin:0; }
+.category-mode .placement-report-checks { display:none; }
+.category-mode .placement-report-filters { grid-template-columns:repeat(4,minmax(0,1fr)) auto auto; }
+@media(max-width:900px) {
+  .placement-report-filters,.category-mode .placement-report-filters { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .placement-report-filters > label > input,.placement-report-filters > label > select,.placement-report-filters .multi-filter-button,.placement-report-filters > button { min-height:44px; height:44px; }
+  .placement-report-checks { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.5rem; align-items:start; }
+  .placement-report-filters .placement-report-checks > label { align-items:start; min-height:44px; font-size:.75rem; line-height:1.35; }
 }

@@ -1,0 +1,28 @@
+#view-catalogs .catalog-subnav { grid-template-columns: repeat(7,minmax(0,1fr)); }
+.crew-catalog-toolbar { display:flex; flex-wrap:wrap; align-items:end; gap:.5rem; }
+.crew-catalog-toolbar > label:not(.check-label) { flex:1 1 200px; min-width:0; }
+.crew-catalog-toolbar > .check-label { min-height:34px; }
+.crew-catalog-table { width:100%; table-layout:fixed; border-collapse:collapse; font-size:.82rem; }
+.crew-catalog-table th { text-align:left; background:var(--paper); }
+.crew-catalog-table td,.crew-catalog-table th { padding:.55rem; border-bottom:1px solid var(--line); overflow-wrap:anywhere; }
+.crew-catalog-table td small { display:block; color:var(--muted); }
+.crew-catalog-dialog { max-height:calc(100dvh - 2rem); overflow:auto; }
+.crew-catalog-dialog h2 { overflow-wrap:anywhere; }
+.crew-catalog-members { margin:1rem 0; }
+.crew-catalog-members article { padding:.6rem 0; border-bottom:1px solid var(--line); overflow-wrap:anywhere; }
+.crew-catalog-members p { margin:.2rem 0; font-size:.85rem; }
+.crew-catalog-actions { display:flex; flex-wrap:wrap; gap:.4rem; min-width:0; }
+.crew-catalog-actions button { min-width:0; max-width:100%; white-space:normal; }
+.crew-catalog-delete.text-button { color:var(--danger,#a62424); }
+.crew-catalog-delete.primary-button { background:var(--danger,#a62424); }
+@media(max-width:700px) {
+  #view-catalogs .catalog-subnav { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .crew-catalog-toolbar > label:not(.check-label) { flex-basis:100%; order:1; }
+  .crew-catalog-toolbar > .check-label { min-height:44px; }
+  .crew-catalog-table,.crew-catalog-table tbody { display:block; }
+  .crew-catalog-table thead { display:none; }
+  .crew-catalog-table tr { display:block; padding:.5rem 0; border-bottom:1px solid var(--line); }
+  .crew-catalog-table td { display:grid; grid-template-columns:90px minmax(0,1fr); gap:.5rem; border:0; padding:.25rem 0; }
+  .crew-catalog-table td::before { content:attr(data-label); color:var(--muted); }
+  .crew-catalog-actions button { min-height:44px; }
+}

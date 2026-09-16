@@ -26,8 +26,17 @@ class PlacementAppTest(unittest.TestCase):
                 cls.super_admin_id = db.execute(
                     "INSERT INTO users(username,password_hash,full_name,role,created_at) VALUES (?,?,?,?,?)",
                     ("test-super", cls.module.generate_password_hash("test-password-123"),
-                     "Тестовый супер-администратор", "super_admin", cls.module.utc_now()),
+                      "Тестовый супер-администратор", "super_admin", cls.module.utc_now()),
                 ).lastrowid
+                from gdlr_api import STAFFING_CATEGORY_NAMES
+                category_name = STAFFING_CATEGORY_NAMES[0]
+                category_id = db.execute('''INSERT INTO gdlr_categories
+                    (name,name_key,active,staffing_allowed,edit_token,updated_by,updated_at)
+                    VALUES (?,?,1,1,'app-fixture',?,'now')''',
+                    (category_name, ' '.join(category_name.split()).casefold(), cls.super_admin_id)).lastrowid
+                for worker in db.execute('SELECT id FROM workers'):
+                    db.execute('''INSERT INTO employee_gdlr(worker_id,category_id,edit_token,updated_by,updated_at)
+                        VALUES (?,?,'app-fixture',?,'now')''', (worker['id'], category_id, cls.super_admin_id))
                 db.commit()
         cls.module.app.config.update(TESTING=True)
         cls.client = cls.module.app.test_client()

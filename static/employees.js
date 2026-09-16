@@ -1,11 +1,19 @@
 function createEmployeeScreen(prefix) {
   'use strict';
+  const MF = window.MultiFilter;
   const isOutstaff = prefix === 'outstaff';
   const $ = id => document.getElementById(id.replace('employees', prefix));
   if (!$('view-employees')) return;
   const root = document.querySelector('.app-shell');
+  const readOnly = root.dataset.role === 'hr_viewer';
   const state = {rows: [], crews: [], categories: [], categoryDrafts: new Map(), filtered: [], page: 0, busy: false, drafts: new Map(), request: 0, worker: null, summary: null, reportDate: $('employees-date').value};
-  const size = 50;
+  ['employees-crew-filter','employees-category','employees-active'].forEach(id => MF.enable($(id)));
+  let size = 50;
+  const pager = window.TablePagination.mount($('employees-list'), isOutstaff ? 'Аутстафф' : 'Сотрудники', (page, count) => {
+    if (!canLeave()) return false;
+    state.page = page; size = count; render();
+    $('employees-list').scrollTop = 0;
+  });
   const fields = ['full_name', 'personnel_no', 'crew_name', 'category', 'profession', 'gsp_profession', 'pps',
     'department', 'employer', 'contractor', 'owner_name', 'linear_itr_name', 'brigadier_name', 'outstaff_search'];
   const normalize = value => String(value || '').toLocaleLowerCase('ru').replace(/ё/g, 'е');
@@ -66,24 +74,24 @@ function createEmployeeScreen(prefix) {
     if (isOutstaff) $('employees-stats-note').textContent = 'Состав аутстаффа — все импортированные сотрудники. Расставленные учитываются один раз за обе смены отчётной даты. Код OUT — внутренний идентификатор, в файле табельного номера нет.';
   }
   function updateFilters() {
-      const selected = $('employees-crew-filter').value;
+      const selected = MF.get($('employees-crew-filter'));
       const names = new Map(state.rows.filter(row => row.crew_id).map(row => [row.crew_id, row.crew_name]));
       $('employees-crew-filter').replaceChildren(option('', 'Все бригады'), option('none', 'Без бригады'),
         ...[...names].sort((a, b) => a[1].localeCompare(b[1], 'ru', {numeric: true})).map(([id, name]) => option(id, name)));
-      $('employees-crew-filter').value = [...$('employees-crew-filter').options].some(o => o.value === selected) ? selected : '';
-      const category = $('employees-category').value;
+      MF.set($('employees-crew-filter'), selected);
+      const category = MF.get($('employees-category'));
       $('employees-category').replaceChildren(option('', 'Все категории'), option('none', 'Не привязана к справочнику'),
         ...state.categories.map(item => option(item.id, item.name + (item.active ? '' : ' · отключена'))));
-      $('employees-category').value = [...$('employees-category').options].some(o => o.value === category) ? category : '';
+      MF.set($('employees-category'), category);
   }
   function filter(resetPage = true) {
     const previousPage = resetPage ? 0 : state.page;
     const request = ++state.request;
     state.worker?.terminate(); state.worker = null;
     error(); status(''); state.page = previousPage;
-    const crew = $('employees-crew-filter').value, category = $('employees-category').value, active = $('employees-active').value;
-    const rows = state.rows.filter(row => (!crew || (crew === 'none' ? !row.crew_id : String(row.crew_id) === crew))
-      && (!category || (category === 'none' ? row.category_id === null : String(row.category_id) === category)) && (!active || String(row.active) === active));
+    const crew = MF.get($('employees-crew-filter')), category = MF.get($('employees-category')), active = MF.get($('employees-active'));
+    const rows = state.rows.filter(row => MF.matches(crew, row.crew_id || 'none')
+      && MF.matches(category, row.category_id === null ? 'none' : row.category_id) && MF.matches(active, row.active));
     const query = $('employees-search').value.trim();
     if (!$('employees-regex').checked || !query) {
       const words = normalize(query).split(/\s+/).filter(Boolean);
@@ -110,7 +118,7 @@ function createEmployeeScreen(prefix) {
       el('small', {}, (row.manual_registration ? 'Исходная категория: ' : 'Из файла: ') + (row.source_category || '—')));
     if (!row.category_id) binding.append(el('small', {}, 'Не привязана к справочнику'));
     else if (!row.category_active) binding.append(el('small', {}, 'Категория отключена'));
-    if (!row.can_edit) return binding;
+    if (readOnly || !row.can_edit) return binding;
     const select = el('select', {'aria-label': 'Категория ГДЛР: ' + row.full_name}, option('', 'Выберите категорию'),
       ...state.categories.filter(item => item.active || item.id === row.category_id).map(item => {
         const node = option(item.id, item.name + (item.active ? '' : ' · отключена')); node.disabled = !item.active; return node;
@@ -161,12 +169,26 @@ function createEmployeeScreen(prefix) {
     ['linear_itr_name', 'Линейный ИТР', 10, true], ['brigadier_name', 'Бригадир', 10, true],
     ['active', 'Статус', 7, true], ['removal_date', 'Дата удаления', 8, true],
     ['removal_reason', 'Причина удаления', 10, true], ['actions', 'Действия', 7]);
-  const columnsKey = prefix + '-grid-columns-v1';
+  const leadingColumns = ['employer', 'contractor'];
+  leadingColumns.slice().reverse().forEach(key => {
+    const index = employeeColumns.findIndex(column => column[0] === key);
+    const [column] = employeeColumns.splice(index, 1);
+    column[3] = false;
+    employeeColumns.unshift(column);
+  });
+  const columnsKey = prefix + '-grid-columns-v2';
   const defaultColumns = employeeColumns.filter(column => !column[3]).map(column => column[0]);
   let visibleColumns = new Set(defaultColumns);
   {
     try {
-      const saved = JSON.parse(localStorage.getItem(columnsKey));
+      let saved = JSON.parse(localStorage.getItem(columnsKey));
+      if (!Array.isArray(saved)) {
+        const previous = JSON.parse(localStorage.getItem(prefix + '-grid-columns-v1'));
+        if (Array.isArray(previous)) {
+          saved = [...new Set([...leadingColumns, ...previous])];
+          localStorage.setItem(columnsKey, JSON.stringify(saved));
+        }
+      }
       if (Array.isArray(saved)) visibleColumns = new Set(['full_name', ...saved.filter(key => employeeColumns.some(column => column[0] === key))]);
     } catch (_) { /* Column preferences are optional when browser storage is unavailable. */ }
     const checks = el('div', {className: 'employee-columns-options'});
@@ -183,16 +205,15 @@ function createEmployeeScreen(prefix) {
     }), el('button', {type: 'button', className: 'text-button', onclick: () => {
       if (!canLeave()) return;
       visibleColumns = new Set(defaultColumns);
-      try { localStorage.removeItem(columnsKey); } catch (_) { /* Keep preferences for this session. */ }
+      try { localStorage.setItem(columnsKey, JSON.stringify(defaultColumns)); } catch (_) { /* Keep preferences for this session. */ }
       paintChecks(); render();
     }}, 'Вернуть исходный вид'));
     paintChecks();
-    $('employees-list').before(el('div', {className: 'employee-grid-controls'},
-      el('span', {className: 'table-note'}, isOutstaff ? 'Бригада, категория и участок сохраняются сразу после выбора.' : 'ППС, бригада и категория сохраняются сразу после выбора.'), menu));
+    $('employees-search').closest('.employees-toolbar').append(menu);
   }
   function gridColumns() { return employeeColumns.filter(column => visibleColumns.has(column[0])); }
   function employeeSelect(row, kind) {
-    if (!row.can_edit) return row[kind === 'crew' ? 'crew_name' : 'category'] || (kind === 'crew' ? 'Без бригады' : '—');
+    if (readOnly || !row.can_edit) return row[kind === 'crew' ? 'crew_name' : 'category'] || (kind === 'crew' ? 'Без бригады' : '—');
     const options = kind === 'crew' ? [option('', 'Без бригады'), ...state.crews.map(crew => option(crew.id, crew.name))]
       : [el('option', {value: '', disabled: true}, 'Выберите категорию'), ...state.categories.filter(c => c.active || c.id === row.category_id).map(c =>
         el('option', {value: String(c.id), disabled: !c.active}, c.name + (c.active ? '' : ' · отключена')))];
@@ -210,7 +231,7 @@ function createEmployeeScreen(prefix) {
     return select;
   }
   function employeePpsSelect(row) {
-    if (!row.can_edit) return row.pps || 'Не указана';
+    if (readOnly || !row.can_edit) return row.pps || 'Не указана';
     const select = el('select', {disabled: !!state.needsRefresh, 'aria-label': 'ППС: ' + row.full_name},
       option('', 'Не указана'), option('ППС15', 'ППС15'), option('ППС19', 'ППС19'));
     select.value = row.pps || '';
@@ -236,14 +257,14 @@ function createEmployeeScreen(prefix) {
     const values = {...row, pps: employeePpsSelect(row), crew_name: employeeSelect(row, 'crew'), category: employeeSelect(row, 'category'),
       full_name: el('strong', {}, row.full_name), active: row.active ? 'Действующий' : 'Отключён',
       removal_date: row.removal?.effective_date?.split('-').reverse().join('.'), removal_reason: row.removal?.reason,
-      actions: row.can_remove ? el('button', {type: 'button', className: 'text-button employee-grid-remove',
+      actions: !readOnly && row.can_remove ? el('button', {type: 'button', className: 'text-button employee-grid-remove',
         disabled: !!state.needsRefresh, 'aria-label': 'Удалить сотрудника: ' + row.full_name, onclick: () => openRemoval(row)}, 'Удалить')
-        : row.can_restore ? restoreButton(row) : '—'};
+        : !readOnly && row.can_restore ? restoreButton(row) : '—'};
     if (isOutstaff) {
       Object.assign(values, {department: outstaffDepartmentSelect(row), source_department: row.outstaff.source_department,
         vendor: row.outstaff.vendor, work_kind: row.outstaff.work_kind, staff_type: row.outstaff.staff_type});
       if (!row.category_id) values.category = el('div', {className: 'employee-binding'}, values.category,
-        el('small', {}, 'Выберите вручную · в файле: ' + (row.outstaff.source_category || 'не указана')));
+        el('small', {}, (readOnly ? 'В файле: ' : 'Выберите вручную · в файле: ') + (row.outstaff.source_category || 'не указана')));
     }
     return el('tr', {'data-employee-id': row.id}, ...gridColumns().map(([key, label]) =>
       el('td', {'data-label': label, 'data-column': key, title: typeof values[key] === 'string' ? values[key] : ''}, values[key] || '—')));
@@ -279,9 +300,7 @@ function createEmployeeScreen(prefix) {
       el('colgroup', {}, ...columns.map(column => el('col', {style: 'width:' + column[2] / totalWidth * 100 + '%'}))),
       el('thead', {}, el('tr', {}, ...columns.map(column => el('th', {scope: 'col'}, column[1])))), body)
       : el('div', {className: 'empty-state'}, 'Сотрудники не найдены.'));
-    $('employees-total').textContent = 'Найдено ' + state.filtered.length + ' из ' + state.rows.length + ' · Страница ' + (state.page + 1) + ' из ' + Math.max(1, Math.ceil(state.filtered.length / size));
-    $('employees-prev').disabled = state.page === 0;
-    $('employees-next').disabled = (state.page + 1) * size >= state.filtered.length;
+    pager.update(state.filtered.length, state.page, size);
   }
   async function saveCrew(row) {
     if (state.busy || !state.drafts.has(row.id)) return;
@@ -387,7 +406,7 @@ function createEmployeeScreen(prefix) {
     state.creating = true;
     window.employeeCreator.open({onClosed: () => { state.creating = false; }, onSaved: async result => {
       await load();
-      $('employees-crew-filter').value = ''; $('employees-category').value = ''; $('employees-active').value = '1';
+      MF.set($('employees-crew-filter'), selected); MF.set($('employees-category'), category); MF.set($('employees-active'), '1');
       $('employees-regex').checked = false; $('employees-search').value = result.personnel_no;
       filter();
       status('Сотрудник добавлен: ' + result.full_name + ' · ' + result.personnel_no + '.');
@@ -400,8 +419,6 @@ function createEmployeeScreen(prefix) {
     }
     load();
   });
-  $('employees-prev').onclick = () => { if (canLeave()) {state.page--; render();} };
-  $('employees-next').onclick = () => { if (canLeave()) {state.page++; render();} };
   window.addEventListener('beforeunload', event => { if (state.busy || state.drafts.size || state.categoryDrafts.size) {event.preventDefault(); event.returnValue = '';} });
   window[isOutstaff ? 'outstaffScreen' : 'employeesScreen'] = {load, canLeave};
 }

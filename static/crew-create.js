@@ -19,14 +19,16 @@
     if (!response.ok) throw new Error(data.error || 'Не удалось создать бригаду.');
     return data;
   }
-  function open({rows, snapshot, onSaved, onClosed}) {
+  function open({rows, snapshot, onSaved, onClosed, crew = null}) {
     let saving = false, loaded = false, people = [];
     const name = el('input', {id: 'create-crew-name', required: true, maxLength: 120, autocomplete: 'off'});
-    function personField(id, title) {
-      let selected = null;
+    name.value = crew?.name || '';
+    function personField(id, title, field) {
+      let selected = crew?.[field + '_person_id'] ? {id: crew[field + '_person_id'], full_name: crew[field]} : null;
       const input = el('input', {id, maxLength: 200, autocomplete: 'off', placeholder: 'Фамилия или Regex: Иванов Петров',
         'aria-describedby': id + '-help ' + id + '-error'});
-      const manual = el('input', {type: 'checkbox', id: id + '-manual'});
+      input.value = crew?.[field] || '';
+      const manual = el('input', {type: 'checkbox', id: id + '-manual', checked: !!input.value && !selected});
       const error = el('p', {id: id + '-error', className: 'error-text', role: 'alert', hidden: true});
       const matches = el('div', {id: id + '-matches', className: 'crew-create-matches', hidden: true,
         'aria-label': 'Найденные сотрудники: ' + title});
@@ -43,7 +45,7 @@
         found.slice(0, 30).forEach(person => matches.append(el('button', {type: 'button', className: 'crew-create-person', onclick: () => {
           if (saving) return;
           selected = person; input.value = person.full_name; show(); input.focus();
-        }}, el('strong', {}, person.full_name), el('small', {}, 'Таб. № ' + (person.personnel_no || '—') + ' · ' + (person.profession || person.position || person.department || 'Должность не указана')))));
+        }}, el('strong', {}, person.full_name), el('small', {}, (person.source_kind === 'outstaff' ? 'Аутстафф · ' + person.employer + ' · код ' : 'Таб. № ') + (person.personnel_no || '—') + ' · ' + (person.profession || person.position || person.department || 'Должность не указана')))));
       }
       input.addEventListener('input', () => { selected = null; show(); });
       input.addEventListener('focus', show);
@@ -65,11 +67,11 @@
       }, value: () => input.value.trim(), personId: () => selected?.id ?? null,
       disable(value) { input.disabled = value; manual.disabled = value; matches.querySelectorAll('button').forEach(button => { button.disabled = value; }); }};
     }
-    const itr = personField('create-crew-itr', 'Линейный ИТР');
-    const brigadier = personField('create-crew-brigadier', 'Бригадир');
+    const itr = personField('create-crew-itr', 'Линейный ИТР', 'linear_itr');
+    const brigadier = personField('create-crew-brigadier', 'Бригадир', 'brigadier');
     const message = el('p', {role: 'status', className: 'save-status'});
     const save = el('button', {type: 'submit', className: 'primary-button', disabled: true},
-      rows.length ? 'Создать и включить сотрудников (' + rows.length + ')' : 'Создать бригаду');
+      crew ? 'Сохранить' : rows.length ? 'Создать и включить сотрудников (' + rows.length + ')' : 'Создать бригаду');
     const close = () => { if (saving) return; dialog.close(); dialog.remove(); onClosed(); };
     const cancel = el('button', {type: 'button', className: 'secondary-button', onclick: close}, 'Отмена');
     const label = (text, input) => el('label', {}, text, input);
@@ -78,11 +80,11 @@
     const preview = el('details', {open: !!rows.length}, el('summary', {}, 'Состав новой бригады: ' + rows.length + ' чел.'),
       rows.length ? list : el('p', {className: 'table-note'}, 'Создаётся пустая бригада. Сотрудников можно добавить позже.'));
     const form = el('form', {className: 'stack-form'},
-      label('Название бригады', name), itr.container, brigadier.container, preview,
-      el('p', {className: 'table-note'}, 'Отмеченные сотрудники переходят из текущих бригад в новую. Назначения на даты и индивидуальные корректировки ИТР и бригадира сохраняются.'),
+      label('Название бригады', name), itr.container, brigadier.container, ...(crew ? [] : [preview]),
+      el('p', {className: 'table-note'}, crew ? 'Ответственные по умолчанию для бригады. Индивидуальные корректировки сотрудников сохраняются.' : 'Отмеченные сотрудники переходят из текущих бригад в новую. Назначения на даты и индивидуальные корректировки ИТР и бригадира сохраняются.'),
       message, el('div', {className: 'crew-create-actions'}, cancel, save));
     const dialog = el('dialog', {id: 'create-crew-dialog', className: 'app-dialog crew-create-dialog', 'aria-labelledby': 'create-crew-title'},
-      el('h2', {id: 'create-crew-title'}, rows.length ? 'Создать бригаду из выбранных' : 'Создать бригаду'), form);
+      el('h2', {id: 'create-crew-title'}, crew ? 'Редактировать бригаду' : rows.length ? 'Создать бригаду из выбранных' : 'Создать бригаду'), form);
     dialog.addEventListener('cancel', event => { event.preventDefault(); close(); });
     form.addEventListener('submit', async event => {
       event.preventDefault();
@@ -92,13 +94,13 @@
       saving = true;
       for (const control of [name, save, cancel]) control.disabled = true;
       itr.disable(true); brigadier.disable(true);
-      message.classList.remove('error-text'); message.textContent = 'Создание бригады…';
+      message.classList.remove('error-text'); message.textContent = crew ? 'Сохранение бригады…' : 'Создание бригады…';
       let result;
       try {
-        result = await api('/api/crews', {method: 'POST', body: JSON.stringify({name: name.value.trim(),
+        result = await api(crew ? '/api/crew-catalog/' + crew.id : '/api/crews', {method: crew ? 'PATCH' : 'POST', body: JSON.stringify({name: name.value.trim(),
           linear_itr: itr.value(), brigadier: brigadier.value(),
           linear_itr_person_id: itr.personId(), brigadier_person_id: brigadier.personId(),
-          worker_ids: rows.map(row => row.id), ...snapshot})});
+          ...(crew ? {expected_token: crew.expected_token} : {worker_ids: rows.map(row => row.id), ...snapshot})})});
       } catch (error) {
         message.textContent = error.message;
         message.classList.add('error-text');

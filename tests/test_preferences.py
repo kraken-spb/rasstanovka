@@ -51,7 +51,7 @@ class PreferencesTest(unittest.TestCase):
 
     def test_account_isolation_new_session_and_initial_page(self):
         values = {'groupMode': 'itr', 'columns': {'hidden': ['employer'], 'widths': {'name': 320, 'itr': 220}},
-                  'category': 'name:Монтажник', 'department': 'СМУ 15.1', 'employer': 'name:ЛГСС', 'unassigned': True, 'shift': '2 смена'}
+                  'category': 'name:Монтажник', 'department': 'СМУ 15.1', 'employer': 'name:ЛГСС', 'contractor': 'name:Подрядчик', 'unassigned': True, 'shift': '2 смена'}
         self.assertEqual(self.save(values).status_code, 200)
         fresh = self.client_for(self.admin)
         self.assertEqual(fresh.get('/api/preferences/staffing').get_json()['settings'], values)
@@ -98,7 +98,7 @@ class PreferencesTest(unittest.TestCase):
                    {'unassigned': 1}, {'columns': {'hidden': ['unknown'], 'widths': {}}},
                    {'columns': {'hidden': [], 'widths': {'name': 801}}},
                    {'columns': {'hidden': [], 'widths': {'name': True}}},
-                   {'groupMode': 'crew', 'search': 'x' * 301}, {'employer': 1}, {'employer': 'x' * 501}]
+                   {'groupMode': 'crew', 'search': 'x' * 301}, {'employer': 1}, {'employer': 'x' * 501}, {'contractor': 1}, {'contractor': 'x' * 501}]
         for payload in invalid:
             with self.subTest(payload=payload): self.assertEqual(self.save(payload).status_code, 400)
         with self.module.app.app_context():

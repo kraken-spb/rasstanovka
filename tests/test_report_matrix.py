@@ -12,16 +12,16 @@ class ReportMatrixTest(test_staffing_export.StaffingExportTest):
         self.assertEqual(response.status_code, 200)
         sheet = self.workbook(response)['Сводная таблица']
         self.assertEqual(sheet.title, 'Сводная таблица')
-        self.assertEqual(sheet.cell(8, 1).value, 'Позиция')
+        self.assertEqual(sheet.cell(16, 1).value, 'Позиция')
         self.assertEqual(sheet.cell(sheet.max_row, 1).value, 'Общий итог')
         calendar = self.admin.get('/api/calendar?start=2026-09-13&days=1').get_json()
         expected = sum(f['day_count'] + f['night_count'] for f in calendar['facts'])
         self.assertEqual(sheet.cell(sheet.max_row, sheet.max_column).value, expected)
-        self.assertEqual(sheet.cell(9, sheet.max_column).value, expected)
-        self.assertEqual(sheet.cell(10, sheet.max_column).value, expected)
+        self.assertEqual(sheet.cell(17, sheet.max_column).value, expected)
+        self.assertEqual(sheet.cell(18, sheet.max_column).value, expected)
         formula_company = next(cell for row in sheet for cell in row if cell.value == '=Работодатель')
         self.assertEqual(formula_company.data_type, 's')
-        self.assertEqual(sheet.freeze_panes, 'B9')
+        self.assertEqual(sheet.freeze_panes, 'B17')
         self.assertEqual(sheet.page_setup.fitToWidth, 1)
 
     def test_category_shift_search_and_empty_result(self):
@@ -29,8 +29,8 @@ class ReportMatrixTest(test_staffing_export.StaffingExportTest):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.headers['X-Export-Count'], '1')
         sheet = self.workbook(response)['Сводная таблица']
-        self.assertEqual(sheet.cell(2, 2).value, 'Ручная ГДЛР')
-        self.assertNotIn('Ночь', [cell.value for cell in sheet[8]])
+        self.assertEqual(sheet.cell(10, 2).value, 'Ручная ГДЛР')
+        self.assertNotIn('Ночь', [cell.value for cell in sheet[16]])
         self.assertEqual(self.summary(category='Несуществующая').status_code, 404)
         self.assertEqual(self.summary(query='несуществующий').status_code, 404)
         self.assertEqual(self.summary(kind='invalid').status_code, 400)
@@ -43,7 +43,11 @@ class ReportMatrixTest(test_staffing_export.StaffingExportTest):
         response = self.summary()
         self.assertEqual(response.headers['X-Export-Count'], '4')
         self.assertEqual(self.summary(self.foreman).headers['X-Export-Count'], '3')
-        self.assertEqual(self.summary(self.viewer).status_code, 403)
+        viewer_report = self.summary(self.viewer)
+        self.assertEqual(viewer_report.status_code, 200)
+        self.assertEqual(viewer_report.headers['X-Export-Count'], '4')
+        self.assertEqual(list(self.workbook(viewer_report)['Сводная таблица'].values),
+                         list(self.workbook(response)['Сводная таблица'].values))
         self.assertEqual(self.export(self.admin).headers['X-Export-Count'], '4')
 
     def test_every_download_has_two_tabs_with_reconciled_totals(self):

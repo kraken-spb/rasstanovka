@@ -23,8 +23,8 @@ class BulkCategoryTest(unittest.TestCase):
         self.module = self.fixture.module
         with self.module.app.app_context():
             db = self.module.get_db()
-            self.category = db.execute("""INSERT INTO gdlr_categories(name,name_key,edit_token,updated_by,updated_at)
-                VALUES ('Общая категория','общая категория','catalog-token',?,'now')""", (self.fixture.admin_id,)).lastrowid
+            self.category = db.execute("""INSERT INTO gdlr_categories(name,name_key,staffing_allowed,edit_token,updated_by,updated_at)
+                VALUES ('Общая категория','общая категория',1,'catalog-token',?,'now')""", (self.fixture.admin_id,)).lastrowid
             db.commit()
         self.rows = [r for r in self.fixture.table().get_json()['rows'] if r['personnel_no'] in ('70001', '70002')]
         self.assertEqual(len(self.rows), 2)

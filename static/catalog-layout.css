@@ -1,0 +1,98 @@
+/* Shared layout for the six reference sections. Editing behavior stays in their modules. */
+body:has(#view-catalogs.active) .app-shell { width: calc(100% - 32px); max-width: 1440px; padding-top: 12px; }
+@media (min-width: 901px) {
+  body:has(#view-catalogs.active) .topbar { min-height: 52px; padding: .25rem 12px; }
+  body:has(#view-catalogs.active) .desktop-nav button { min-height: 36px; padding: .3rem .55rem; font-size: .8rem; }
+}
+#view-catalogs .page-heading { margin-bottom: .65rem; align-items: center; gap: .6rem; }
+#view-catalogs h1 { font-size: 1.35rem; }
+#view-catalogs h2 { font-size: 1.05rem; }
+#view-catalogs h3 { font-size: .9rem; }
+#view-catalogs .page-heading p { margin-top: .15rem; font-size: .8rem; }
+#view-catalogs .panel { padding: .8rem; border-radius: 8px; }
+#view-catalogs button { min-height: 34px; padding: .3rem .55rem; border-radius: 5px; font-size: .8rem; line-height: 1.25; }
+#view-catalogs input:not([type=checkbox]), #view-catalogs select { min-height: 34px; height: 34px; padding: .3rem .45rem; border-radius: 5px; font-size: .82rem; }
+#view-catalogs input[type=checkbox] { width: 18px; height: 18px; min-height: 18px; }
+#view-catalogs .catalog-subnav { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: .4rem; margin-bottom: .8rem; }
+#view-catalogs .catalog-subnav button { width: 100%; min-width: 0; }
+#view-catalogs .categories-stats { gap: .5rem 1.2rem; margin-bottom: .6rem; }
+#view-catalogs .categories-stats > div { display: flex; align-items: baseline; gap: .35rem; font-size: .8rem; }
+#view-catalogs .categories-stats strong { font-size: .95rem; }
+#view-catalogs .table-note { margin: .3rem 0 .6rem; font-size: .76rem; line-height: 1.4; }
+#view-catalogs .save-status:empty { display: none; }
+#view-catalogs .save-status:not(:empty), #view-catalogs .error-text:not(button):not(:empty) { margin: .4rem 0; font-size: .8rem; }
+#view-catalogs .category-create-form { display: grid; grid-template-columns: minmax(0, 1fr) 234px; align-items: end; gap: .7rem; margin: .5rem 0 .8rem; padding-bottom: .8rem; border-bottom: 1px solid var(--line); }
+#view-catalogs .category-create-form > label { min-width: 0; gap: .2rem; font-size: .75rem; }
+#view-catalogs .category-create-form:has(> label:nth-child(2)) { grid-template-columns: minmax(0, 1fr) minmax(170px, .65fr) 234px; }
+#view-catalogs .category-catalog-row { display: grid; grid-template-columns: minmax(180px, 1fr) 150px 148px 234px; align-items: end; gap: .7rem; margin: 0; padding: .4rem 0; border-top: 0; border-bottom: 1px solid var(--line); }
+#view-catalogs .category-catalog-row:has(> label:nth-child(2):not(.check-label)) { grid-template-columns: minmax(180px, 1fr) minmax(170px, .65fr) 142px 132px 234px; }
+#view-catalogs .category-catalog-row > label:not(.check-label) { display: grid; min-width: 0; gap: .15rem; font-size: .7rem; }
+#view-catalogs .category-catalog-row > .check-label { align-self: end; min-height: 34px; min-width: 0; gap: .4rem; font-size: .76rem; line-height: 1.3; }
+#view-catalogs .category-catalog-row > small { display: flex; align-items: center; min-height: 34px; font-size: .73rem; line-height: 1.35; }
+#view-catalogs .category-catalog-row > strong { font-size: .84rem; overflow-wrap: anywhere; }
+#view-catalogs .category-catalog-row:not(:has(> label)) { grid-template-columns: minmax(0, 1fr) 180px 160px; font-size: .8rem; }
+#view-catalogs .category-catalog-row .category-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .3rem; width: 234px; }
+#view-catalogs .category-catalog-row .category-actions > button { width: 100%; min-width: 0; padding-inline: .2rem; }
+#view-catalogs .category-catalog-row .category-actions > :nth-child(1) { grid-column: 1; grid-row: 1; }
+#view-catalogs .category-catalog-row .category-actions > :nth-child(2) { grid-column: 2; grid-row: 1; }
+#view-catalogs .category-catalog-row .category-actions > :nth-child(3) { grid-column: 3; grid-row: 1; }
+#view-catalogs .location-catalog-toolbar { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(160px, .8fr) minmax(160px, .8fr) 180px; gap: .6rem; align-items: end; margin: .65rem 0; }
+#view-catalogs .location-catalog-toolbar label { min-width: 0; gap: .2rem; font-size: .75rem; }
+#view-catalogs .location-catalog-toolbar[aria-label] { grid-template-columns: repeat(auto-fill, minmax(180px, 240px)); gap: .35rem; }
+#view-catalogs .location-catalog-toolbar .multi-filter-button { height: 34px; }
+#view-catalogs .location-catalog-heading { margin: .65rem 0 .3rem; }
+#view-catalogs .location-catalog-heading > button { min-width: 180px; }
+#view-catalogs .location-catalog-list { max-height: none; }
+#view-catalogs .location-catalog-row { display: grid; grid-template-columns: minmax(0, 1fr) 180px; gap: .8rem; align-items: center; padding: .5rem 0; }
+#view-catalogs .location-catalog-row strong { font-size: .84rem; font-weight: 600; }
+#view-catalogs .location-catalog-row small { margin-top: .15rem; font-size: .73rem; line-height: 1.35; }
+#view-catalogs .location-catalog-row .category-actions { display: grid; grid-template-columns: 1fr 1fr; gap: .35rem; }
+#view-catalogs .location-catalog-row .category-actions > button { width: 100%; min-width: 0; }
+/* Filter popovers are attached to body, outside the catalog view. */
+body:has(#view-catalogs.active) .multi-filter-dialog { padding: .5rem; border-radius: 6px; font-size: .82rem; line-height: 1.3; }
+body:has(#view-catalogs.active) .multi-filter-dialog > input { min-height: 34px; height: 34px; padding: .3rem .45rem; border-radius: 5px; font-size: inherit; margin-bottom: .35rem; }
+body:has(#view-catalogs.active) .multi-filter-dialog > p { margin-bottom: .25rem; font-size: .73rem; }
+body:has(#view-catalogs.active) .multi-filter-options { max-height: 240px; }
+body:has(#view-catalogs.active) .multi-filter-options label { min-height: 30px; padding: .25rem .35rem; gap: .45rem; border-radius: 4px; cursor: pointer; }
+body:has(#view-catalogs.active) .multi-filter-options label:hover { background: var(--paper); }
+body:has(#view-catalogs.active) .multi-filter-options label:has(:checked) { background: var(--mint); }
+body:has(#view-catalogs.active) .multi-filter-options input[type=checkbox] { width: 16px; height: 16px; min-height: 16px; }
+body:has(#view-catalogs.active) .multi-filter-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .3rem; margin-top: .4rem; }
+body:has(#view-catalogs.active) .multi-filter-actions button { min-width: 0; min-height: 32px; padding: .3rem .4rem; font-size: .75rem; line-height: 1.25; border-radius: 5px; }
+@media (max-width: 700px), (pointer: coarse) {
+  body:has(#view-catalogs.active) .multi-filter-dialog > input,
+  body:has(#view-catalogs.active) .multi-filter-options label,
+  body:has(#view-catalogs.active) .multi-filter-actions button { min-height: 44px; }
+}
+@media (min-width: 701px) and (max-width: 1000px) {
+  #view-catalogs .category-catalog-row { grid-template-columns: minmax(0, 1fr) 145px 234px; gap: .3rem .6rem; }
+  #view-catalogs .category-catalog-row > small { grid-column: 1; grid-row: 2; }
+  #view-catalogs .category-catalog-row > .category-actions { grid-column: 3; grid-row: 1 / span 2; }
+  #view-catalogs .category-catalog-row:has(> label:nth-child(2):not(.check-label)) { grid-template-columns: minmax(0, 1fr) minmax(150px, 1fr) 234px; }
+  #view-catalogs .category-catalog-row:has(> label:nth-child(2):not(.check-label)) > .check-label { grid-column: 1; grid-row: 2; }
+  #view-catalogs .category-catalog-row:has(> label:nth-child(2):not(.check-label)) > small { grid-column: 2; }
+  #view-catalogs .location-catalog-toolbar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 700px) {
+  body:has(#view-catalogs.active) .app-shell { width: calc(100% - 24px); }
+  #view-catalogs .catalog-subnav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  #view-catalogs .catalog-subnav button { min-height: 44px; }
+  #view-catalogs .page-heading { flex-wrap: wrap; }
+  #view-catalogs .page-heading > button { width: 100%; }
+  #view-catalogs .panel { padding: .6rem; }
+  #view-catalogs button, #view-catalogs input:not([type=checkbox]), #view-catalogs select { min-height: 44px; height: auto; }
+  #view-catalogs .category-create-form,
+  #view-catalogs .category-create-form:has(> label:nth-child(2)) { grid-template-columns: minmax(0, 1fr); gap: .4rem; }
+  #view-catalogs .category-catalog-row,
+  #view-catalogs .category-catalog-row:has(> label:nth-child(2):not(.check-label)),
+  #view-catalogs .category-catalog-row:not(:has(> label)) { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .45rem; padding: .6rem 0; }
+  #view-catalogs .category-catalog-row > label:not(.check-label),
+  #view-catalogs .category-catalog-row > strong { grid-column: 1 / -1; }
+  #view-catalogs .category-catalog-row .category-actions { grid-column: 1 / -1; width: 100%; }
+  #view-catalogs .location-catalog-toolbar { grid-template-columns: minmax(0, 1fr); gap: .5rem; }
+  #view-catalogs .location-catalog-toolbar[aria-label] { grid-template-columns: minmax(0, 1fr); }
+  #view-catalogs .location-catalog-toolbar .multi-filter-button { height: 44px; }
+  #view-catalogs .location-catalog-heading { display: grid; grid-template-columns: minmax(0, 1fr); }
+  #view-catalogs .location-catalog-heading > button { min-width: 0; }
+  #view-catalogs .location-catalog-row { grid-template-columns: minmax(0, 1fr); gap: .4rem; }
+}

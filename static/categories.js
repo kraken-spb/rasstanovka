@@ -59,7 +59,7 @@
     list.replaceChildren(...state.rows.map(item => {
       if (!canEdit) return el('article', {className: 'category-catalog-row'},
         el('strong', {}, item.name), el('span', {}, item.active ? 'Доступна для выбора' : 'Отключена'),
-        el('small', {}, 'Связано сотрудников: ' + item.employee_count));
+        el('small', {}, 'Связано сотрудников: ' + item.employee_count + (item.staffing_allowed ? ' · Расстановка' : ' · Общий учёт')));
       const draft = rowDraft(item);
       const name = el('input', {value: draft.name, maxLength: 200, required: true, 'aria-label': 'Название категории ' + item.name});
       const active = el('input', {type: 'checkbox', checked: draft.active, 'aria-label': 'Доступность категории ' + item.name});
@@ -75,7 +75,7 @@
       name.addEventListener('input', changed); active.addEventListener('change', changed);
       return el('article', {className: 'category-catalog-row'}, el('label', {}, 'Название', name),
         el('label', {className: 'check-label'}, active, 'Доступна для выбора'),
-        el('small', {}, 'Связано сотрудников: ' + item.employee_count), el('div', {className: 'category-actions'}, save, cancel,
+        el('small', {}, 'Связано сотрудников: ' + item.employee_count + (item.staffing_allowed ? ' · Расстановка' : ' · Общий учёт')), el('div', {className: 'category-actions'}, save, cancel,
           el('button', {type: 'button', className: 'text-button error-text', 'aria-label': 'Удалить категорию ' + item.name,
             onclick: () => remove(item)}, 'Удалить')));
     }));

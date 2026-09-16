@@ -4,6 +4,7 @@ import json
 import secrets
 
 from flask import abort, g, jsonify, request
+from user_roles import HR_VIEWER
 
 
 def migrate_smu_access(db):
@@ -23,7 +24,7 @@ def profile(db, user=None):
     actor = db.execute('SELECT id,role,active FROM users WHERE id=?', (user['id'],)).fetchone()
     if not actor or not actor['active'] or actor['role'] == 'viewer':
         return actor, {'mode': 'selected', 'departments_json': '[]'}
-    if actor['role'] == 'super_admin':
+    if actor['role'] in ('super_admin', HR_VIEWER):
         return actor, {'mode': 'all', 'departments_json': '[]'}
     return actor, db.execute('SELECT * FROM user_smu_access WHERE user_id=?', (actor['id'],)).fetchone()
 
@@ -34,6 +35,8 @@ def explicit_scope(db, user=None):
 
 def require_all(db, user=None):
     actor, scope = profile(db, user)
+    if actor and actor['role'] == HR_VIEWER:
+        abort(403, description='Для этой роли доступен только просмотр данных.')
     if scope is not None and scope['mode'] != 'all':
         abort(403, description='Для этой операции нужен доступ ко всем СМУ.')
     if scope is None and actor['role'] not in ('admin', 'super_admin'):
@@ -70,6 +73,9 @@ def allowed_workers(db, ids, user=None, allow_unowned=False):
 
 
 def require_workers(db, ids, user=None, allow_unowned=False):
+    actor, _ = profile(db, user)
+    if actor and actor['role'] == HR_VIEWER:
+        abort(403, description='Для этой роли доступен только просмотр данных.')
     if set(ids) - allowed_workers(db, ids, user, allow_unowned):
         abort(403, description='Нет права редактировать сотрудников этого СМУ.')
 
@@ -95,6 +101,9 @@ def can_crew(db, crew_id, user=None, whole=False):
 
 
 def require_crew(db, crew_id, user=None, whole=False):
+    actor, _ = profile(db, user)
+    if actor and actor['role'] == HR_VIEWER:
+        abort(403, description='Для этой роли доступен только просмотр данных.')
     if not can_crew(db, crew_id, user, whole):
         abort(403, description='Нет права изменять эту бригаду целиком. Выберите сотрудников доступных СМУ.')
 
@@ -115,7 +124,7 @@ def access_view(db, user):
         known = {r[0] for r in db.execute('SELECT name FROM smu_catalog')}
         departments = [name for name in departments if name in known]
     mode = stored['mode'] if stored else ('all' if user['role'] in ('admin', 'super_admin') else 'selected')
-    if user['role'] == 'super_admin':
+    if user['role'] in ('super_admin', HR_VIEWER):
         mode, departments = 'all', []
     snapshot = {'user_id': user['id'], 'role': user['role'], 'active': user['active'],
                 'mode': mode, 'departments': departments, 'configured': bool(stored),
@@ -153,7 +162,7 @@ def register_smu_access(app, get_db, roles_required, utc_now):
                 abort(403, description='Выдавать доступ к СМУ может только супер-администратор.')
             if not user:
                 abort(404, description='Пользователь не найден.')
-            if user['role'] in ('viewer', 'super_admin'):
+            if user['role'] in ('viewer', 'super_admin', HR_VIEWER):
                 abort(400, description='Доступ этой учётной записи определяется её ролью.')
             before = access_view(db, user)
             if data.get('expected_token') != before['expected_token']:

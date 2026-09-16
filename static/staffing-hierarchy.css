@@ -1,0 +1,25 @@
+.staffing-grouping-controls { display: flex; min-width: 0; gap: .25rem; align-items: end; }
+.staffing-grouping-controls > select { flex: 1 1 auto; min-width: 0; width: 0; }
+.staffing-grouping-controls > button { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; min-height: 34px; padding: 0; }
+.staffing-hierarchy-dialog { width: min(36rem, calc(100vw - 2rem)); max-width: calc(100vw - 2rem); max-height: calc(100dvh - 2rem); overflow: auto; padding: 1rem; border: 1px solid var(--line); border-radius: 10px; }
+.staffing-hierarchy-dialog::backdrop { background: #15363b66; }
+.staffing-hierarchy-dialog h2 { margin: 0; }
+.staffing-hierarchy-levels { list-style-position: inside; padding: 0; display: grid; gap: .4rem; }
+.staffing-hierarchy-levels > li { display: grid; grid-template-columns: minmax(0,1fr) repeat(3,auto); gap: .3rem; align-items: center; padding: .4rem; border: 1px solid var(--line); border-radius: 6px; }
+.staffing-hierarchy-levels > li > span { overflow-wrap: anywhere; }
+.staffing-hierarchy-levels button { min-width: 38px; min-height: 38px; padding: .3rem; }
+.staffing-hierarchy-add, .staffing-hierarchy-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; }
+.staffing-hierarchy-add select { flex: 1 1 140px; min-width: 0; }
+.staffing-hierarchy-actions { justify-content: flex-end; }
+.staffing-hierarchy-preview { overflow-wrap: anywhere; color: var(--muted); }
+.staffing-hierarchy-group .staffing-group-content { padding-inline-start: calc(var(--group-depth, 0) * 18px); }
+.staffing-hierarchy-group.hierarchy-parent > .staffing-group-row > th { background: #dfede8; }
+.staffing-hierarchy-group:not(.hierarchy-parent) > .staffing-group-row > th { background: #eef5f2; }
+@media (max-width: 900px) {
+  .staffing-grouping-controls > button { width: 44px; height: 44px; min-height: 44px; min-width: 44px; }
+  .staffing-hierarchy-group .staffing-group-content { padding-inline-start: min(calc(var(--group-depth, 0) * 7px), 35px); }
+  .staffing-hierarchy-levels { font-size: .85rem; }
+  .staffing-hierarchy-levels button { min-width: 44px; min-height: 44px; }
+}
+
+.staffing-hierarchy-levels button::before { display: none; }

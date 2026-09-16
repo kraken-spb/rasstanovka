@@ -43,7 +43,9 @@ def transfer_plan(db, data, actor):
     if not isinstance(ids, list) or not ids or len(ids) > 10000 or any(type(i) is not int or i <= 0 for i in ids):
         abort(400, description='Отметьте сотрудников для переноса.')
     ids = sorted(set(ids))
+    from gdlr_api import staffing_eligible_sql
     workers = [dict(r) for r in db.execute(f'''SELECT w.id,w.full_name,w.personnel_no,w.active,
+        {staffing_eligible_sql()} staffing_eligible,
         m.crew_id,c.owner_user_id,EXISTS(SELECT 1 FROM employee_inactive_periods er
             WHERE er.worker_id=w.id AND er.effective_date<=? AND (er.restored_date IS NULL OR er.restored_date>?)) removed
         FROM workers w LEFT JOIN crew_members m ON m.worker_id=w.id LEFT JOIN crews c ON c.id=m.crew_id
@@ -65,6 +67,8 @@ def transfer_plan(db, data, actor):
         shifts = [canonical_shift(r['shift']) for r in assignments]
         if not worker['active'] or worker['removed']:
             reason = 'Сотрудник отключён или снят с учёта'
+        elif not worker['staffing_eligible']:
+            reason = 'Категория ГДЛР не допускается в расстановку'
         elif worker['id'] in occupied:
             reason = 'На выбранную дату уже есть данные или изменения'
         elif not assignments:

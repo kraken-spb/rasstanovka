@@ -1,7 +1,9 @@
 (() => {
   'use strict';
+  const MF = window.MultiFilter;
   const $ = id => document.getElementById(id);
   if (!$('view-logs')) return;
+  MF.enable($('logs-actor')); MF.enable($('logs-form').querySelector('select[name=action]'));
   const actions = {assign: 'Назначение', move: 'Перенос', clear: 'Снятие', update: 'Обновление', employee_delete: 'Удаление сотрудника', employee_restore: 'Восстановление сотрудника'};
   let page = 1, pages = 1, request = 0, busy = false;
   const node = (tag, text, className) => {
@@ -56,9 +58,9 @@
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Не удалось загрузить журнал.');
       if (current !== request) return;
-      const select = $('logs-actor'), selected = select.value;
+      const select = $('logs-actor'), selected = MF.get(select);
       select.replaceChildren(new Option('Все пользователи', ''), ...data.actors.map(actor => new Option(actor.full_name + ' · ' + actor.username, String(actor.id))));
-      select.value = selected;
+      MF.set(select, selected);
       page = data.page; pages = data.pages; render(data.rows);
       $('logs-status').textContent = 'Найдено событий: ' + data.total.toLocaleString('ru-RU');
       $('logs-page').textContent = 'Страница ' + page + ' из ' + pages;
@@ -74,7 +76,12 @@
     }
   }
   $('logs-form').addEventListener('submit', event => { event.preventDefault(); if (!busy) load(); });
-  $('logs-reset').addEventListener('click', () => { if (busy) return; $('logs-form').reset(); load(); });
+  $('logs-reset').addEventListener('click', () => {
+    if (busy) return;
+    $('logs-form').reset();
+    MF.set($('logs-actor'), ''); MF.set($('logs-form').querySelector('select[name=action]'), '');
+    load();
+  });
   $('logs-prev').addEventListener('click', () => { if (!busy && page > 1) load(page - 1); });
   $('logs-next').addEventListener('click', () => { if (!busy && page < pages) load(page + 1); });
   window.logsScreen = {load};

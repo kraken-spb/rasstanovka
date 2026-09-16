@@ -18,6 +18,7 @@ TABLES = {
     'staffing_inherited_rows': ('work_date', 'worker_id'),
     'staffing_row_details': ('worker_id',),
     'employee_contractors': ('worker_id',),
+    'employee_employers': ('worker_id',),
     'employee_gdlr': ('worker_id',),
     'crew_members': ('worker_id',),
     'crews': ('id',),
@@ -33,6 +34,7 @@ ENDPOINTS = {
     'save_crew_details': ('Ответственные бригады', ('crews',)),
     'bind_group_contractor': ('Подрядчик выбранных', ('employee_contractors',)),
     'bind_contractor': ('Подрядчик сотрудника', ('employee_contractors',)),
+    'bind_group_employer': ('Работодатель сотрудника', ('employee_employers',)),
     'bind_selected_category': ('Категория ГДЛР', ('employee_gdlr',)),
     'bind_staffing_category': ('Категория ГДЛР', ('employee_gdlr',)),
     'transfer_group_crew': ('Бригада выбранных', ('crew_members',)),
@@ -45,7 +47,7 @@ def packed(value):
 
 
 def semantic(row):
-    return None if row is None else {key: value for key, value in row.items() if key not in AUDIT_FIELDS}
+    return None if row is None else {key: value for key, value in row.items() if key not in AUDIT_FIELDS and not (key in ('linear_itr_worker_id', 'brigadier_worker_id') and value is None)}
 
 
 def migrate_history(db):
@@ -110,6 +112,12 @@ def guards(db, scope, crew_ids=None):
     ids = scope['ids']
     workers = [semantic(dict(r)) for r in db.execute(
         'SELECT * FROM workers WHERE id IN (' + ','.join('?' for _ in ids) + ') ORDER BY id', ids)]
+    if 'employee_employers' in scope['tables']:
+        # Guard the source value while the correction itself remains reversible.
+        sources = {r['worker_id']: r['source_employer'] for r in db.execute(
+            'SELECT worker_id,source_employer FROM employee_employers WHERE worker_id IN (' +
+            ','.join('?' for _ in ids) + ')', ids)}
+        workers = [{**row, 'employer': sources.get(row['id'], row['employer'])} for row in workers]
     members = [dict(r) for r in db.execute(
         'SELECT worker_id,crew_id FROM crew_members WHERE worker_id IN (' + ','.join('?' for _ in ids) + ') ORDER BY worker_id', ids)]
     if crew_ids is None:
@@ -256,6 +264,9 @@ def restore(db, target, now):
             continue
         table, _ = json.loads(key)
         row = dict(original)
+        if table in ('crews', 'staffing_row_details'):
+            for field in ('linear_itr_worker_id', 'brigadier_worker_id'):
+                row.setdefault(field, None)
         for token in ('edit_token', 'details_token'):
             if token in row:
                 row[token] = secrets.token_hex(16)
@@ -309,6 +320,8 @@ def register_history(app, get_db, roles_required, utc_now):
     @app.get('/api/staffing/history')
     @roles_required('admin', 'foreman')
     def staffing_history_state():
+        if g.user['role'] == 'hr_viewer':
+            return jsonify({'undo': None, 'redo': None})
         result = {}
         for direction in ('undo', 'redo'):
             row = current_action(get_db(), direction)

@@ -110,13 +110,14 @@ def register_day_inheritance(app, get_db, roles_required, utc_now):
                     return jsonify({**result, 'status': 'existing'})
 
             records = {}
+            from gdlr_api import staffing_eligible_sql
             for table in ('assignments', 'staffing_shifts', 'staffing_attendance', 'staffing_performed_work'):
                 clause = '' if admin else ' AND c.owner_user_id=?'
                 params = [source, day, day] if admin else [source, day, day, actor['id']]
                 records[table] = db.execute(f'''SELECT t.*,m.crew_id current_crew_id,c.owner_user_id
                     FROM {table} t JOIN workers w ON w.id=t.worker_id
                     LEFT JOIN crew_members m ON m.worker_id=w.id LEFT JOIN crews c ON c.id=m.crew_id
-                    WHERE t.work_date=? AND w.active=1 AND NOT EXISTS (
+                    WHERE t.work_date=? AND w.active=1 AND {staffing_eligible_sql()} AND NOT EXISTS (
                         SELECT 1 FROM employee_inactive_periods er WHERE er.worker_id=w.id AND er.effective_date<=?
                         AND (er.restored_date IS NULL OR er.restored_date>?))'''
                     + clause + ' ORDER BY t.worker_id', params).fetchall()

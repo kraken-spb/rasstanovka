@@ -3,6 +3,7 @@ import io
 import os
 import tempfile
 import unittest
+import unicodedata
 from pathlib import Path
 from unittest.mock import patch
 
@@ -84,13 +85,22 @@ class StaffingWorkflowTest(unittest.TestCase):
             self.super_admin_id = db.execute("INSERT INTO users(username,password_hash,full_name,role,created_at) VALUES ('staff-super','unused','Супер-администратор','super_admin','now')").lastrowid
             self.foreman_id = db.execute("INSERT INTO users(username,password_hash,full_name,role,created_at) VALUES ('staff-f','unused','Прораб','foreman','now')").lastrowid
             self.viewer_id = db.execute("INSERT INTO users(username,password_hash,full_name,role,created_at) VALUES ('staff-v','unused','Просмотр','viewer','now')").lastrowid
+            from gdlr_api import STAFFING_CATEGORY_NAMES
+            self.assertEqual(len(STAFFING_CATEGORY_NAMES), 12)
+            self.staffing_category = 'Монтажник ТТ'
+            for name in STAFFING_CATEGORY_NAMES:
+                key = unicodedata.normalize('NFC', ' '.join(name.split())).casefold()
+                db.execute('''INSERT INTO gdlr_categories
+                    (name,name_key,active,staffing_allowed,edit_token,updated_by,updated_at)
+                    VALUES (?,?,1,1,?,?,?)''', (name, key, 'fixture-' + key, self.admin_id, 'now'))
             db.commit()
         self.admin = self.client(self.admin_id)
         self.super_admin = self.client(self.super_admin_id)
         self.foreman = self.client(self.foreman_id)
         self.viewer = self.client(self.viewer_id)
-        self.content = workbook_bytes([{}, {'number': '70002', 'name': 'Петров Пётр Петрович'},
-                                      {'number': '70003', 'name': 'Сидоров Сидор Сидорович', 'crew': '#N/A'}])
+        self.content = workbook_bytes([{'category': self.staffing_category},
+            {'number': '70002', 'name': 'Петров Пётр Петрович', 'category': self.staffing_category},
+            {'number': '70003', 'name': 'Сидоров Сидор Сидорович', 'crew': '#N/A', 'category': self.staffing_category}])
         self.parsed = parse_attendance(self.content, 'численность.xlsx')
 
     def client(self, user_id):
@@ -110,6 +120,21 @@ class StaffingWorkflowTest(unittest.TestCase):
         with self.app.app_context():
             return apply_attendance(self.module.get_db(), self.parsed, self.admin_id, self.module.utc_now)
 
+    def test_summary_includes_canonical_contractor_before_expanding_crews(self):
+        self.apply()
+        with self.app.app_context():
+            db = self.module.get_db()
+            worker = db.execute("SELECT id FROM workers WHERE personnel_no='70001'").fetchone()[0]
+            contractor = db.execute("INSERT INTO contractors(name,name_key,edit_token,updated_at) VALUES ('Выбранный подрядчик','выбранный подрядчик','ct','now')").lastrowid
+            db.execute("UPDATE employee_contractors SET contractor_id=? WHERE worker_id=?", (contractor, worker))
+            db.execute("UPDATE workers SET contractor='Старое значение' WHERE id=?", (worker,))
+            db.commit()
+        summary = self.admin.get('/api/staffing?date=2026-09-12&shift=all&view=summary').get_json()
+        self.assertEqual(summary['rows'], [])
+        self.assertEqual(next(r for r in summary['index'] if r['id']==worker)['contractor'], 'Выбранный подрядчик')
+        detail = self.admin.get('/api/staffing?date=2026-09-12&shift=all').get_json()
+        self.assertEqual({r['id']:r['contractor'] for r in summary['index']}, {r['id']:r['contractor'] for r in detail['rows']})
+
     def test_manual_category_survives_import_and_reaches_staffing_search(self):
         self.apply()
         headers = {'X-CSRF-Token': 'staffing-csrf'}
@@ -119,7 +144,13 @@ class StaffingWorkflowTest(unittest.TestCase):
             db.commit()
         created = self.admin.post('/api/gdlr-categories', json={'name': 'Утверждённая категория'}, headers=headers)
         self.assertEqual(created.status_code, 201)
-        category = self.admin.get('/api/gdlr-categories').get_json()['rows'][0]
+        category = next(row for row in self.admin.get('/api/gdlr-categories').get_json()['rows']
+                        if row['id'] == created.get_json()['id'])
+        with self.app.app_context():
+            self.module.get_db().execute('UPDATE gdlr_categories SET staffing_allowed=1 WHERE id=?', (category['id'],))
+            self.module.get_db().commit()
+        category = next(row for row in self.admin.get('/api/gdlr-categories').get_json()['rows']
+                        if row['id'] == category['id'])
         employee = next(row for row in self.admin.get('/api/employees').get_json()['rows'] if row['personnel_no'] == '70001')
         response = self.write(f"/api/employees/{employee['id']}/category", {
             'category_id': category['id'], 'category_token': category['edit_token'], 'expected_token': employee['membership_token']})
@@ -129,9 +160,9 @@ class StaffingWorkflowTest(unittest.TestCase):
             apply_attendance(self.module.get_db(), parsed, self.admin_id, self.module.utc_now)
             self.module.init_db()
         employee = next(row for row in self.admin.get('/api/employees').get_json()['rows'] if row['id'] == employee['id'])
-        self.assertEqual(employee['source_category'], 'Новая исходная категория')
+        self.assertEqual(employee['source_category'], self.staffing_category)
         self.assertEqual(employee['category'], 'Утверждённая категория')
-        self.assertEqual(len(self.admin.get('/api/gdlr-categories').get_json()['rows']), 1)
+        self.assertIn(category['id'], {row['id'] for row in self.admin.get('/api/gdlr-categories').get_json()['rows']})
         self.assertEqual(self.table().get_json()['rows'][0]['category'], 'Утверждённая категория')
         summary = self.admin.get('/api/staffing?date=2026-09-12&shift=all&view=summary').get_json()
         self.assertIn('Утверждённая категория', summary['index'][0]['search_fields'])
@@ -304,10 +335,12 @@ class StaffingWorkflowTest(unittest.TestCase):
         with self.app.app_context():
             db = self.module.get_db()
             worker_id = db.execute("SELECT id FROM workers WHERE personnel_no='70001'").fetchone()[0]
-            category_id = db.execute('''INSERT INTO gdlr_categories(name,name_key,active,edit_token,updated_by,updated_at)
-                VALUES ('Категория из справочника','категория из справочника',1,'test',?,'now')''', (self.admin_id,)).lastrowid
+            category_id = db.execute('''INSERT INTO gdlr_categories(name,name_key,active,staffing_allowed,edit_token,updated_by,updated_at)
+                VALUES ('Категория из справочника','категория из справочника',1,1,'test',?,'now')''', (self.admin_id,)).lastrowid
             db.execute('''INSERT INTO employee_gdlr(worker_id,category_id,edit_token,updated_by,updated_at)
-                VALUES (?,?,'test',?,'now')''', (worker_id, category_id, self.admin_id))
+                VALUES (?,?,'test',?,'now') ON CONFLICT(worker_id) DO UPDATE SET
+                category_id=excluded.category_id,edit_token=excluded.edit_token,
+                updated_by=excluded.updated_by,updated_at=excluded.updated_at''', (worker_id, category_id, self.admin_id))
             db.execute("UPDATE workers SET category='' WHERE personnel_no='70002'")
             db.commit()
         url = '/api/staffing?date=2026-09-12&shift=all'
@@ -315,7 +348,6 @@ class StaffingWorkflowTest(unittest.TestCase):
         index = self.admin.get(url + '&view=summary').get_json()['index']
         self.assertEqual({r['id']: r['category'] for r in index}, {r['id']: r['category'] for r in full})
         self.assertEqual(next(r['category'] for r in index if r['id'] == worker_id), 'Категория из справочника')
-        self.assertIn('', [r['category'] for r in index])
 
     def test_brigade_defaults_and_row_override_are_independent(self):
         self.apply()
@@ -644,15 +676,17 @@ class StaffingWorkflowTest(unittest.TestCase):
             db.execute("UPDATE workers SET category='Исходная' WHERE id=?", (source,))
             category_id = db.execute("""INSERT INTO gdlr_categories(name,name_key,active,edit_token,updated_by,updated_at)
                 VALUES ('Ручная','ручная',0,'token',?,'now')""", (self.admin_id,)).lastrowid
-            db.execute("INSERT INTO employee_gdlr(worker_id,category_id,edit_token,updated_by,updated_at) VALUES (?,?,'token',?,'now')",
-                       (manual, category_id, self.admin_id))
+            db.execute("""INSERT INTO employee_gdlr(worker_id,category_id,edit_token,updated_by,updated_at)
+                VALUES (?,?,'token',?,'now') ON CONFLICT(worker_id) DO UPDATE SET
+                category_id=excluded.category_id,edit_token=excluded.edit_token,
+                updated_by=excluded.updated_by,updated_at=excluded.updated_at""", (manual, category_id, self.admin_id))
             db.commit()
         base = {'date': '2026-09-13', 'shift': 'all', 'calendar_sites': '1', 'calendar_shift': '1 смена'}
         result = self.admin.get('/api/staffing', query_string={**base, 'calendar_category': 'Ручная'}).get_json()
         self.assertEqual([row['id'] for row in result['rows']], [manual])
         self.assertEqual(result['calendar_assignment_count'], 1)
-        self.assertEqual(self.admin.get('/api/staffing', query_string={**base, 'calendar_category': ''}).get_json()['calendar_assignment_count'], 1)
-        self.assertEqual(self.admin.get('/api/staffing', query_string={**base, 'calendar_category': 'Исходная'}).get_json()['calendar_assignment_count'], 1)
+        self.assertEqual(self.admin.get('/api/staffing', query_string={**base, 'calendar_category': ''}).get_json()['calendar_assignment_count'], 0)
+        self.assertEqual(self.admin.get('/api/staffing', query_string={**base, 'calendar_category': 'Исходная'}).get_json()['calendar_assignment_count'], 0)
         self.assertEqual(self.foreman.get('/api/staffing', query_string={**base, 'calendar_category': 'Ручная'}).get_json()['rows'], [])
         self.assertEqual(self.admin.get('/api/staffing', query_string={'date': '2026-09-13', 'shift': 'all', 'calendar_category': 'Ручная'}).status_code, 400)
         self.assertEqual(self.admin.get('/api/staffing', query_string={**base, 'calendar_category': 'x' * 201}).status_code, 400)
