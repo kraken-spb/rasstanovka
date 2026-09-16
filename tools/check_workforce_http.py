@@ -64,6 +64,32 @@ def main():
             {'document_code':'document.patent','reason':'Проверка прав','request_key':str(uuid4())},expected=403)
         card=check('staffing card is private-data limited',users['first'],'GET',f'/api/workforce/people/{worker}')
         assert not {'phone','birth_date','notes'}&set(card['profile']) and card['sources']==[] and card['documents']==[]
+        board_path='/api/workforce/people?'+urlencode({'date':'2026-09-16','q':card['profile']['full_name']})
+        board=check('board row and dated token',users['rotation'],'GET',board_path)
+        board_row=next(item for item in board['rows'] if item['id']==worker)
+        targets=[code for code in ('stage.leave','stage.inbound','stage.pvp','stage.onsite') if code!=board_row['stage_code']]
+        transition={'date':'2026-09-16','effective_date':'2026-09-16','stage_code':targets[0],
+            'reason':'Изолированная проверка канбана','people':[{'id':worker,'token':board_row['stage_token']}],
+            'request_key':str(uuid4())}
+        check('staffing cannot move board card',users['first'],'POST','/api/workforce/transitions',transition,expected=403)
+        csrf=users['rotation'].csrf;users['rotation'].csrf=None
+        check('board transition requires CSRF',users['rotation'],'POST','/api/workforce/transitions',transition,expected=403)
+        users['rotation'].csrf=csrf
+        barrier=threading.Barrier(2)
+        def move_board(item):
+            user,target=item
+            barrier.wait()
+            return user.request('POST','/api/workforce/transitions',{
+                **transition,'stage_code':target,'request_key':str(uuid4())})[0]
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            statuses=list(executor.map(move_board,[(users['rotation'],targets[0]),(users['admin'],targets[1])]))
+        results.append({'case':'simultaneous board transitions','statuses':statuses,'expected':[201,409]})
+        assert sorted(statuses)==[201,409],statuses
+        persisted=check('board transition persists',users['rotation'],'GET',board_path)
+        persisted_row=next(item for item in persisted['rows'] if item['id']==worker)
+        assert persisted_row['stage_code']==targets[statuses.index(201)]
+        assert persisted_row['stage_token']!=board_row['stage_token']
+        check('stale board token rejected',users['rotation'],'POST','/api/workforce/transitions',transition,expected=409)
         job_key=str(uuid4())
         check('HR viewer can request private export',users['hr'],'POST','/api/workforce/export-jobs',
               {'date':'2026-09-15','request_key':job_key},expected=202)

@@ -2,7 +2,7 @@
   'use strict';
   const root = document.querySelector('.app-shell'), $ = s => document.querySelector(s);
   if (!root || !$('#view-workforce')) return;
-  const state = {reference: null, offset: 0, limit: 50, total: 0, request: 0, card: null, tab: 'profile', busy: false, dirty: false, queue:''};
+  const state = {reference: null, offset: 0, limit: 50, total: 0, request: 0, card: null, tab: 'profile', busy: false, dirty: false, queue:'', view:'board'};
   const E = (tag, attrs = {}, ...children) => {
     const node = document.createElement(tag);
     for (const [key, value] of Object.entries(attrs)) {
@@ -23,6 +23,7 @@
   }
   const displayDate = value => value ? new Date(value + 'T12:00:00').toLocaleDateString('ru-RU') : '—';
   const label = value => state.reference?.catalog.find(row => row.code === value)?.label || value || '—';
+  const board = window.createWorkforceBoard({container: $('#wf-board-region'), api, E, displayDate, openCard, reload: load});
   function error(message, card = false) {
     const node = $(card ? '#wf-card-error' : '#wf-error'); node.textContent = message || ''; node.hidden = !message;
   }
@@ -41,19 +42,28 @@
     selectOptions($('#wf-category'), state.reference.categories, 'id', 'name');
   }
   async function load() {
+    clearTimeout(timer);
     const seq = ++state.request;
+    renderView();
     error(''); $('#wf-count').textContent = 'Загрузка…';
     try {
       await reference();
+      if (seq !== state.request) return;
       const query = new URLSearchParams({date: $('#wf-date').value, q: $('#wf-search').value,
         regex: $('#wf-regex').checked ? '1' : '0', department: $('#wf-department').value,
         stage: $('#wf-stage').value, employer: $('#wf-employer').value, category: $('#wf-category').value,
-        conflicts: $('#wf-conflicts').checked ? '1' : '0', queue:state.queue, offset: state.offset, limit: state.limit});
+        conflicts: $('#wf-conflicts').checked ? '1' : '0', queue:state.queue === 'lifecycle' ? '' : state.queue, offset: state.offset, limit: state.limit});
+      if (state.view === 'board') {
+        const data = await board.load(query, state.reference);
+        if (seq !== state.request || !data) return;
+        state.total = data.totals.total;renderStats(data.totals);
+        $('#wf-count').textContent = `${state.total} сотрудников по фильтру · в каждом этапе первые 20`;
+        return;
+      }
       const data = await api('people?' + query);
       if (seq !== state.request) return;
       state.total = data.totals.total;
-      $('#wf-stats').replaceChildren(...[['total','Всего по фильтру'],['onsite','Явка'],['pvp','В ПВП'],['inbound','Заезд'],['on_leave','Неявка'],['unconfirmed','Без подтверждения']].map(([key, text]) =>
-        E('div', {className: 'wf-stat'}, E('span', {}, text), E('strong', {}, String(data.totals[key])))));
+      renderStats(data.totals);
       $('#wf-count').textContent = data.rows.length ? `${state.offset + 1}–${state.offset + data.rows.length} из ${state.total}` : 'Сотрудники не найдены';
       $('#wf-prev').disabled = !state.offset; $('#wf-next').disabled = state.offset + state.limit >= state.total;
       $('#wf-rows').replaceChildren(...data.rows.map(row => {
@@ -69,6 +79,22 @@
           row.rotation ? E('small',{},`${row.rotation.schedule} · МО до ${displayDate(row.rotation.leave_end_date)} · следующий заезд ${displayDate(row.rotation.next_arrival_date)}`) : null));
       }));
     } catch (err) { if (seq === state.request) { error(err.message); $('#wf-count').textContent = 'Не удалось загрузить список'; } }
+  }
+  function renderStats(totals) {
+    $('#wf-stats').replaceChildren(...[['total','Всего по фильтру'],['onsite','Явка'],['pvp','В ПВП'],['inbound','Заезд'],['on_leave','Неявка'],['unconfirmed','Без подтверждения']].map(([key, text]) =>
+      E('div', {className: 'wf-stat'}, E('span', {}, text), E('strong', {}, String(totals[key])))));
+  }
+  function renderView() {
+    const isBoard = state.view === 'board';
+    $('#wf-board-region').hidden = !isBoard;$('#wf-table-region').hidden = isBoard;$('#wf-table-pagination').hidden = isBoard;
+    for (const [id, active] of [['board', isBoard], ['table', !isBoard]]) {
+      $('#wf-view-' + id).setAttribute('aria-pressed', String(active));
+      $('#wf-view-' + id).classList.toggle('active', active);
+    }
+    for (const button of $('#wf-workspaces').children) {
+      const active = button.dataset.workspace === state.queue;
+      button.classList.toggle('active', active);button.setAttribute('aria-pressed', String(active));
+    }
   }
   const tabs = [['profile','Карточка'],['rotations','Вахты и графики'],['stages','Присутствие'],['movements','Поездки'],['pvp','ПВП'],['documents','Документы'],['checks','Оформление'],['history','История']];
   function canDiscard() { return !state.busy && (!state.dirty || window.confirm('В карточке есть несохранённые изменения. Закрыть их?')); }
@@ -264,13 +290,21 @@
     }
   }
   let timer;
-  for (const [value,title] of [['','Весь состав'],['movements','Заезды и выезды'],['pvp','ПВП и оформление'],['rotations','Графики вахтования']]) {
-    $('#wf-workspaces').append(E('button',{type:'button','aria-pressed':String(!value),className:!value?'active':'',onclick:event=>{
+  for (const [value,title] of [['','Весь состав'],['lifecycle','Перемещения'],['plans','Плановые поездки'],['pvp','ПВП и оформление'],['rotations','Графики вахтования']]) {
+    $('#wf-workspaces').append(E('button',{type:'button','data-workspace':value,'aria-pressed':String(!value),className:!value?'active':'',onclick:()=>{
+      if (!board.canLeave()) return;
       state.queue=value;state.offset=0;
-      for(const button of $('#wf-workspaces').children){const active=button===event.currentTarget;button.classList.toggle('active',active);button.setAttribute('aria-pressed',String(active));}
+      if (value === 'lifecycle') {state.view='board';$('#wf-stage').value='';filterLabel();}
+      else if (['plans','pvp','rotations'].includes(value)) state.view='table';
       load();
     }},title));
   }
+  for (const view of ['board','table']) $('#wf-view-' + view).addEventListener('click', () => {
+    if (!board.canLeave()) return;
+    state.view=view;state.offset=0;
+    if (view === 'board' && !['','lifecycle'].includes(state.queue)) state.queue='';
+    load();
+  });
   $('#wf-filter-panel').open = !window.matchMedia('(max-width: 760px)').matches;
   function filterLabel() {
     const count = ['search','department','stage','employer','category'].filter(id => $('#wf-' + id).value).length + Number($('#wf-conflicts').checked) + Number($('#wf-regex').checked);
@@ -284,8 +318,8 @@
   $('#wf-next').addEventListener('click',() => {state.offset += state.limit;load();});
   $('#wf-card-close').addEventListener('click',() => {if (canDiscard()) {state.dirty = false;$('#wf-card').close();}});
   $('#wf-card').addEventListener('cancel',event => {if (!canDiscard()) event.preventDefault();else state.dirty = false;});
-  window.addEventListener('beforeunload',event => {if (state.dirty || state.busy) {event.preventDefault();event.returnValue = '';}});
-  window.workforceScreen = {load,invalidate:() => {state.reference=null;},canLeave:() => !$('#wf-card').open || canDiscard()};
+  window.addEventListener('beforeunload',event => {if (state.dirty || state.busy || board.busy()) {event.preventDefault();event.returnValue = '';}});
+  window.workforceScreen = {load,invalidate:() => {state.reference=null;},canLeave:() => board.canLeave() && (!$('#wf-card').open || canDiscard())};
   const paths = {workforce:'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M16 3a4 4 0 0 1 0 8 M22 21v-2a4 4 0 0 0-3-3.87 M13 7a4 4 0 1 1-8 0a4 4 0 0 1 8 0',
     staffing:'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z',dashboard:'M4 3h16v18H4z M8 7h8 M8 11h8 M8 15h4',
     analytics:'M3 3v18h18 M7 16v-5 M12 16V7 M17 16V4',catalogs:'M4 4h16v5H4z M4 15h16v5H4z',

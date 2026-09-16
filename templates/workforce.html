@@ -2,7 +2,10 @@
   <div class="wf-heading"><div><h1>Учёт персонала</h1><p>Единая карточка сотрудника · история присутствия и движения</p></div>
     <label>Отчётная дата<input id="wf-date" type="date" value="{{ today }}" required></label>
   </div>
-  <nav id="wf-workspaces" class="wf-tabs" aria-label="Рабочие списки учёта"></nav>
+  <div class="wf-workspace-toolbar">
+    <nav id="wf-workspaces" class="wf-tabs" aria-label="Рабочие списки учёта"></nav>
+    <div class="wf-view-switch" role="group" aria-label="Вид учёта персонала"><button id="wf-view-board" type="button" aria-pressed="true">Доска</button><button id="wf-view-table" type="button" aria-pressed="false">Таблица</button></div>
+  </div>
   <div class="wf-stats" id="wf-stats" aria-live="polite"></div>
   <details id="wf-filter-panel" class="wf-filter-panel" open><summary id="wf-filter-summary">Фильтры</summary><div class="wf-toolbar panel">
     <label class="wf-search">Поиск<input id="wf-search" type="search" maxlength="200" placeholder="ФИО или табельный номер"></label>
@@ -14,15 +17,17 @@
     <label class="check-label"><input id="wf-conflicts" type="checkbox"> С замечаниями</label>
     <button type="button" id="wf-refresh" class="secondary-button">Обновить</button>
   </div></details>
-  <div class="wf-list-heading"><span id="wf-count" role="status"></span><div><button id="wf-prev" type="button" class="secondary-button" aria-label="Предыдущая страница">←</button><button id="wf-next" type="button" class="secondary-button" aria-label="Следующая страница">→</button></div></div>
+  <div class="wf-list-heading"><span id="wf-count" role="status"></span><div id="wf-table-pagination"><button id="wf-prev" type="button" class="secondary-button" aria-label="Предыдущая страница">←</button><button id="wf-next" type="button" class="secondary-button" aria-label="Следующая страница">→</button></div></div>
   <p id="wf-error" class="error-text" role="alert" hidden></p>
-  <div class="wf-table-region" tabindex="0" role="region" aria-label="Реестр персонала"><table class="wf-table"><thead><tr><th>ФИО / табельный №</th><th>Проект / СМУ</th><th>Работодатель</th><th>Должность / ГДЛР</th><th>Статус сотрудника</th><th>Состояние на дату</th><th>Заезд / прогноз выезда</th></tr></thead><tbody id="wf-rows"></tbody></table></div>
+  <div id="wf-board-region" role="region" aria-label="Доска движения персонала"></div>
+  <div id="wf-table-region" class="wf-table-region" tabindex="0" role="region" aria-label="Реестр персонала" hidden><table class="wf-table"><thead><tr><th>ФИО / табельный №</th><th>Проект / СМУ</th><th>Работодатель</th><th>Должность / ГДЛР</th><th>Статус сотрудника</th><th>Состояние на дату</th><th>Заезд / прогноз выезда</th></tr></thead><tbody id="wf-rows"></tbody></table></div>
 </section>
 <dialog id="wf-card" class="wf-card" aria-labelledby="wf-card-title">
   <header class="wf-card-heading"><div><h2 id="wf-card-title">Карточка сотрудника</h2><p id="wf-card-subtitle"></p></div><button id="wf-card-close" type="button" class="secondary-button" aria-label="Закрыть карточку">×</button></header>
   <nav id="wf-card-tabs" class="wf-tabs" aria-label="Разделы карточки"></nav>
   <div id="wf-card-content"></div><p id="wf-card-error" class="error-text" role="alert" hidden></p>
 </dialog>
+<script src="{{ asset_url('workforce-board.js') }}" defer></script>
 <script src="{{ asset_url('workforce.js') }}" defer></script>
 <script src="{{ asset_url('workforce-import.js') }}" defer></script>
 <script src="{{ asset_url('workforce-catalogs.js') }}" defer></script>

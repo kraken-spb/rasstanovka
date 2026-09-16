@@ -174,5 +174,20 @@ def departure_warnings(db, day, worker_ids):
         AND (direction='departure' OR destination_kind='site')
         AND actual_date<=%s ORDER BY worker_id,actual_date DESC,updated_at DESC,id''',
         (list(worker_ids), day))
-    return {row['worker_id']: 'Подтверждён выезд ' + row['actual_date'].strftime('%d.%m.%Y') +
-            '. Назначение можно сохранить.' for row in rows if row['direction'] == 'departure'}
+    departures = {row['worker_id']: row['actual_date'] for row in rows if row['direction'] == 'departure'}
+    result = {worker_id: 'Подтверждён выезд ' + actual.strftime('%d.%m.%Y') +
+              '. Назначение можно сохранить.' for worker_id, actual in departures.items()}
+    stages = db.native('''SELECT DISTINCT ON(e.worker_id) e.worker_id,e.stage_code,e.effective_date
+        FROM workforce_stage_events e WHERE e.worker_id=ANY(%s) AND e.confirmed AND NOT e.retracted
+        AND e.effective_date<=%s AND NOT EXISTS(SELECT 1 FROM workforce_stage_events r
+            WHERE r.replaces_id=e.id AND (r.confirmed OR r.retracted) AND r.effective_date<=%s)
+        ORDER BY e.worker_id,e.effective_date DESC,e.sequence DESC''', (list(worker_ids), day, day))
+    for stage in stages:
+        worker_id = stage['worker_id']
+        if stage['stage_code'] == 'stage.leave':
+            result[worker_id] = ('Подтверждена неявка с ' + stage['effective_date'].strftime('%d.%m.%Y') +
+                                 '. Назначение можно сохранить.')
+        elif stage['stage_code'] == 'stage.onsite' and (
+                worker_id not in departures or stage['effective_date'] >= departures[worker_id]):
+            result.pop(worker_id, None)
+    return result

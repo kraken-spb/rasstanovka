@@ -115,6 +115,8 @@ def register_workforce_routes(app, get_db, roles_required):
     register_export_jobs(app, database, roles_required)
     from workforce_imports import register_import_routes
     register_import_routes(app, database, roles_required)
+    from workforce_board import register_board_routes, stage_token, transition_targets
+    register_board_routes(app, database, roles_required)
 
     @app.get('/api/workforce/reference')
     @roles_required(*READERS)
@@ -132,6 +134,7 @@ def register_workforce_routes(app, get_db, roles_required):
                         'permissions': {'profile': actor['role'] in ADMINS | {'rotation', 'recruitment'},
                                         'movement': actor['role'] in ADMINS | {'rotation'},
                                         'stage': actor['role'] in ADMINS | {'rotation'},
+                                        'transition': actor['role'] in ADMINS | {'rotation', 'recruitment'},
                                         'document': actor['role'] in ADMINS | {'recruitment'},
                                         'pvp': actor['role'] in ADMINS | {'recruitment'},
                                         'check': actor['role'] in ADMINS | {'recruitment'},
@@ -151,16 +154,20 @@ def register_workforce_routes(app, get_db, roles_required):
         with db:
             db.execute('BEGIN')
             db.native("SET LOCAL statement_timeout='1000ms'")
-            _, scope, args = actor_scope(db)
+            actor, scope, args = actor_scope(db)
             clauses = [scope]
             queue = request.args.get('queue', '')
-            if queue not in ('', 'movements', 'pvp', 'rotations'):
+            if queue not in ('', 'movements', 'plans', 'pvp', 'rotations'):
                 abort(400, description='Неизвестный раздел учёта.')
             if queue == 'movements':
                 clauses.append("""(st.stage_code IN ('stage.leave','stage.inbound') OR EXISTS(
                     SELECT 1 FROM workforce_movements qm WHERE qm.worker_id=w.id AND qm.actual_date IS NULL
                     AND COALESCE(qm.result_code,'') NOT IN ('result.cancelled','result.happened')
                     AND NOT EXISTS(SELECT 1 FROM workforce_movements qn WHERE qn.rescheduled_from=qm.id)))""")
+            elif queue == 'plans':
+                clauses.append("""EXISTS(SELECT 1 FROM workforce_movements qm WHERE qm.worker_id=w.id
+                    AND qm.actual_date IS NULL AND COALESCE(qm.result_code,'') NOT IN ('result.cancelled','result.happened')
+                    AND NOT EXISTS(SELECT 1 FROM workforce_movements qn WHERE qn.rescheduled_from=qm.id))""")
             elif queue == 'pvp':
                 clauses.append("""(st.stage_code='stage.pvp' OR p.employment_code IN ('employment.recruitment','employment.irs')
                     OR EXISTS(SELECT 1 FROM workforce_pvp_stays qp WHERE qp.worker_id=w.id AND qp.departed_on IS NULL))""")
@@ -228,6 +235,8 @@ def register_workforce_routes(app, get_db, roles_required):
                         ORDER BY r.start_date DESC LIMIT 1),p.forecast_departure_date) forecast_departure_date,
                     COALESCE(gc.name,w.category) category,
                     sc.label stage,page.stage_code,page.effective_date,
+                    p.staffing_ready,
+                    COALESCE((SELECT max(se.sequence) FROM workforce_stage_events se WHERE se.worker_id=w.id),0) stage_revision,
                     (SELECT count(*) FROM workforce_conflicts cf WHERE cf.worker_id=w.id AND cf.state='open') conflicts,
                     (SELECT jsonb_build_object('direction',mv.direction,'planned_date',mv.planned_date,'basis',mb.label,'result',mr.label)
                         FROM workforce_movements mv LEFT JOIN workforce_catalog mb ON mb.code=mv.basis_code
@@ -255,7 +264,24 @@ def register_workforce_routes(app, get_db, roles_required):
                 abort(400, description='Некорректное регулярное выражение.')
             except psycopg.errors.QueryCanceled:
                 abort(422, description='Поиск слишком сложный. Уточните запрос или СМУ.')
-        return jsonify({'rows': rows, 'totals': totals, 'offset': offset, 'limit': limit, 'date': day})
+            # Assignments change independently of the registry cache. Read their current
+            # dated facts in this snapshot, and never put role-specific fields in cache.
+            ids = [row['id'] for row in rows]
+            assigned = {row['worker_id'] for row in db.native('''SELECT DISTINCT worker_id
+                FROM assignments WHERE work_date=%s AND worker_id=ANY(%s)''', (day, ids)).fetchall()} if ids else set()
+            addresses = {}
+            if ids and actor['role'] in ADMINS | {'rotation', 'recruitment'}:
+                addresses = {row['worker_id']: row['address'] for row in db.native('''
+                    SELECT DISTINCT ON(s.worker_id) s.worker_id,COALESCE(NULLIF(p.address,''),p.name) address
+                    FROM workforce_pvp_stays s JOIN workforce_pvp_places p ON p.id=s.place_id
+                    WHERE s.worker_id=ANY(%s) AND s.arrived_on<=%s AND (s.departed_on IS NULL OR s.departed_on>%s)
+                    ORDER BY s.worker_id,s.arrived_on DESC,s.updated_at DESC,s.id''', (ids, day, day)).fetchall()}
+            rows = [{**{key: value for key, value in row.items() if key != 'stage_revision'},
+                     'stage_token': stage_token(row['id'], day, row['stage_revision']),
+                     'transition_targets': transition_targets(actor['role'], row['stage_code'], row['active']),
+                     'pvp_address': addresses.get(row['id']), 'assigned': row['id'] in assigned} for row in rows]
+        return jsonify({'rows': rows, 'totals': totals, 'offset': offset, 'limit': limit, 'date': day,
+                        'revision': str(revision)})
 
     @app.get('/api/workforce/people/<int:worker_id>')
     @roles_required(*READERS)

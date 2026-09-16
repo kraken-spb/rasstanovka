@@ -146,6 +146,119 @@ class WorkforceApiTest(unittest.TestCase):
         return {'direction': 'departure', 'actual_date': '2026-09-16', 'result_code': 'result.happened',
                 'reason': 'Подтверждено перевахтой', 'request_key': str(uuid4()), **changes}
 
+    def board_row(self, worker_id=None, role='admin', day='2026-09-16'):
+        worker_id = worker_id or self.worker
+        result = self.request('get', f'people?date={day}&q={self.suffix}', role=role)
+        self.assertEqual(result.status_code, 200, result.data)
+        return next(row for row in result.json['rows'] if row['id'] == worker_id)
+
+    def board_move(self, stage, people=None, **changes):
+        row = self.board_row()
+        return {'date': '2026-09-16', 'effective_date': '2026-09-16', 'stage_code': stage,
+                'reason': 'Подтверждено на доске', 'people': people or [{'id': row['id'], 'token': row['stage_token']}],
+                'request_key': str(uuid4()), **changes}
+
+    def test_board_transition_is_dated_audited_replayable_and_preserves_plans(self):
+        from workforce_core import departure_warnings
+        planned = self.request('post', f'people/{self.worker}/movement', self.movement(
+            actual_date=None, planned_date='2026-10-10', result_code=None), 'rotation').json
+        self.db.native('UPDATE workforce_profiles SET staffing_ready=FALSE WHERE worker_id=%s', (self.worker,))
+        body = self.board_move('stage.onsite')
+        created = self.request('post', 'transitions', body, 'rotation')
+        self.assertEqual(created.status_code, 201, created.json)
+        self.assertEqual(created.json['changed'], 1)
+        self.assertEqual(self.request('post', 'transitions', body, 'rotation').status_code, 200)
+        self.assertEqual(self.db.native('SELECT count(*) FROM workforce_stage_events WHERE worker_id=%s', (self.worker,)).fetchone()[0], 1)
+        row = self.board_row()
+        self.assertEqual(row['stage_code'], 'stage.onsite')
+        self.assertTrue(row['staffing_ready'])
+        self.assertIsNone(self.board_row(day='2026-09-15')['stage_code'])
+        self.assertEqual(self.request('post', 'transitions', self.board_move('stage.leave'), 'rotation').status_code, 201)
+        self.assertIn(self.worker, departure_warnings(self.db, '2026-09-16', [self.worker]))
+        history = self.request('get', f'people/{self.worker}', role='rotation').json['history']
+        self.assertEqual(sum(item['action'] == 'transition' for item in history), 2)
+        current_plan = self.db.native('SELECT * FROM workforce_movements WHERE id=%s', (planned['id'],)).fetchone()
+        self.assertEqual(current_plan['planned_date'].isoformat(), '2026-10-10')
+        self.assertIsNone(current_plan['actual_date'])
+        self.assertEqual(self.request('post', 'transitions', self.board_move('stage.onsite'), 'rotation').status_code, 201)
+        self.assertEqual(departure_warnings(self.db, '2026-09-16', [self.worker]), {})
+
+    def test_board_bulk_preflight_rejects_stale_scope_and_date_without_partial_changes(self):
+        people = [{'id': worker_id, 'token': self.board_row(worker_id)['stage_token']} for worker_id in self.ids]
+        body = self.board_move('stage.onsite', people)
+        self.assertEqual(self.request('post', 'transitions', body, 'rotation').status_code, 404)
+        self.assertEqual(self.request('post', 'transitions', {**body, 'effective_date': '2099-01-01'}).status_code, 400)
+        self.request('post', f'people/{self.ids[1]}/stage', {'stage_code': 'stage.leave', 'effective_date': '2026-09-16',
+            'confirmed': True, 'reason': 'Другая служба уже уточнила этап', 'request_key': str(uuid4())})
+        stale = self.request('post', 'transitions', body)
+        self.assertEqual(stale.status_code, 409, stale.json)
+        self.assertIsNone(self.board_row()['stage_code'])
+        self.assertEqual(self.db.native('SELECT count(*) FROM workforce_audit WHERE worker_id=%s', (self.worker,)).fetchone()[0], 0)
+        wrong_date = self.board_move('stage.onsite', date='2026-09-15', effective_date='2026-09-15')
+        self.assertEqual(self.request('post', 'transitions', wrong_date).status_code, 409)
+        people = [{'id': worker_id, 'token': self.board_row(worker_id)['stage_token']} for worker_id in self.ids]
+        succeeded = self.request('post', 'transitions', self.board_move('stage.onsite', people))
+        self.assertEqual(succeeded.status_code, 201, succeeded.json)
+        self.assertEqual(succeeded.json['changed'], 2)
+
+    def test_board_service_roles_and_fresh_permissions(self):
+        body = self.board_move('stage.onsite')
+        for role in ('foreman', 'viewer', 'hr_viewer', 'recruitment'):
+            self.assertEqual(self.request('post', 'transitions', body, role).status_code, 403, role)
+        self.assertEqual(self.board_row(role='foreman')['transition_targets'], [])
+        self.assertEqual(self.board_row(role='recruitment')['transition_targets'], ['stage.pvp'])
+        self.assertEqual(self.request('post', 'transitions', self.board_move('stage.pvp'), 'recruitment').status_code, 201)
+        self.assertEqual(self.board_row(role='recruitment')['transition_targets'], ['stage.inbound'])
+        inbound = self.board_move('stage.inbound')
+        self.assertEqual(self.request('post', 'transitions', inbound, 'recruitment').status_code, 201)
+        self.assertEqual(self.request('post', 'transitions', inbound, 'recruitment').status_code, 200)
+        self.db.native("UPDATE user_smu_access SET departments_json='[]' WHERE user_id=%s", (self.users['recruitment']['id'],))
+        self.assertEqual(self.request('post', 'transitions', inbound, 'recruitment').status_code, 404)
+        self.db.native("UPDATE users SET role='foreman' WHERE id=%s", (self.users['rotation']['id'],))
+        self.assertEqual(self.request('post', 'transitions', self.board_move('stage.onsite'), 'rotation').status_code, 403)
+
+    def test_board_planned_trip_list_requires_a_pending_plan(self):
+        self.app.config['TESTING'] = False
+        self.request('post', 'transitions', self.board_move('stage.leave'), 'rotation')
+        path = 'people?date=2026-09-16&department=TEST-SMU&queue=plans'
+        self.assertEqual(self.request('get', path, role='rotation').json['rows'], [])
+        created = self.request('post', f'people/{self.worker}/movement', self.movement(
+            actual_date=None, planned_date='2026-10-10', result_code=None), 'rotation').json
+        self.assertEqual([row['id'] for row in self.request('get', path, role='rotation').json['rows']], [self.worker])
+        self.assertEqual(self.board_row(role='rotation')['movement']['planned_date'], '2026-10-10')
+        self.request('patch', f'people/{self.worker}/movement/{created["id"]}', {
+            'token': created['edit_token'], 'result_code': 'result.cancelled', 'reason': 'Поездка отменена',
+            'request_key': str(uuid4())}, 'rotation')
+        self.assertEqual(self.request('get', path, role='rotation').json['rows'], [])
+        self.assertIsNone(self.board_row(role='rotation')['movement'])
+
+    def test_board_rejects_aba_and_backdated_or_inactive_transitions(self):
+        original = self.board_move('stage.onsite')
+        self.request('post', 'transitions', self.board_move('stage.leave'), 'rotation')
+        self.request('post', 'transitions', self.board_move('stage.pvp'), 'rotation')
+        self.request('post', 'transitions', self.board_move('stage.leave'), 'rotation')
+        self.assertEqual(self.request('post', 'transitions', original, 'rotation').status_code, 409)
+        self.assertEqual(self.request('post', 'transitions', self.board_move('stage.onsite', effective_date='2026-09-15'), 'rotation').status_code, 400)
+        current = self.board_move('stage.onsite')
+        self.db.native('UPDATE workers SET active=0 WHERE id=%s', (self.worker,))
+        self.assertEqual(self.request('post', 'transitions', current, 'rotation').status_code, 409)
+
+    def test_board_page_counts_and_assignment_badge_do_not_leak_cached_permissions(self):
+        self.request('post', 'transitions', self.board_move('stage.pvp'), 'recruitment')
+        self.app.config['TESTING'] = False
+        path = 'people?date=2026-09-16&department=TEST-SMU&stage=stage.pvp&limit=1'
+        admin = self.request('get', path).json
+        foreman = self.request('get', path, role='foreman').json
+        self.assertEqual(admin['totals']['total'], 1)
+        self.assertEqual(foreman['rows'][0]['transition_targets'], [])
+        self.assertIn('stage.onsite', admin['rows'][0]['transition_targets'])
+        self.assertFalse(admin['rows'][0]['assigned'])
+        site = self.db.native('SELECT id FROM subobjects LIMIT 1').fetchone()[0]
+        self.db.native('''INSERT INTO assignments(work_date,shift,subobject_id,worker_id,foreman_user_id,created_at)
+            VALUES ('2026-09-16','1 смена',%s,%s,%s,'now')''', (site, self.worker, self.users['admin']['id']))
+        self.assertTrue(self.request('get', path).json['rows'][0]['assigned'])
+        self.assertEqual(self.request('get', path + '&offset=1').json['rows'], [])
+
     def upload_source(self, rows, role='rotation', source='urp:П15', day='2026-09-16', extra_headers=()):
         from io import BytesIO
         from openpyxl import Workbook
