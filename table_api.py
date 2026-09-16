@@ -47,7 +47,7 @@ def register_table_routes(app, get_db, roles_required, utc_now):
                WHERE a.work_date BETWEEN ? AND ?
                AND NOT EXISTS (SELECT 1 FROM staffing_attendance att WHERE att.worker_id=a.worker_id
                    AND att.work_date=a.work_date AND att.status<>'Явка')""" + fact_filter +
-            f" GROUP BY a.subobject_id, a.work_date, {company_sql}, COALESCE(ct.name,w.contractor,'')", fact_params
+            f" GROUP BY s.object_id, a.subobject_id, a.work_date, {company_sql}, COALESCE(ct.name,w.contractor,'')", fact_params
         )]
         plans = [dict(row) for row in db.execute(
             """SELECT p.*, s.object_id FROM daily_staffing_plans p

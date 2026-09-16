@@ -4,7 +4,7 @@
   const mobile = matchMedia('(max-width: 900px)');
   const nav = document.querySelector('.mobile-nav');
   const view = $('view-staffing');
-  const readOnly = document.querySelector('.app-shell')?.dataset.role === 'hr_viewer';
+  const readOnly = ['hr_viewer', 'rotation', 'recruitment'].includes(document.querySelector('.app-shell')?.dataset.role);
   const moved = [];
   let picking = null, active = false, latest = {count: 0, hidden: 0, filters: 0};
   const el = (tag, props = {}, ...children) => {

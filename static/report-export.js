@@ -5,12 +5,37 @@
   if (!panel || !form) return;
   const MF = window.MultiFilter, message = $('staffing-export-status');
   let loadedDate = '', pending = null, requestId = 0;
+  const isUrp = () => $('staffing-export-kind')?.value === 'urp';
   for (const name of ['category', 'department', 'contractor', 'shift']) {
     MF.enable($('staffing-export-' + name), name === 'shift' ? 'all' : '');
   }
   const status = (text, error = false) => {
     message.textContent = text; message.classList.toggle('error-text', error);
   };
+  async function urpReport(date) {
+    const root=document.querySelector('.app-shell'), storageKey='urp-export:'+root.dataset.userId+':'+date;
+    let key;
+    try {key=sessionStorage.getItem(storageKey);} catch (_) {}
+    if(!key){key=crypto.randomUUID();try{sessionStorage.setItem(storageKey,key);}catch(_) {}}
+    const start=await fetch('/api/workforce/export-jobs',{method:'POST',cache:'no-store',headers:{'Content-Type':'application/json','X-CSRF-Token':root.dataset.csrf},body:JSON.stringify({date,request_key:key})});
+    const job=await start.json();
+    if(!start.ok){if(start.status<500)try{sessionStorage.removeItem(storageKey);}catch(_){}throw new Error(job.error||'Не удалось поставить отчёт в очередь.');}
+    for(let attempt=0;attempt<180;attempt++) {
+      const response=await fetch('/api/workforce/export-jobs/'+key,{cache:'no-store'}), state=await response.json();
+      if(!response.ok||state.state==='failed') {
+        try{sessionStorage.removeItem(storageKey);}catch(_){}
+        throw new Error(state.error||'Не удалось сформировать отчёт.');
+      }
+      if(state.state==='ready') {
+        const file=await fetch('/api/workforce/export-jobs/'+key+'/download',{cache:'no-store'});
+        if(file.ok)try{sessionStorage.removeItem(storageKey);}catch(_){}
+        return file;
+      }
+      status(state.state==='pending'?'Отчёт в очереди…':'Формируем отчёт УРП…');
+      await new Promise(resolve=>setTimeout(resolve,1000));
+    }
+    throw new Error('Отчёт ещё формируется. Нажмите «Экспорт» повторно, чтобы проверить готовность.');
+  }
   function options(name, values, all, encode = value => value) {
     const select = $('staffing-export-' + name), selected = MF.values(MF.get(select));
     const choices = values.map(value => [encode(value), value || 'Без категории']);
@@ -25,6 +50,7 @@
   async function ready(refresh = false) {
     const date = $('staffing-export-date').value;
     if (!$('staffing-export-date').reportValidity()) return false;
+    if (isUrp()) return true;
     if (!refresh && loadedDate === date) return true;
     if (!refresh && pending?.date === date) return pending.promise;
     const id = ++requestId;
@@ -60,6 +86,17 @@
     }
   });
   $('staffing-export-date').addEventListener('change', () => ready());
+  $('staffing-export-kind')?.addEventListener('change', () => {
+    for (const name of ['category', 'department', 'contractor', 'shift', 'unassigned']) {
+      const control = $('staffing-export-' + name);
+      const label = control?.closest('label');
+      if (label) label.hidden = isUrp();
+    }
+    $('staffing-export-help').textContent = isUrp() ?
+      'Две вкладки: «Явка и аутстаффинг» и «Неявка, заезд и ПВП». Согласованные 18 категорий ГДЛР, доступные вам СМУ, примечания справа. Учитываются переносы и продления вахт.' :
+      'Один Excel-файл: «Список сотрудников» и «Сводная таблица» по этому списку. Дата, СМУ, смена и категория применяются к обеим вкладкам.';
+    ready();
+  });
   window.reportExport = {ready};
   form.addEventListener('submit', async event => {
     event.preventDefault();
@@ -79,17 +116,17 @@
       MF.params(params, 'category', MF.get($('staffing-export-category')), value => value === 'none' ? '' : value.slice(5));
       const includeUnassigned = $('staffing-export-unassigned').checked;
       if (includeUnassigned) params.set('include_unassigned', '1');
-      const response = await fetch('/api/staffing/export?' + params, {cache: 'no-store'});
+      const response = isUrp() ? await urpReport(date) : await fetch('/api/staffing/export?' + params, {cache: 'no-store'});
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
         throw new Error(data.error || 'Не удалось сформировать файл.');
       }
       const url = URL.createObjectURL(await response.blob());
       const link = document.createElement('a');
-      link.href = url; link.download = 'Расстановка на ' + date + '.xlsx';
+      link.href = url; link.download = (isUrp() ? 'УРП — учёт персонала — ' : 'Расстановка на ') + date + '.xlsx';
       document.body.append(link); link.click(); link.remove();
       setTimeout(() => URL.revokeObjectURL(url), 60000);
-      status('Файл с двумя вкладками готов. Строк в списке: ' + response.headers.get('X-Export-Count') +
+      status(isUrp() ? 'Отчёт УРП готов. Явка и аутстаффинг: ' + response.headers.get('X-Export-First-Count') + ', неявка, заезд и ПВП: ' + response.headers.get('X-Export-Second-Count') + '.' : 'Файл с двумя вкладками готов. Строк в списке: ' + response.headers.get('X-Export-Count') +
         (includeUnassigned ? ', нерасставленных сотрудников: ' + response.headers.get('X-Export-Unassigned-Count') : '') + '.');
     } catch (error) { status(error.message, true); }
     finally { button.disabled = false; }

@@ -5,7 +5,7 @@
   const $ = (id) => document.getElementById(id);
   if (!$('view-staffing')) return;
   const root = document.querySelector('.app-shell');
-  const readOnly = root.dataset.role === 'hr_viewer';
+  const readOnly = ['hr_viewer', 'rotation', 'recruitment'].includes(root.dataset.role);
   const state = { rows: [], crews: [], crewOptions: [], collapsed: new Set(), selected: new Map(), drafts: new Map(), crewDrafts: new Map(),
     nodes: new Map(), crewNodes: new Map(), loadedCrews: new Set(), loadingCrews: new Map(), busy: false, request: 0,
     details: null, reference: null, imported: null, preview: null, search: '', regex: null, regexMode: false, department: '', employer: '', contractor: '', author: '', category: '', unassigned: false,
@@ -896,7 +896,8 @@
       const expanded = tr.classList.toggle('show-all'); more.setAttribute('aria-expanded', String(expanded));
       more.textContent = expanded ? 'Скрыть дополнительные поля' : 'Все поля';
     }}, 'Все поля');
-    columnSettings.cell(tr, 0).append(more);
+      columnSettings.cell(tr, 0).append(more);
+      if (row.departure_warning) columnSettings.cell(tr, 0).append(el('small', {className: 'departure-warning', title: row.departure_warning}, '⚠ ' + row.departure_warning));
     if (row.locked && !readOnly) columnSettings.cell(tr, 0).append(el('small', {}, row.shift_conflict ? 'Несколько смен: уточните в составе бригад' : !row.active ? 'Сотрудник отключён' : 'Назначен другой бригадой'));
     state.nodes.set(row.id, tr);
     paintPlace(row);

@@ -5,7 +5,7 @@ function createEmployeeScreen(prefix) {
   const $ = id => document.getElementById(id.replace('employees', prefix));
   if (!$('view-employees')) return;
   const root = document.querySelector('.app-shell');
-  const readOnly = root.dataset.role === 'hr_viewer';
+  const readOnly = ['hr_viewer', 'rotation', 'recruitment'].includes(root.dataset.role);
   const state = {rows: [], crews: [], categories: [], categoryDrafts: new Map(), filtered: [], page: 0, busy: false, drafts: new Map(), request: 0, worker: null, summary: null, reportDate: $('employees-date').value};
   ['employees-crew-filter','employees-category','employees-active'].forEach(id => MF.enable($(id)));
   let size = 50;

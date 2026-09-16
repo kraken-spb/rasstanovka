@@ -93,9 +93,23 @@ def register_log_routes(app, get_db, roles_required):
             where.append('(' + ' OR '.join('instr(log_casefold(COALESCE(' + field + ",'')),?)>0" for field in fields) + ')')
             params.extend([query.casefold()] * len(fields))
         db = get_db()
-        db.create_function('log_casefold', 1, lambda value: str(value or '').casefold(), deterministic=True)
+        postgres = getattr(db, 'dialect', None) == 'postgres'
+        joins = JOINS
+        order = 'julianday(e.changed_at) DESC,e.id DESC'
+        if postgres:
+            # PostgreSQL requires a common UNION type. Preserve public numeric IDs
+            # and SQLite's ordering of tagged restoration IDs above numeric IDs.
+            joins = joins.replace('SELECT id,changed_at', 'SELECT CAST(id AS TEXT) id,changed_at')
+            joins = joins.replace('SELECT -worker_id,changed_at', 'SELECT CAST(-worker_id AS TEXT),changed_at')
+            for field in ('changed_by', 'crew_id'):
+                expression = "json_extract(removal_json,'$." + field + "')"
+                joins = joins.replace(expression, 'CAST(' + expression + ' AS BIGINT)')
+            order = "julianday(e.changed_at) DESC,(e.id LIKE '%-%' AND e.id NOT LIKE '-%') DESC," \
+                    "CASE WHEN e.id NOT LIKE 'deleted-%' AND e.id NOT LIKE 'restored-%' THEN CAST(e.id AS BIGINT) END DESC,e.id DESC"
+        else:
+            db.create_function('log_casefold', 1, lambda value: str(value or '').casefold(), deterministic=True)
         clause = ' WHERE ' + ' AND '.join(where) if where else ''
-        total = db.execute('SELECT COUNT(*) ' + JOINS + clause, params).fetchone()[0]
+        total = db.execute('SELECT COUNT(*) ' + joins + clause, params).fetchone()[0]
         pages = max(1, math.ceil(total / 50))
         page = min(page, pages)
         rows = [dict(row) for row in db.execute('''SELECT e.id,e.changed_at,e.work_date,e.shift,
@@ -104,11 +118,15 @@ def register_log_routes(app, get_db, roles_required):
             e.crew_id,COALESCE(e.crew_snapshot,c.name) crew_name,e.reason,
             e.before_subobject_id,b.name before_name,bo.name before_group,
             e.after_subobject_id,a.name after_name,ao.name after_group,
-            ''' + ACTION + ' action ' + JOINS + clause +
-            ' ORDER BY julianday(e.changed_at) DESC,e.id DESC LIMIT 50 OFFSET ?', [*params, (page - 1) * 50])]
+            ''' + ACTION + ' action ' + joins + clause +
+            ' ORDER BY ' + order + ' LIMIT 50 OFFSET ?', [*params, (page - 1) * 50])]
+        if postgres:
+            for row in rows:
+                if str(row['id']).lstrip('-').isdigit():
+                    row['id'] = int(row['id'])
         actors = [dict(row) for row in db.execute('''SELECT DISTINCT u.id,u.full_name,u.username
             FROM (SELECT changed_by FROM assignment_events UNION SELECT changed_by FROM employee_removals
                 UNION SELECT changed_by FROM employee_restorations
-                UNION SELECT json_extract(removal_json,'$.changed_by') FROM employee_restorations WHERE removal_json IS NOT NULL) e
+                UNION SELECT CAST(json_extract(removal_json,'$.changed_by') AS BIGINT) FROM employee_restorations WHERE removal_json IS NOT NULL) e
             JOIN users u ON u.id=e.changed_by ORDER BY u.full_name,u.id''')]
         return jsonify({'rows': rows, 'total': total, 'page': page, 'pages': pages, 'page_size': 50, 'actors': actors})

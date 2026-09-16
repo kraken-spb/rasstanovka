@@ -18,6 +18,8 @@ seed.json
 *.xls
 *.pem
 *.key
-({value
+tmp/
+*.log
+.pytest_cache/
 backups/
 .playwright-cli/

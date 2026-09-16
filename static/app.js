@@ -7,7 +7,7 @@
   if (!root) return;
   MF.enable($('#dashboard-category'));
   const role = root.dataset.role;
-  const readOnly = role === 'hr_viewer';
+  const readOnly = ['hr_viewer', 'rotation', 'recruitment'].includes(role);
   const state = { crews: [], crew: null, members: [], selected: new Set(), candidates: [],
     sites: [], objects: [], subs: [], busy: false, boardRequest: 0, location: null,
     display: "total", summaryMode: "week", calendars: {}, expanded: { plan: new Set(), dashboard: new Set() },
@@ -57,6 +57,7 @@
     if (window.staffingScreen && !window.staffingScreen.canLeave()) return;
     if (window.backupsScreen && !window.backupsScreen.canLeave()) return;
     if (window.locationsScreen && !window.locationsScreen.canLeave()) return;
+    if (window.workforceScreen && !window.workforceScreen.canLeave()) return;
     if (window.catalogsScreen && !window.catalogsScreen.canLeave()) return;
     if (!$("#view-" + view)) view = role === "viewer" ? "dashboard" : readOnly ? "staffing" : "placement";
     if (state.busy) { toast("Дождитесь сохранения."); return; }
@@ -66,6 +67,7 @@
     all("[data-view]").forEach((el) => { el.classList.toggle("active", el.dataset.view === view); });
     history.replaceState(null, "", "#" + view);
     try {
+      if (view === 'workforce') { await window.workforceScreen.load(); return; }
       await loadLocationReference();
       if (view === "staffing") {
         if (staffingFilter) await window.staffingScreen.openFromCalendar(staffingFilter);
@@ -638,7 +640,7 @@
       update();
       return editor;
     };
-    const labels = { super_admin: "Супер-администратор", admin: "Администратор", foreman: "Прораб", viewer: "Просмотр", hr_viewer: "Управление по работе с персоналом" };
+    const labels = { super_admin: "Супер-администратор", admin: "Администратор", foreman: "Ответственный за расстановку", viewer: "Просмотр", hr_viewer: "Управление по работе с персоналом", rotation: "Перевахта", recruitment: "Комплектация" };
     const canManage = () => role === 'super_admin';
     const roleEditor = (user) => {
       if (!canManage(user)) return null;

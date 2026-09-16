@@ -72,12 +72,12 @@ def validate_patch(data):
 
 def register_preferences(app, get_db, roles_required, utc_now):
     @app.get('/api/preferences/staffing')
-    @roles_required('admin', 'foreman')
+    @roles_required('admin', 'foreman', 'rotation', 'recruitment')
     def get_preferences():
         return jsonify({'settings': staffing_preferences(get_db(), g.user['id'])})
 
     @app.patch('/api/preferences/staffing')
-    @roles_required('admin', 'foreman')
+    @roles_required('admin', 'foreman', 'rotation', 'recruitment')
     def save_preferences():
         data = validate_patch(request.get_json(silent=True))
         db = get_db()

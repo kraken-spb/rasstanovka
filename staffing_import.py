@@ -225,10 +225,36 @@ def active_import_ids_sql():
 
 
 def active_members_sql():
-    return f'''SELECT sm.worker_id,sm.source_row,sm.source_crew FROM staffing_import_members sm
+    base = f'''SELECT sm.worker_id,sm.source_row,sm.source_crew FROM staffing_import_members sm
         WHERE sm.import_id IN ({active_import_ids_sql()}) AND sm.import_id=(
             SELECT MAX(other.import_id) FROM staffing_import_members other WHERE other.worker_id=sm.worker_id
             AND other.import_id IN ({active_import_ids_sql()}))'''
+    from flask import current_app, has_app_context
+    if has_app_context() and current_app.config.get('WORKFORCE_ENABLED'):
+        base += ''' AND NOT EXISTS(SELECT 1 FROM workforce_profiles wp WHERE wp.worker_id=sm.worker_id
+            AND wp.workforce_managed AND NOT wp.staffing_ready)'''
+        return base + f''' UNION ALL SELECT p.worker_id,0,'' FROM workforce_profiles p
+            WHERE p.staffing_ready AND NOT EXISTS(SELECT 1 FROM staffing_import_members legacy
+                WHERE legacy.worker_id=p.worker_id AND legacy.import_id IN ({active_import_ids_sql()}))'''
+    return base
+
+
+def postgres_member_source_sql():
+    """Resolve only the requested workers, retaining the established source order."""
+    active = active_import_ids_sql()
+    allowed = "NOT EXISTS(SELECT 1 FROM workforce_profiles wp WHERE wp.worker_id=w.id AND wp.workforce_managed AND NOT wp.staffing_ready)"
+    return f'''workers w JOIN LATERAL (
+        SELECT candidate.worker_id,candidate.source_row,candidate.source_crew FROM (
+            SELECT legacy.worker_id,legacy.source_row,legacy.source_crew,1 priority FROM (
+                SELECT im.worker_id,im.source_row,im.source_crew FROM staffing_import_members im
+                WHERE im.worker_id=w.id AND im.import_id IN ({active}) AND {allowed}
+                ORDER BY im.import_id DESC LIMIT 1) legacy
+            UNION ALL SELECT wp.worker_id,0,'',2 FROM workforce_profiles wp WHERE wp.worker_id=w.id AND wp.staffing_ready
+            UNION ALL SELECT om.worker_id,om.source_row,'',3 FROM outstaff_members om WHERE om.worker_id=w.id AND {allowed}
+            UNION ALL SELECT me.worker_id,0,'',4 FROM manual_employees me WHERE me.worker_id=w.id
+            UNION ALL SELECT er.worker_id,0,'',5 FROM employee_restorations er WHERE er.worker_id=w.id AND {allowed}
+        ) candidate ORDER BY candidate.priority LIMIT 1
+    ) sm ON TRUE'''
 
 
 def import_crew_key(row, label):

@@ -131,6 +131,17 @@ class SuperAdminTest(unittest.TestCase):
         self.assertEqual(self.clients['super_admin'].patch(path, json={'active': False}).status_code, 403)
         self.assertEqual(self.write('super_admin', 'PATCH', path, {'active': False, 'password': 'replacement-password'}).status_code, 200)
 
+    def test_role_change_revokes_sessions_with_numeric_timestamp(self):
+        target = self.ids['foreman']
+        self.assertEqual(self.write('foreman', 'POST', '/api/session/heartbeat', {}).status_code, 200)
+        response = self.write('super_admin', 'PATCH', f'/api/users/{target}', {'role':'viewer','expected_role':'foreman'})
+        self.assertEqual(response.status_code, 200)
+        with self.module.app.app_context():
+            ended = self.module.get_db().execute('SELECT ended_at FROM user_sessions WHERE user_id=?', (target,)).fetchall()
+            self.assertTrue(ended)
+            self.assertTrue(all(type(row['ended_at']) is int for row in ended))
+        self.assertEqual(self.clients['foreman'].get('/api/reference').status_code, 401)
+
     def test_transaction_rechecks_super_admin_after_request_role_was_read(self):
         target = self.ids['foreman']
         token = next(row['expected_token'] for row in self.clients['super_admin'].get('/api/user-smu-access').get_json()['rows']

@@ -35,8 +35,11 @@ class UserActivityTest(unittest.TestCase):
         self.module.LOGIN_ATTEMPTS.clear()
 
     def login(self, client, at, password='activity-test-password'):
+        client.get('/login')
+        with client.session_transaction() as session:
+            token = session['csrf_token']
         with patch('user_activity.now_seconds', return_value=stamp(at)):
-            return client.post('/login', data={'username': self.username, 'password': password})
+            return client.post('/login', data={'username': self.username, 'password': password, 'csrf_token': token})
 
     def write(self, client, path, at):
         with client.session_transaction() as session:

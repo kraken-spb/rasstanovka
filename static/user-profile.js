@@ -7,7 +7,7 @@
   const blockedActions = new Set(['actions', 'import']);
   const allowedAction = action => !readOnly || !blockedActions.has(action.id);
   let current = null, dialog = null, saving = false;
-  const roleNames = {super_admin: 'Супер-администратор', admin: 'Администратор', foreman: 'Ответственный', viewer: 'Просмотр', hr_viewer: 'Управление по работе с персоналом'};
+  const roleNames = {super_admin: 'Супер-администратор', admin: 'Администратор', foreman: 'Ответственный', viewer: 'Просмотр', hr_viewer: 'Управление по работе с персоналом', rotation: 'Перевахта', recruitment: 'Комплектация'};
   const el = (tag, props = {}, ...children) => {
     const node = document.createElement(tag);
     for (const [key, value] of Object.entries(props)) {

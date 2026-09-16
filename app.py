@@ -17,6 +17,9 @@ from user_activity import migrate_user_activity, start_session, end_session, ses
 
 
 BASE_DIR = Path(__file__).resolve().parent
+DATABASE_BACKEND = os.getenv('DATABASE_BACKEND', 'sqlite')
+if DATABASE_BACKEND not in ('sqlite', 'postgres'):
+    raise RuntimeError('DATABASE_BACKEND must explicitly be sqlite or postgres.')
 DATABASE_PATH = Path(os.getenv("DATABASE_PATH", BASE_DIR / "data" / "placement.db"))
 SECRET_KEY = os.getenv("SECRET_KEY", "")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
@@ -27,14 +30,25 @@ if len(ADMIN_PASSWORD) < 10:
 
 app = Flask(__name__)
 app.json.ensure_ascii = False
+if DATABASE_BACKEND == 'postgres':
+    from postgres_db import ConcurrentChange
+
+    @app.errorhandler(ConcurrentChange)
+    def concurrent_change(_error):
+        return jsonify({'error': 'Данные изменены другим пользователем. Обновите значения и повторите действие.'}), 409
 app.config.update(
+    WORKFORCE_ENABLED=DATABASE_BACKEND == 'postgres',
     SECRET_KEY=SECRET_KEY,
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_SECURE=os.getenv("COOKIE_SECURE", "false").lower() == "true",
     PERMANENT_SESSION_LIFETIME=60 * 60 * 12,
     MAX_CONTENT_LENGTH=21_000_000,
+    SESSION_COOKIE_NAME=os.getenv('SESSION_COOKIE_NAME', 'crew_staging_session' if os.getenv('APP_ENVIRONMENT') == 'staging' else 'session'),
 )
+from security import browser_headers
+app.after_request(browser_headers)
+DUMMY_PASSWORD_HASH = generate_password_hash(secrets.token_urlsafe(32))
 
 ASSET_VERSIONS = {
     path.name: hashlib.sha256(path.read_bytes()).hexdigest()[:16]
@@ -80,6 +94,10 @@ def utc_now():
 
 def get_db():
     if "db" not in g:
+        if DATABASE_BACKEND == 'postgres':
+            from postgres_db import PostgresConnection
+            g.db = PostgresConnection()
+            return g.db
         DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
         from staffing_history import HistoryConnection
         g.db = sqlite3.connect(DATABASE_PATH, timeout=15, factory=HistoryConnection)
@@ -97,6 +115,10 @@ def close_db(_error):
 
 
 def init_db():
+    if DATABASE_BACKEND == 'postgres':
+        from postgres_db import get_pool
+        get_pool()
+        return
     db = get_db()
     db.execute("PRAGMA journal_mode = WAL")
     from user_roles import migrate_user_roles
@@ -108,7 +130,7 @@ def init_db():
             username TEXT NOT NULL UNIQUE COLLATE NOCASE,
             password_hash TEXT NOT NULL,
             full_name TEXT NOT NULL,
-            role TEXT NOT NULL CHECK(role IN ('super_admin', 'admin', 'foreman', 'viewer', 'hr_viewer')),
+            role TEXT NOT NULL CHECK(role IN ('super_admin', 'admin', 'foreman', 'viewer', 'hr_viewer', 'rotation', 'recruitment')),
             active INTEGER NOT NULL DEFAULT 1,
             created_at TEXT NOT NULL
         );
@@ -322,12 +344,17 @@ def roles_required(*roles):
         @login_required
         @wraps(view)
         def wrapped(*args, **kwargs):
-            from user_roles import HR_VIEWER
+            from user_roles import HR_VIEWER, WORKFORCE_SERVICE_ROLES, WORKFORCE_LEGACY_READ_ENDPOINTS
             # login_required has already checked the read-only endpoint allowlist.
-            if g.user["role"] not in roles and g.user['role'] != HR_VIEWER:
+            service_read = (g.user['role'] in WORKFORCE_SERVICE_ROLES and request.method in ('GET', 'HEAD')
+                            and request.endpoint in WORKFORCE_LEGACY_READ_ENDPOINTS)
+            if g.user["role"] not in roles and g.user['role'] != HR_VIEWER and not service_read:
                 return jsonify({"error": "Недостаточно прав"}), 403
             return view(*args, **kwargs)
 
+        if DATABASE_BACKEND == 'postgres':
+            from postgres_retry import staffing_transaction_retry
+            return staffing_transaction_retry(wrapped, get_db)
         return wrapped
 
     return decorator
@@ -341,7 +368,7 @@ def csrf_token():
 
 @app.before_request
 def csrf_protection():
-    if request.method in {"POST", "PUT", "PATCH", "DELETE"} and request.endpoint != "login":
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
         supplied = request.headers.get("X-CSRF-Token") or request.form.get("csrf_token", "")
         expected = session.get("csrf_token", "")
         if not expected or not hmac.compare_digest(supplied, expected):
@@ -355,6 +382,8 @@ app.jinja_env.globals["csrf_token"] = csrf_token
 
 @app.get("/health")
 def health():
+    if DATABASE_BACKEND == 'postgres':
+        get_db().native('SELECT 1')
     return {"status": "ok"}
 
 
@@ -367,16 +396,28 @@ def login():
 
     username = request.form.get("username", "").strip()
     password = request.form.get("password", "")
+    if len(username) > 200 or len(password) > 1024:
+        return render_template('login.html', error='Неверный логин или пароль.'), 401
     key = f"{request.remote_addr}:{username.lower()}"
     now = time.time()
-    LOGIN_ATTEMPTS[key] = [stamp for stamp in LOGIN_ATTEMPTS[key] if now - stamp < LOGIN_WINDOW_SECONDS]
-    if len(LOGIN_ATTEMPTS[key]) >= LOGIN_LIMIT:
+    if DATABASE_BACKEND == 'postgres':
+        from security import reserve_login
+        allowed = reserve_login(get_db(), app.secret_key, request.remote_addr or '', username)
+    else:
+        LOGIN_ATTEMPTS[key] = [stamp for stamp in LOGIN_ATTEMPTS[key] if now - stamp < LOGIN_WINDOW_SECONDS]
+        allowed = len(LOGIN_ATTEMPTS[key]) < LOGIN_LIMIT
+    if not allowed:
         return render_template("login.html", error="Слишком много попыток. Повторите через 10 минут."), 429
     user = get_db().execute("SELECT * FROM users WHERE username = ? COLLATE NOCASE", (username,)).fetchone()
-    if not user or not user["active"] or not check_password_hash(user["password_hash"], password):
-        LOGIN_ATTEMPTS[key].append(now)
+    password_valid = check_password_hash(user['password_hash'] if user else DUMMY_PASSWORD_HASH, password)
+    if not user or not user["active"] or not password_valid:
+        if DATABASE_BACKEND != 'postgres':
+            LOGIN_ATTEMPTS[key].append(now)
         return render_template("login.html", error="Неверный логин или пароль."), 401
     LOGIN_ATTEMPTS.pop(key, None)
+    if DATABASE_BACKEND == 'postgres':
+        from security import clear_login
+        clear_login(get_db(), app.secret_key, request.remote_addr or '', username)
     end_session(get_db())
     session.clear()
     session.permanent = True
@@ -399,7 +440,8 @@ def logout():
 def index():
     from user_preferences import staffing_preferences
     return render_template("index.html", user=dict(g.user), today=datetime.now(timezone(timedelta(hours=3))).date().isoformat(),
-                           staffing_preferences=staffing_preferences(get_db(), g.user["id"]))
+                           staffing_preferences=staffing_preferences(get_db(), g.user["id"]),
+                           workforce_enabled=DATABASE_BACKEND == 'postgres')
 
 
 @app.get("/api/reference")
@@ -601,6 +643,9 @@ def update_user(user_id):
             if not others:
                 return jsonify({'error': 'Должен остаться хотя бы один действующий администратор.'}), 409
         db.execute(f"UPDATE users SET {', '.join(fields)} WHERE id = ?", [*params, user_id])
+        if payload.get('password') or next_role != user['role'] or not next_active:
+            db.execute('UPDATE user_sessions SET ended_at=? WHERE user_id=? AND ended_at IS NULL',
+                       (int(time.time()), user_id))
     return jsonify({"updated": user_id})
 
 
@@ -652,6 +697,8 @@ from telegram_api import register_telegram
 register_telegram(app, get_db, roles_required)
 from selected_transfer import register_selected_transfer
 register_selected_transfer(app, get_db, roles_required, utc_now)
+from workforce_api import register_workforce_routes
+register_workforce_routes(app, get_db, roles_required)
 
 with app.app_context():
     init_db()

@@ -21,6 +21,8 @@ class TelegramError(Exception):
 
 
 def telegram_call(token, method, payload=None, document=None):
+    if os.getenv('OUTBOUND_INTEGRATIONS_ENABLED', 'true').lower() != 'true':
+        raise TelegramError('Внешние интеграции отключены на тестовом стенде.')
     if method not in {'getMe','getWebhookInfo','getUpdates','sendMessage','sendDocument','setMyCommands'}:
         raise ValueError('Unsupported Telegram method')
     if not TOKEN_RE.fullmatch(token):
@@ -52,6 +54,8 @@ def telegram_call(token, method, payload=None, document=None):
 
 
 def config_path(db):
+    if getattr(db, 'dialect', None) == 'postgres':
+        return Path(os.getenv('INTEGRATION_CONFIG_PATH', Path(__file__).resolve().parent / 'data')) / 'telegram.env'
     filename = db.execute('PRAGMA database_list').fetchone()[2]
     return Path(filename).parent / 'telegram.env'
 

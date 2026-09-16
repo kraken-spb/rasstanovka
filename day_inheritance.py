@@ -23,14 +23,16 @@ def migrate_day_inheritance(db):
         PRIMARY KEY(work_date,worker_id))''')
 
 
-def day_snapshots(db, day, ids):
+def day_snapshots(db, day, ids, records=None):
     """Fingerprint individual dated fields, including edit tokens and explicit empty values."""
     result = {i: {} for i in ids}
     if not ids:
         return result
     for table, kind in (('assignments', 'assignment'), ('staffing_shifts', 'shift'),
                         ('staffing_attendance', 'attendance'), ('staffing_performed_work', 'work')):
-        for row in db.execute(f"SELECT * FROM {table} WHERE work_date=? AND worker_id IN ({','.join('?' for _ in ids)})", [day, *ids]):
+        from query_helpers import dated_records
+        rows = records[table] if records is not None else dated_records(db, table, day, ids)
+        for row in rows:
             key = kind + (':' + canonical_shift(row['shift']) if kind in ('assignment', 'work') else '')
             digest = hashlib.sha256(json.dumps(dict(row), sort_keys=True, ensure_ascii=False).encode('utf-8')).hexdigest()
             # Keep legacy duplicate shift spellings distinct; never hide one in the fingerprint.
@@ -41,12 +43,12 @@ def day_snapshots(db, day, ids):
     return result
 
 
-def freshness_states(db, day, ids):
-    current = day_snapshots(db, day, ids)
+def freshness_states(db, day, ids, records=None):
+    current = day_snapshots(db, day, ids, records)
     if not ids:
         return {}
-    baselines = {r['worker_id']: r for r in db.execute(
-        f"SELECT * FROM staffing_inherited_rows WHERE work_date=? AND worker_id IN ({','.join('?' for _ in ids)})", [day, *ids])}
+    from query_helpers import dated_records
+    baselines = {r['worker_id']: r for r in dated_records(db, 'staffing_inherited_rows', day, ids)}
     legacy = db.execute('SELECT 1 FROM staffing_day_inheritance WHERE work_date=? LIMIT 1', (day,)).fetchone() is not None
     labels = {'assignment': 'Назначение', 'shift': 'Смена', 'attendance': 'Статус явки', 'work': 'Выполняемые работы'}
     def label(key):

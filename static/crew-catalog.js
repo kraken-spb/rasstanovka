@@ -2,7 +2,7 @@
   'use strict';
   const $ = id => document.getElementById(id), root = document.querySelector('.app-shell');
   if (!$('view-crew-catalog')) return;
-  const readOnly = root.dataset.role === 'hr_viewer';
+  const readOnly = ['hr_viewer', 'rotation', 'recruitment'].includes(root.dataset.role);
   let rows = [], busy = false, editing = false;
   const el = (tag, props = {}, ...children) => {
     const node = document.createElement(tag);

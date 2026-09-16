@@ -52,7 +52,10 @@ class PlacementAppTest(unittest.TestCase):
 
     def test_protected_and_full_workflow(self):
         self.assertEqual(self.client.get("/").status_code, 302)
-        response = self.client.post("/login", data={"username": "admin", "password": "test-password-123"})
+        self.client.get('/login')
+        with self.client.session_transaction() as session:
+            login_token = session['csrf_token']
+        response = self.client.post("/login", data={"username": "admin", "password": "test-password-123", 'csrf_token': login_token})
         self.assertEqual(response.status_code, 302)
         with self.client.session_transaction() as session:
             headers = {"X-CSRF-Token": session["csrf_token"]}

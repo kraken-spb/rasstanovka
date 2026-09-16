@@ -8,10 +8,22 @@ from uuid import uuid4
 
 HR_VIEWER = 'hr_viewer'
 HR_ROLE_NAME = 'Управление по работе с персоналом'
-USER_ROLES = {'super_admin', 'admin', 'foreman', 'viewer', HR_VIEWER}
+USER_ROLES = {'super_admin', 'admin', 'foreman', 'viewer', HR_VIEWER, 'rotation', 'recruitment'}
+WORKFORCE_SERVICE_ROLES = {'rotation', 'recruitment'}
+WORKFORCE_LEGACY_READ_ENDPOINTS = {
+    'index', 'reference', 'dashboard', 'activity_dates', 'assignments',
+    'employees', 'crew_transfer_options', 'list_crew_catalog', 'crew_catalog_members',
+    'list_crews', 'crew_departments', 'crew_board', 'crew_candidates',
+    'contractors', 'categories', 'location_catalogs', 'list_smu',
+    'personnel_dashboard', 'placement_report', 'get_verification', 'position_cards_pdf',
+    'staffing_people', 'staffing_table', 'staffing_export_options', 'staffing_export',
+    'staffing_history_state', 'calendar', 'get_preferences', 'get_profile',
+}
 
 # Reviewed business-data reads. New endpoints must explicitly opt in here.
 HR_READ_ENDPOINTS = {
+    'workforce_reference', 'workforce_people', 'workforce_person', 'workforce_export',
+    'workforce_export_job_status', 'workforce_export_job_download',
     'index', 'reference', 'dashboard', 'activity_dates', 'assignments', 'retired_plans',
     'users', 'employees', 'crew_transfer_options', 'list_crew_catalog', 'crew_catalog_members',
     'list_crews', 'crew_departments', 'crew_board', 'crew_candidates',
@@ -23,6 +35,8 @@ HR_READ_ENDPOINTS = {
 }
 HR_PERSONAL_OPERATIONS = {
     ('save_preferences', 'PATCH'), ('heartbeat', 'POST'), ('logout', 'POST'),
+    # Creating a private export artifact does not edit personnel business data.
+    ('workforce_export_job_create', 'POST'),
 }
 
 
@@ -32,6 +46,9 @@ def hr_request_allowed(endpoint, method):
 
 
 def backup_database(db, label):
+    if getattr(db, 'dialect', None) == 'postgres':
+        from backup_api import create_backup
+        return create_backup(db, reason=label)
     database = Path(db.execute('PRAGMA database_list').fetchone()[2])
     folder = database.parent / 'backups'
     folder.mkdir(parents=True, exist_ok=True)
@@ -45,7 +62,7 @@ def backup_database(db, label):
 
 def migrate_user_roles(db):
     schema = db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='users'").fetchone()
-    if not schema or "'hr_viewer'" in schema[0]:
+    if not schema or all("'" + role + "'" in schema[0] for role in USER_ROLES):
         return
     if db.in_transaction:
         raise RuntimeError('Миграция ролей должна запускаться до других изменений базы.')
@@ -54,7 +71,7 @@ def migrate_user_roles(db):
         with db:
             db.execute('BEGIN IMMEDIATE')
             schema = db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='users'").fetchone()[0]
-            if "'hr_viewer'" in schema:
+            if all("'" + role + "'" in schema for role in USER_ROLES):
                 return
             backup_database(db, 'before-hr-viewer-role')
             dependents = db.execute("SELECT sql FROM sqlite_master WHERE tbl_name='users' AND type IN ('index','trigger') AND sql IS NOT NULL").fetchall()
@@ -63,7 +80,7 @@ def migrate_user_roles(db):
                 username TEXT NOT NULL UNIQUE COLLATE NOCASE,
                 password_hash TEXT NOT NULL,
                 full_name TEXT NOT NULL,
-                role TEXT NOT NULL CHECK(role IN ('super_admin', 'admin', 'foreman', 'viewer', 'hr_viewer')),
+                role TEXT NOT NULL CHECK(role IN ('super_admin', 'admin', 'foreman', 'viewer', 'hr_viewer', 'rotation', 'recruitment')),
                 active INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL
             )""")

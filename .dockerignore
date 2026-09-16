@@ -13,3 +13,6 @@ outputs/
 seed.json
 .playwright-cli/
 .inspect_workbook.py
+tmp/
+*.log
+tests/

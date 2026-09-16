@@ -1,4 +1,4 @@
-{% set hr_readonly = user.role == 'hr_viewer' %}
+{% set hr_readonly = user.role in ('hr_viewer', 'rotation', 'recruitment') %}
 <!doctype html>
 <html lang="ru">
 <head>
@@ -32,22 +32,25 @@
   <link rel="stylesheet" href="{{ asset_url('action-icons.css') }}">
   <link rel="stylesheet" href="{{ asset_url('table-pagination.css') }}">
   <link rel="stylesheet" href="{{ asset_url('user-profile.css') }}">
+  {% if workforce_enabled %}<link rel="stylesheet" href="{{ asset_url('workforce.css') }}">{% endif %}
 </head>
-<body>
+<body{% if workforce_enabled %} class="workforce-layout"{% endif %}>
   <header class="topbar">
     <a class="brand" href="{{ '#dashboard' if user.role == 'viewer' else '#staffing' }}"><span class="brand-mark">Р</span><strong>Расстановка</strong></a>
     <nav class="desktop-nav" aria-label="Разделы">
+      {% if workforce_enabled %}<button id="sidebar-toggle" type="button" aria-label="Развернуть меню" aria-expanded="false">Меню</button><button data-view="workforce">Учёт персонала</button>{% endif %}
       {% if user.role != 'viewer' %}<button data-view="staffing">Расстановка</button><button data-view="verification">Верификация</button>{% endif %}
       {% if user.role != 'viewer' %}<button data-view="employees">Сотрудники</button><button data-view="outstaff">Аутстафф</button>{% endif %}
       <button data-view="dashboard">Отчеты</button>
       <button data-view="analytics">Дашборд</button>
       {% if user.role in ('admin', 'super_admin', 'hr_viewer') %}<button data-view="plan">План</button><button data-view="catalogs">Справочники</button><button data-view="accounts">Управление</button><button data-view="logs">Логи</button>{% endif %}{% if user.role == 'super_admin' %}<button data-view="backups">Резервные копии</button>{% endif %}
     </nav>
-    <div class="user-menu"><button id="user-profile-open" data-readonly="{{ 'true' if hr_readonly else 'false' }}" type="button" class="user-profile-trigger" aria-label="Мой профиль и настройки" title="Мой профиль и настройки"><span class="profile-avatar" aria-hidden="true">{{ user.full_name[:1] }}</span><span class="profile-trigger-name">{{ user.full_name }}<small>{{ {'super_admin':'Супер-администратор','admin':'Администратор','foreman':'Ответственный','viewer':'Просмотр','hr_viewer':'Управление по работе с персоналом'}[user.role] }}</small></span></button>
+    <div class="user-menu"><button id="user-profile-open" data-readonly="{{ 'true' if user.role == 'hr_viewer' else 'false' }}" type="button" class="user-profile-trigger" aria-label="Мой профиль и настройки" title="Мой профиль и настройки"><span class="profile-avatar" aria-hidden="true">{{ user.full_name[:1] }}</span><span class="profile-trigger-name">{{ user.full_name }}<small>{{ {'super_admin':'Супер-администратор','admin':'Администратор','foreman':'Ответственный','viewer':'Просмотр','hr_viewer':'Управление по работе с персоналом','rotation':'Перевахта','recruitment':'Комплектация'}[user.role] }}</small></span></button>
       <form method="post" action="{{ url_for('logout') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="icon-button" aria-label="Выйти" title="Выйти">↗</button></form>
     </div>
   </header>
   <main class="app-shell" data-role="{{ user.role }}" data-readonly="{{ 'true' if hr_readonly else 'false' }}" data-user-id="{{ user.id }}" data-today="{{ today }}" data-csrf="{{ csrf_token() }}">
+    {% if workforce_enabled %}{% include 'workforce.html' %}{% endif %}
     {% if user.role != 'viewer' %}
     <section id="view-employees" class="view">
       <div class="page-heading"><div><h1>Сотрудники</h1><p>Полный справочник сотрудников расстановки · текущий состав бригад</p>
@@ -246,6 +249,7 @@
         <h2>Экспорт расстановки</h2>
         <p id="staffing-export-help">Один Excel-файл: «Список сотрудников» и «Сводная таблица» по этому списку. Дата, СМУ, смена и категория применяются к обеим вкладкам.</p>
         <form id="staffing-export-form" class="staffing-export-controls" aria-describedby="staffing-export-help">
+          {% if workforce_enabled %}<label>Вид отчёта<select id="staffing-export-kind"><option value="staffing">Расстановка: список и сводная</option><option value="urp">УРП: явка, аутстафф, неявка, заезд и ПВП</option></select></label>{% endif %}
           <label id="staffing-export-category-label">Категория ГДЛР<select id="staffing-export-category"><option value="">Все категории</option></select></label>
           <label>Дата расстановки<input id="staffing-export-date" name="date" type="date" value="{{ today }}" required></label>
           <label>СМУ<select id="staffing-export-department" name="department"><option value="">Все СМУ</option></select></label>
@@ -320,7 +324,9 @@
         <button type="button" data-catalog="stages" aria-pressed="false" class="secondary-button">Этапы</button>
         <button type="button" data-catalog="groups" aria-pressed="false" class="secondary-button">Группы подобъектов</button>
         <button type="button" data-catalog="subobjects" aria-pressed="false" class="secondary-button">Подобъекты</button>
+        {% if workforce_enabled %}<button type="button" data-catalog="workforce" aria-pressed="false" class="secondary-button">Учёт персонала</button>{% endif %}
       </nav>
+      {% if workforce_enabled %}<section id="workforce-catalog-panel" hidden></section>{% endif %}
     <section id="view-categories" class="catalog-category-section active">
       <div class="page-heading"><div><h2>ГДТЛР</h2><p>Справочник для ручной привязки сотрудников из текущего файла.</p></div><button id="categories-refresh" type="button" class="secondary-button">Обновить справочник</button></div>
       <div class="categories-stats" aria-live="polite"><div><span>Категорий</span><strong id="categories-count">—</strong></div><div><span>Связано сотрудников</span><strong id="categories-bound">—</strong></div></div>
@@ -416,7 +422,7 @@
         <form id="account-form" class="stack-form" aria-label="Новая учётная запись">
           <label>ФИО<input id="account-name" required></label><label>Логин<input id="account-username" minlength="3" required autocomplete="off"></label>
           <label>Пароль<input id="account-password" type="password" minlength="10" required autocomplete="new-password"></label>
-          <label>Роль<select id="account-role"><option value="foreman">Прораб</option><option value="viewer">Только просмотр</option><option value="hr_viewer">Управление по работе с персоналом</option><option value="admin">Администратор</option>{% if user.role == 'super_admin' %}<option value="super_admin">Супер-администратор</option>{% endif %}</select></label>
+          <label>Роль<select id="account-role"><option value="foreman">Ответственный за расстановку</option><option value="rotation">Перевахта</option><option value="recruitment">Комплектация</option><option value="viewer">Только просмотр</option><option value="hr_viewer">Управление по работе с персоналом</option><option value="admin">Администратор</option>{% if user.role == 'super_admin' %}<option value="super_admin">Супер-администратор</option>{% endif %}</select></label>
           <button class="primary-button">Создать учётную запись</button>
         </form>
       </details>

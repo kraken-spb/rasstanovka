@@ -16,11 +16,12 @@ def migrate_performed_work(db):
         PRIMARY KEY(work_date,worker_id,shift))''')
 
 
-def performed_work_states(db, day, ids):
+def performed_work_states(db, day, ids, records=None):
     if not ids:
         return {}
-    return {(r['worker_id'], r['shift']): {'performed_work': r['description'], 'performed_work_token': r['edit_token']}
-            for r in db.execute(f"SELECT * FROM staffing_performed_work WHERE work_date=? AND worker_id IN ({','.join('?' for _ in ids)})", [day, *ids])}
+    from query_helpers import dated_records
+    rows = records['staffing_performed_work'] if records is not None else dated_records(db, 'staffing_performed_work', day, ids)
+    return {(r['worker_id'], r['shift']): {'performed_work': r['description'], 'performed_work_token': r['edit_token']} for r in rows}
 
 
 def register_performed_work_routes(app, get_db, roles_required, utc_now):

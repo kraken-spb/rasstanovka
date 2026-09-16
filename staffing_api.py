@@ -3,7 +3,7 @@ from filter_values import argument as filter_argument, values as filter_values, 
 import json
 import secrets
 from datetime import date, datetime
-from user_smu_access import can_crew, require_crew, require_workers, worker_clause, legacy_foreman, require_all, allowed_workers
+from user_smu_access import can_crew, require_crew, require_workers, worker_clause, legacy_foreman, require_all, allowed_workers, allowed_crews
 
 from flask import abort, g, jsonify, request
 from itsdangerous import BadSignature, URLSafeTimedSerializer
@@ -24,11 +24,13 @@ def assignment_authors(db, day, rows, end_day=None):
     ids = sorted({row['id'] for row in rows if row['assignment_id']})
     if not ids:
         return {}
+    from query_helpers import membership
+    clause, parameters = membership(db, 'worker_id', ids)
     events = db.execute(f"""SELECT e.*,u.full_name actor_name FROM assignment_events e
         JOIN (SELECT MAX(id) id FROM assignment_events WHERE work_date BETWEEN ? AND ?
-              AND worker_id IN ({','.join('?' for _ in ids)})
+              AND {clause}
               GROUP BY work_date,worker_id,CASE WHEN shift='Ночная смена' THEN '2 смена' ELSE shift END) latest ON latest.id=e.id
-        LEFT JOIN users u ON u.id=e.changed_by""", [day, end_day or day, *ids]).fetchall()
+        LEFT JOIN users u ON u.id=e.changed_by""", [day, end_day or day, *parameters]).fetchall()
     latest = {(e['work_date'], e['worker_id'], canonical_shift(e['shift'])): e for e in events}
     authors = {}
     for row in rows:
@@ -93,13 +95,16 @@ def register_staffing_routes(app, get_db, roles_required, utc_now):
         if shift not in {"1 смена", "2 смена", "all"}:
             abort(400, description="Выберите смену.")
         db = get_db()
+        if getattr(db, 'dialect', None) == 'postgres' and not db.in_transaction:
+            db.execute('BEGIN')
         batch = db.execute("SELECT * FROM staffing_imports ORDER BY id DESC LIMIT 1").fetchone()
         change = None
         if 'change_metric' in request.args:
             if shift != 'all' or 'calendar_sites' in request.args:
                 abort(400, description='Изменение сравнивается за день, по обеим сменам.')
             from placement_report import report_changes, report_author_argument
-            db.execute('BEGIN')
+            if not db.in_transaction:
+                db.execute('BEGIN')
             change = report_changes(db, day, request.args['change_metric'],
                 pps=filter_argument('change_pps'), category=filter_argument('change_category'), author=report_author_argument('change_author'))
         calendar_sites = None
@@ -120,7 +125,8 @@ def register_staffing_routes(app, get_db, roles_required, utc_now):
         has_outstaff = db.execute('SELECT 1 FROM outstaff_members LIMIT 1').fetchone() is not None
         has_manual = db.execute('SELECT 1 FROM manual_employees LIMIT 1').fetchone() is not None
         has_restored = db.execute('SELECT 1 FROM employee_restorations LIMIT 1').fetchone() is not None
-        if not batch and not has_outstaff and not has_manual and not has_restored and calendar_sites is None and change is None:
+        has_workforce = getattr(db, 'dialect', None) == 'postgres' and db.native('SELECT 1 FROM workforce_profiles WHERE staffing_ready LIMIT 1').fetchone() is not None
+        if not batch and not has_outstaff and not has_manual and not has_restored and not has_workforce and calendar_sites is None and change is None:
             return jsonify({"import": None, "crews": [], "rows": [], "index": []})
         source = f'''({active_members_sql()}
             UNION ALL SELECT om.worker_id,om.source_row,'' FROM outstaff_members om
@@ -132,6 +138,9 @@ def register_staffing_routes(app, get_db, roles_required, utc_now):
             WHERE NOT EXISTS (SELECT 1 FROM ({active_members_sql()}) current WHERE current.worker_id=er.worker_id)
               AND NOT EXISTS (SELECT 1 FROM outstaff_members om WHERE om.worker_id=er.worker_id)
               AND NOT EXISTS (SELECT 1 FROM manual_employees me WHERE me.worker_id=er.worker_id)) sm JOIN workers w ON w.id=sm.worker_id'''
+        if getattr(db, 'dialect', None) == 'postgres':
+            from staffing_import import postgres_member_source_sql
+            source = postgres_member_source_sql()
         assignment_join = """a.worker_id=w.id AND a.work_date=?
             AND ((?='all' AND a.id=(SELECT MIN(aa.id) FROM assignments aa WHERE aa.worker_id=w.id AND aa.work_date=a.work_date))
                 OR (CASE WHEN a.shift='Ночная смена' THEN '2 смена' ELSE a.shift END)=?)"""
@@ -208,11 +217,15 @@ def register_staffing_routes(app, get_db, roles_required, utc_now):
             LEFT JOIN assignments a ON {assignment_join}
             LEFT JOIN subobjects s ON s.id=a.subobject_id LEFT JOIN objects o ON o.id=s.object_id
             WHERE {where}""" + clause, params).fetchall()
-        daily = day_states(db, day, [row['id'] for row in rows]) if shift == 'all' else {}
+        from query_helpers import dated_records
+        ids = sorted({row['id'] for row in rows})
+        records = {table: dated_records(db, table, day, ids) for table in
+                   ('assignments', 'staffing_shifts', 'staffing_attendance', 'staffing_performed_work')}
+        daily = day_states(db, day, ids, records) if shift == 'all' else {}
         authors = assignment_authors(db, day, rows)
-        attendance = attendance_states(db, day, [row['id'] for row in rows])
-        freshness = freshness_states(db, day, [row['id'] for row in rows])
-        works = performed_work_states(db, day, [row['id'] for row in rows])
+        attendance = attendance_states(db, day, ids, records)
+        freshness = freshness_states(db, day, ids, records)
+        works = performed_work_states(db, day, ids, records)
         extra = {}
         change_editable = allowed_workers(db, [row['id'] for row in rows]) if change is not None else set()
         if change is not None:
@@ -228,9 +241,14 @@ def register_staffing_routes(app, get_db, roles_required, utc_now):
                 and ('calendar_employer' not in request.args or
                     placement_company(assignment['employer'], *companies[assignment['worker_id']]) == request.args['calendar_employer']))
         groups = responsibility_states(db, [row['id'] for row in rows])
+        editable_crews = allowed_crews(db, {row['crew_id'] for row in rows}, whole=True)
+        actor_legacy_foreman = legacy_foreman(db)
+        from workforce_core import departure_warnings
+        travel_warnings = departure_warnings(db, day, ids)
         result, crews = [], {}
         for row in rows:
             item = dict(row)
+            item['departure_warning'] = travel_warnings.get(row['id'])
             for field in ('linear_itr', 'brigadier', 'crew_linear_itr', 'crew_brigadier'):
                 item[field + '_person_id'] = responsible_ref(row, field)
             from employer_api import employer_token
@@ -243,9 +261,9 @@ def register_staffing_routes(app, get_db, roles_required, utc_now):
                 item.update({k: v for k, v in daily[row['id']].items() if k != 'assignments'})
             item["locked"] = bool(row["assignment_id"] and (
                 row["assignment_crew_id"] not in (None, row["crew_id"]) or (
-                    row["assignment_crew_id"] is None and legacy_foreman(db)
+                    row["assignment_crew_id"] is None and actor_legacy_foreman
                     and row["foreman_user_id"] != g.user["id"])))
-            item['locked'] = item['locked'] or g.user['role'] == 'hr_viewer' or not row['active'] or not row['staffing_eligible'] or item.get('shift_conflict', False)
+            item['locked'] = item['locked'] or g.user['role'] in ('hr_viewer', 'rotation', 'recruitment') or not row['active'] or not row['staffing_eligible'] or item.get('shift_conflict', False)
             if change is not None:
                 item['report_change'] = change['workers'][row['id']]
                 item['locked'] = item['locked'] or row['id'] not in change_editable
@@ -260,7 +278,7 @@ def register_staffing_routes(app, get_db, roles_required, utc_now):
                               "linear_itr": row["linear_itr"] or "", "brigadier": row["brigadier"] or "",
                               "linear_itr_person_id": item['crew_linear_itr_person_id'], "brigadier_person_id": item['crew_brigadier_person_id'],
                               "details_token": row["details_token"], "assigned": 0,
-                              "can_edit_whole": bool(g.user['role'] != 'hr_viewer' and key and can_crew(db, key, whole=True))}
+                              "can_edit_whole": bool(g.user['role'] not in ('hr_viewer', 'rotation', 'recruitment') and key and key in editable_crews)}
             crews[key]["count"] += 1
             crews[key]["assigned"] += int(bool(row["assignment_id"]))
         ordered = sorted(crews.values(), key=lambda c: natural_key(c["name"]))
@@ -281,6 +299,8 @@ def register_staffing_routes(app, get_db, roles_required, utc_now):
             info['has_manual'] = True
         if has_restored and info is None:
             info = {'id': None, 'filename': 'Восстановленные сотрудники', 'sheet': ''}
+        if has_workforce and info is None:
+            info = {'id': None, 'filename': 'Единый учёт персонала', 'sheet': ''}
         if batch and g.user["role"] in ('admin', 'super_admin'):
             info["summary"] = json.loads(batch["summary_json"])
         if request.args.get("view") == "summary":

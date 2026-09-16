@@ -3,7 +3,7 @@ import hashlib
 import json
 import secrets
 
-from flask import abort, g, jsonify, request
+from flask import abort, g, has_request_context, jsonify, request
 from user_roles import HR_VIEWER
 
 
@@ -21,12 +21,26 @@ def migrate_smu_access(db):
 
 def profile(db, user=None):
     user = user if user is not None else g.user
+    # These routes never edit roles/scopes. Reuse their transaction's already
+    # verified profile; never share permissions across requests or transactions.
+    cache = None
+    if (getattr(db, 'dialect', None) == 'postgres' and db.in_transaction and has_request_context()
+            and request.endpoint in {'staffing_table', 'update_day', 'set_workplace'}):
+        cache = getattr(db, '_permission_profiles', None)
+        if cache is None:
+            cache = db._permission_profiles = {}
+        if user['id'] in cache:
+            return cache[user['id']]
     actor = db.execute('SELECT id,role,active FROM users WHERE id=?', (user['id'],)).fetchone()
     if not actor or not actor['active'] or actor['role'] == 'viewer':
-        return actor, {'mode': 'selected', 'departments_json': '[]'}
-    if actor['role'] in ('super_admin', HR_VIEWER):
-        return actor, {'mode': 'all', 'departments_json': '[]'}
-    return actor, db.execute('SELECT * FROM user_smu_access WHERE user_id=?', (actor['id'],)).fetchone()
+        result = actor, {'mode': 'selected', 'departments_json': '[]'}
+    elif actor['role'] in ('super_admin', HR_VIEWER):
+        result = actor, {'mode': 'all', 'departments_json': '[]'}
+    else:
+        result = actor, db.execute('SELECT * FROM user_smu_access WHERE user_id=?', (actor['id'],)).fetchone()
+    if cache is not None:
+        cache[user['id']] = result
+    return result
 
 
 def explicit_scope(db, user=None):
@@ -98,6 +112,33 @@ def can_crew(db, crew_id, user=None, whole=False):
     if not ids:
         return crew['owner_user_id'] == actor['id'] and bool(json.loads(scope['departments_json']))
     return len(allowed) == len(ids) if whole else bool(allowed)
+
+
+def allowed_crews(db, ids, user=None, whole=False):
+    """Evaluate a list with one fresh permission profile and one membership query."""
+    from query_helpers import membership
+    ids = set(ids) - {None}
+    if not ids:
+        return set()
+    actor, scope = profile(db, user)
+    clause, parameters = membership(db, 'c.id', sorted(ids))
+    rows = db.execute(f'''SELECT c.id,c.owner_user_id,w.id worker_id,w.department
+        FROM crews c LEFT JOIN crew_members m ON m.crew_id=c.id
+        LEFT JOIN workers w ON w.id=m.worker_id WHERE {clause}''', parameters)
+    groups = {}
+    for row in rows:
+        item = groups.setdefault(row['id'], {'owner': row['owner_user_id'], 'departments': []})
+        if row['worker_id'] is not None:
+            item['departments'].append(row['department'])
+    if scope is None:
+        return {key for key, item in groups.items() if actor['role'] in ('admin', 'super_admin') or item['owner'] == actor['id']}
+    if scope['mode'] == 'all':
+        return set(groups)
+    departments = set(json.loads(scope['departments_json']))
+    return {key for key, item in groups.items() if
+            ((all(value in departments for value in item['departments']) if whole else
+              any(value in departments for value in item['departments'])) if item['departments'] else
+             item['owner'] == actor['id'] and bool(departments))}
 
 
 def require_crew(db, crew_id, user=None, whole=False):

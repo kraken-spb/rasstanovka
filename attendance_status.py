@@ -20,10 +20,12 @@ def migrate_attendance_status(db):
         updated_at TEXT NOT NULL, PRIMARY KEY(work_date,worker_id))""")
 
 
-def attendance_states(db, day, ids):
+def attendance_states(db, day, ids, records=None):
     result = {i: {'attendance_status': 'Явка', 'attendance_token': None} for i in ids}
     if ids:
-        for row in db.execute(f"SELECT * FROM staffing_attendance WHERE work_date=? AND worker_id IN ({','.join('?' for _ in ids)})", [day, *ids]):
+        from query_helpers import dated_records
+        rows = records['staffing_attendance'] if records is not None else dated_records(db, 'staffing_attendance', day, ids)
+        for row in rows:
             result[row['worker_id']] = {'attendance_status': row['status'], 'attendance_token': row['edit_token']}
     return result
 
@@ -48,7 +50,7 @@ def calendar_absences(db, start, end, category):
         WHERE t.work_date BETWEEN ? AND ? AND t.status<>'Явка'
         AND NOT EXISTS (SELECT 1 FROM employee_inactive_periods er WHERE er.worker_id=t.worker_id
             AND er.effective_date<=t.work_date AND (er.restored_date IS NULL OR er.restored_date>t.work_date))""" + category_filter +
-        " GROUP BY t.work_date,t.worker_id ORDER BY t.work_date,t.status,w.full_name,w.id", params)]
+        " GROUP BY t.work_date,t.worker_id,t.status,w.id,c.name,gc.name ORDER BY t.work_date,t.status,w.full_name,w.id", params)]
 
 
 def register_attendance_routes(app, get_db, roles_required, utc_now):

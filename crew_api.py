@@ -8,6 +8,7 @@ import re
 from contextlib import closing
 from datetime import date
 from pathlib import Path
+from functools import lru_cache
 
 from flask import abort, g, jsonify, request
 from itsdangerous import BadSignature, URLSafeSerializer, URLSafeTimedSerializer
@@ -15,6 +16,13 @@ from itsdangerous import BadSignature, URLSafeSerializer, URLSafeTimedSerializer
 from staffing_shifts import responsible_ref, resolve_responsible
 
 SHIFTS = {"1 смена", "2 смена"}
+
+
+@lru_cache(maxsize=12000)
+def signed_employee_snapshot(secret_key, snapshot):
+    """Cache immutable signed snapshots, never permissions or live assignments."""
+    fingerprint = hashlib.sha256(json.dumps(dict(snapshot), sort_keys=True, ensure_ascii=False).encode('utf-8')).hexdigest()
+    return URLSafeSerializer(secret_key, salt='employee-membership').dumps(fingerprint)
 
 
 def register_crew_routes(app, get_db, roles_required, utc_now):
@@ -43,8 +51,7 @@ def register_crew_routes(app, get_db, roles_required, utc_now):
             (worker_id,) if worker_id is not None else ()).fetchall()
 
     def employee_token(row):
-        return URLSafeSerializer(app.secret_key, salt='employee-membership').dumps(
-            hashlib.sha256(json.dumps(dict(row), sort_keys=True, ensure_ascii=False).encode('utf-8')).hexdigest())
+        return signed_employee_snapshot(app.secret_key, tuple(sorted(dict(row).items())))
 
     @app.get('/api/employees')
     @roles_required('admin', 'foreman')
@@ -441,7 +448,7 @@ def register_crew_routes(app, get_db, roles_required, utc_now):
             """SELECT c.id, c.name, c.owner_user_id, u.full_name owner_name, COUNT(m.worker_id) member_count
                FROM crews c JOIN users u ON u.id = c.owner_user_id
                LEFT JOIN crew_members m ON m.crew_id = c.id""" + clause
-            + " GROUP BY c.id ORDER BY u.full_name, c.name", params,
+            + " GROUP BY c.id,u.full_name ORDER BY u.full_name, c.name", params,
         )
         return jsonify({"rows": [dict(row) for row in rows if can_crew(get_db(), row['id'])]})
 
@@ -623,12 +630,8 @@ def register_crew_routes(app, get_db, roles_required, utc_now):
             abort(409, description='Состав участка, ответственные или пользователь изменились. Проверьте список заново.')
         if checked['conflicts'] or not checked['crews']:
             abort(409, description='Нет подходящих бригад или совпадают их названия. Проверьте список заново.')
-        db_path = Path(db.execute('PRAGMA database_list').fetchone()['file'])
-        backup_dir = db_path.parent / 'backups'
-        backup_dir.mkdir(exist_ok=True)
-        backup = backup_dir / ('before-smu-transfer-' + secrets.token_hex(8) + '.sqlite3')
-        with closing(sqlite3.connect(backup)) as destination:
-            db.backup(destination)
+        from backup_api import create_backup
+        backup = create_backup(db, reason='before-smu-transfer')
         try:
             with db:
                 db.execute('BEGIN IMMEDIATE')

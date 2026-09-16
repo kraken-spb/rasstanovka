@@ -3,7 +3,7 @@
   const MF = window.MultiFilter;
   const host = document.getElementById('view-verification');
   if (!host) return;
-  const readOnly = document.querySelector('.app-shell').dataset.role === 'hr_viewer';
+  const readOnly = ['hr_viewer', 'rotation', 'recruitment'].includes(document.querySelector('.app-shell').dataset.role);
   const el = (tag, attrs = {}, ...children) => {
     const node = document.createElement(tag);
     Object.entries(attrs).forEach(([key,value]) => key in node ? node[key]=value : node.setAttribute(key,value));

@@ -1,0 +1,3 @@
+# Applied SQL migrations are checksum-verified. Preserve their exact bytes on
+# every checkout rather than letting platform newline conversion change hashes.
+migrations/postgres/*.sql -text

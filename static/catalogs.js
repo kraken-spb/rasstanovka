@@ -3,11 +3,12 @@
   const $ = id => document.getElementById(id);
   if (!$('view-catalogs')) return;
   let section = 'categories';
-  const canLeave = () => window.crewCatalogScreen.canLeave() && window.smuScreen.canLeave() && window.categoriesScreen.canLeave() && window.contractorsScreen.canLeave() && window.locationsScreen.canLeave();
+  const canLeave = () => (!window.workforceCatalogs || window.workforceCatalogs.canLeave()) && window.crewCatalogScreen.canLeave() && window.smuScreen.canLeave() && window.categoriesScreen.canLeave() && window.contractorsScreen.canLeave() && window.locationsScreen.canLeave();
   async function show(next = section) {
     if (!canLeave()) return;
     section = next;
-    if ($('catalog-permission-note')) $('catalog-permission-note').hidden = section === 'crews';
+    if ($('catalog-permission-note')) $('catalog-permission-note').hidden = ['crews','workforce'].includes(section);
+    if ($('workforce-catalog-panel')) $('workforce-catalog-panel').hidden = section !== 'workforce';
     document.querySelectorAll('[data-catalog]').forEach(button => {
       const selected = button.dataset.catalog === section;
       button.classList.toggle('active', selected);
@@ -31,6 +32,7 @@
     else if (section === 'crews') await window.crewCatalogScreen.load();
     else if (section === 'smu') await window.smuScreen.load();
     else if (section === 'contractors') await window.contractorsScreen.load();
+    else if (section === 'workforce') await window.workforceCatalogs.load();
     else await window.locationsScreen.load();
   }
   document.querySelectorAll('[data-catalog]').forEach(button => button.addEventListener('click', () => show(button.dataset.catalog)));

@@ -1,0 +1,481 @@
+"""Transactional integration tests use only an explicitly selected staging database."""
+import os
+from pathlib import Path
+import unittest
+from uuid import uuid4
+
+from flask import Flask, g, jsonify, request
+from werkzeug.exceptions import HTTPException
+
+
+@unittest.skipUnless(os.getenv('CREW_POSTGRES_TEST_ENV'), 'Select isolated PostgreSQL staging explicitly.')
+class WorkforceApiTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        from tools.migrate_sqlite_to_postgres import load_environment
+        load_environment(Path(os.environ['CREW_POSTGRES_TEST_ENV']))
+        if os.environ.get('APP_ENVIRONMENT') != 'staging':
+            raise RuntimeError('Refusing workforce integration tests outside staging.')
+
+    def setUp(self):
+        from postgres_db import PostgresConnection
+        from workforce_api import register_workforce_routes
+        class RollbackConnection(PostgresConnection):
+            def execute(self, query, parameters=()):
+                if query.upper() in ('BEGIN', 'BEGIN IMMEDIATE') and self.in_transaction:
+                    return self.native('SELECT 1')
+                return super().execute(query, parameters)
+
+            def commit(self):
+                pass
+
+            def __exit__(self, *_):
+                return False
+
+        self.db = RollbackConnection()
+        self.db.execute('BEGIN IMMEDIATE')
+        self.suffix = uuid4().hex
+        self.users = {}
+        for role in ('admin', 'foreman', 'rotation', 'recruitment', 'hr_viewer', 'viewer'):
+            row = self.db.native('''INSERT INTO users(username,password_hash,full_name,role,created_at)
+                VALUES (%s,'unusable','Проверка прав',%s,'2026-09-16') RETURNING id,role,active''',
+                (self.suffix + role, role)).fetchone()
+            self.users[role] = dict(row)
+            if role in ('foreman', 'rotation', 'recruitment'):
+                self.db.native('''INSERT INTO user_smu_access(user_id,mode,departments_json,edit_token,updated_by,updated_at)
+                    VALUES (%s,'selected',%s,%s,%s,'2026-09-16')''',
+                    (row['id'], '["TEST-SMU"]', self.suffix, row['id']))
+        self.ids = []
+        for department in ('TEST-SMU', 'OTHER-SMU'):
+            row = self.db.native('''INSERT INTO workers(full_name,personnel_no,employer,department)
+                VALUES ('Тестовый Сотрудник',%s,'Тестовый работодатель',%s) RETURNING id''',
+                (self.suffix + department, department)).fetchone()
+            self.ids.append(row['id'])
+        self.worker = self.ids[0]
+        self.db.native("UPDATE workforce_profiles SET employment_code='employment.staff' WHERE worker_id=%s", (self.worker,))
+        self.app = Flask(__name__)
+        self.app.config['TESTING'] = True
+
+        @self.app.before_request
+        def actor():
+            g.user = self.users[request.headers.get('Test-Role', 'admin')]
+
+        @self.app.errorhandler(HTTPException)
+        def failure(error):
+            return jsonify(error=error.description), error.code
+
+        # Authentication/CSRF are covered through the real app separately. The domain
+        # authorizer is exercised even with a permissive outer decorator.
+        register_workforce_routes(self.app, lambda: self.db, lambda *roles: lambda fn: fn)
+        self.client = self.app.test_client()
+
+    def tearDown(self):
+        from workforce_read_cache import _lock, _values
+        with _lock:
+            _values.clear()
+        self.db.rollback()
+        self.db.close()
+
+    def test_registry_cache_invalidation_and_fresh_scope(self):
+        from unittest.mock import patch
+        import workforce_read_cache
+        self.app.config['TESTING'] = False
+        path = 'people?department=TEST-SMU&date=2026-09-16'
+        first = self.request('get', path, role='foreman').get_json()
+        self.assertEqual([row['id'] for row in first['rows']], [self.worker])
+        with patch.object(workforce_read_cache, 'cached', wraps=workforce_read_cache.cached) as cache:
+            second = self.request('get', path, role='foreman').get_json()
+            self.assertEqual(first, second)
+            self.assertEqual(cache.call_count, 2)
+        self.db.native('UPDATE workers SET full_name=%s WHERE id=%s', ('Изменённое ФИО', self.worker))
+        changed = self.request('get', path, role='foreman').get_json()
+        self.assertEqual(changed['rows'][0]['full_name'], 'Изменённое ФИО')
+        self.db.native("UPDATE user_smu_access SET departments_json='[]' WHERE user_id=%s", (self.users['foreman']['id'],))
+        revoked = self.request('get', path, role='foreman').get_json()
+        self.assertEqual(revoked['rows'], [])
+        self.assertEqual(revoked['totals']['total'], 0)
+
+    def test_staffing_source_has_one_row_and_requires_ready_base(self):
+        from staffing_import import postgres_member_source_sql
+        source = postgres_member_source_sql()
+        self.db.native('UPDATE workforce_profiles SET workforce_managed=true,staffing_ready=true WHERE worker_id=%s', (self.worker,))
+        rows = self.db.native('SELECT w.id,sm.source_row FROM ' + source + ' WHERE w.id=%s', (self.worker,)).fetchall()
+        self.assertEqual([row['id'] for row in rows], [self.worker])
+        self.db.native('UPDATE workforce_profiles SET staffing_ready=false WHERE worker_id=%s', (self.worker,))
+        self.assertEqual(self.db.native('SELECT w.id FROM ' + source + ' WHERE w.id=%s', (self.worker,)).fetchall(), [])
+
+    def test_profile_master_correction_preserves_unknown_schedule_and_identity(self):
+        self.db.native("UPDATE workforce_profiles SET rotation_schedule='Вахта 1 — длительность неизвестна' WHERE worker_id=%s", (self.worker,))
+        before = self.request('get', f'people/{self.worker}', role='rotation').get_json()['profile']
+        body = {'full_name':'Уточнённое ФИО', 'profession':'Новая должность', 'rotation_schedule_id':'',
+                'token':before['token'], 'reason':'Сверено с первичным документом', 'request_key':str(uuid4())}
+        self.assertEqual(self.request('patch', f'people/{self.worker}/profile', body, role='foreman').status_code, 403)
+        response = self.request('patch', f'people/{self.worker}/profile', body, role='rotation')
+        self.assertEqual(response.status_code, 200, response.data)
+        after = response.get_json()
+        self.assertEqual(after['id'], before['id'])
+        self.assertEqual(after['uuid'], before['uuid'])
+        self.assertEqual(after['full_name'], 'Уточнённое ФИО')
+        self.assertEqual(after['rotation_schedule'], before['rotation_schedule'])
+
+    def test_background_report_owned_scope_and_download(self):
+        from tempfile import TemporaryDirectory
+        from unittest.mock import patch
+        from workforce_jobs import process_one
+        key = str(uuid4())
+        body = {'date':'2026-09-16','request_key':key}
+        created = self.request('post', 'export-jobs', body, role='foreman')
+        self.assertEqual(created.status_code, 202, created.data)
+        self.assertEqual(self.request('post', 'export-jobs', body, role='foreman').status_code, 200)
+        self.assertEqual(self.request('get', f'export-jobs/{key}', role='rotation').status_code, 404)
+        with TemporaryDirectory() as directory, patch.dict(os.environ, {'WORKFORCE_EXPORT_DIR':directory}):
+            self.assertTrue(process_one(self.app, lambda:self.db, key))
+            ready = self.request('get', f'export-jobs/{key}', role='foreman')
+            self.assertEqual(ready.get_json()['state'], 'ready', ready.data)
+            download = self.request('get', f'export-jobs/{key}/download', role='foreman')
+            self.assertEqual(download.status_code, 200)
+            self.assertTrue(download.data.startswith(b'PK'))
+            download.close()
+            self.db.native("UPDATE workers SET department='OTHER-SMU' WHERE id=%s", (self.worker,))
+            self.assertEqual(self.request('get', f'export-jobs/{key}/download', role='foreman').status_code, 403)
+
+    def request(self, method, path, body=None, role='admin'):
+        return getattr(self.client, method)('/api/workforce/' + path, json=body, headers={'Test-Role': role})
+
+    def movement(self, **changes):
+        return {'direction': 'departure', 'actual_date': '2026-09-16', 'result_code': 'result.happened',
+                'reason': 'Подтверждено перевахтой', 'request_key': str(uuid4()), **changes}
+
+    def upload_source(self, rows, role='rotation', source='urp:П15', day='2026-09-16', extra_headers=()):
+        from io import BytesIO
+        from openpyxl import Workbook
+        book = Workbook()
+        sheet = book.active
+        sheet.title = 'Явка' if source.startswith('urp:П') else 'ПВП'
+        sheet.append(['ФИО', 'Таб. номер', 'Подразделение', 'Категория ГДЛР', 'Должность', 'Организация', *extra_headers])
+        for row in rows:
+            sheet.append(row)
+        stream = BytesIO()
+        book.save(stream)
+        self.last_upload_bytes = stream.getvalue()
+        stream.seek(0)
+        return self.client.post('/api/workforce/imports/preview', data={
+            'source_key': source, 'date': day, 'file': (stream, 'Перевахтовка.xlsx')}, headers={'Test-Role': role})
+
+    def test_import_preview_confirm_replay_scope_and_stale(self):
+        from pathlib import Path
+        from unittest.mock import patch
+        category = self.db.native('SELECT name FROM gdlr_categories WHERE active=1 LIMIT 1').fetchone()['name']
+        tab = str(uuid4().int)[:18]
+        rows = [['Новый Проверочный Импорт', tab, 'TEST-SMU', category, 'Монтажник', 'ЛГСС'],
+                ['За пределами доступа', tab + '1', 'OTHER-SMU', category, 'Монтажник', 'ЛГСС']]
+        preview = self.upload_source(rows)
+        self.assertEqual(preview.status_code, 200, preview.json)
+        self.assertEqual(preview.json['counts']['added'], 1)
+        self.assertEqual(preview.json['skipped_count'], 1)
+        self.assertFalse(self.db.native('SELECT 1 FROM workers WHERE personnel_no=%s', (tab,)).fetchone())
+        path = 'imports/' + preview.json['id'] + '/apply'
+        data = {'token': preview.json['token'], 'confirmed': True, 'decisions': []}
+        self.assertEqual(self.request('post', path, data, 'recruitment').status_code, 403)
+        with patch('postgres_backup.create', return_value=Path('verified.dump')) as backup:
+            first = self.request('post', path, data, 'rotation')
+            self.assertEqual(first.status_code, 200, first.json)
+            repeated = self.request('post', path, data, 'rotation')
+            self.assertEqual(repeated.json, first.json)
+            self.assertEqual(backup.call_count, 1)
+        worker_id = self.db.native('SELECT id FROM workers WHERE personnel_no=%s', (tab,)).fetchone()['id']
+        self.assertEqual(self.db.native('SELECT count(*) n FROM workforce_source_records WHERE worker_id=%s', (worker_id,)).fetchone()['n'], 1)
+        rows[0][0] = 'Имя Исправлено Вручную'
+        next_preview = self.upload_source(rows, day='2026-09-17')
+        self.assertEqual(next_preview.json['counts']['matched'], 1)
+        self.assertEqual(next_preview.json['items'][0]['changes'][0]['field'], 'name')
+        self.db.native("UPDATE workforce_profiles SET phone='Изменено после предпросмотра',edit_token=gen_random_uuid() WHERE worker_id=%s", (worker_id,))
+        stale = self.request('post', 'imports/' + next_preview.json['id'] + '/apply',
+            {'token': next_preview.json['token'], 'confirmed': True, 'decisions': []}, 'rotation')
+        self.assertEqual(stale.status_code, 409, stale.json)
+
+    def test_import_preserves_absent_identity_and_gdlr_binding(self):
+        from pathlib import Path
+        from unittest.mock import patch
+        category = self.db.native('SELECT name FROM gdlr_categories WHERE active=1 LIMIT 1').fetchone()['name']
+        tab = str(uuid4().int)[:18]
+        rows = [['Подтверждённый Импорт', tab, 'TEST-SMU', category, 'Монтажник', 'ЛГСС']]
+        first = self.upload_source(rows)
+        with patch('postgres_backup.create', return_value=Path('verified.dump')):
+            result = self.request('post', 'imports/' + first.json['id'] + '/apply',
+                {'token': first.json['token'], 'confirmed': True, 'decisions': []}, 'rotation')
+            self.assertEqual(result.status_code, 200, result.json)
+            worker_id = self.db.native('SELECT id FROM workers WHERE personnel_no=%s', (tab,)).fetchone()['id']
+            rows[0][3] = 'Категория из Excel не должна менять базу'
+            second = self.upload_source(rows, day='2026-09-17')
+            result = self.request('post', 'imports/' + second.json['id'] + '/apply',
+                {'token': second.json['token'], 'confirmed': True, 'decisions': []}, 'rotation')
+            self.assertEqual(result.status_code, 200, result.json)
+            current = self.db.native('SELECT gc.name FROM employee_gdlr eg JOIN gdlr_categories gc ON gc.id=eg.category_id WHERE worker_id=%s', (worker_id,)).fetchone()['name']
+            self.assertEqual(current, category)
+            missing = self.upload_source([['Другой Новый Импорт', tab + '2', 'TEST-SMU', category, 'Рабочий', 'ЛГСС']], day='2026-09-18')
+            self.assertEqual([row['id'] for row in missing.json['missing']], [worker_id])
+            result = self.request('post', 'imports/' + missing.json['id'] + '/apply',
+                {'token': missing.json['token'], 'confirmed': True, 'decisions': []}, 'rotation')
+            self.assertEqual(result.json['removed_from_source'], 1)
+            self.assertEqual(self.db.native('SELECT active FROM workers WHERE id=%s', (worker_id,)).fetchone()['active'], 1)
+            self.assertFalse(self.db.native('SELECT staffing_ready FROM workforce_profiles WHERE worker_id=%s', (worker_id,)).fetchone()['staffing_ready'])
+
+    def test_applied_preview_cannot_expose_workers_after_scope_reduction(self):
+        from io import BytesIO
+        from unittest.mock import patch
+        category = self.db.native('SELECT name FROM gdlr_categories WHERE active=1 LIMIT 1').fetchone()['name']
+        preview = self.upload_source([['Закрытая карточка', str(uuid4().int)[:18], 'TEST-SMU', category, 'Рабочий', 'ЛГСС']])
+        data = {'token':preview.json['token'], 'confirmed':True, 'decisions':[]}
+        path = 'imports/' + preview.json['id'] + '/apply'
+        with patch('postgres_backup.create', return_value=Path('verified.dump')):
+            self.assertEqual(self.request('post', path, data, 'rotation').status_code, 200)
+        self.db.native("UPDATE user_smu_access SET departments_json='[]' WHERE user_id=%s", (self.users['rotation']['id'],))
+        replay = self.client.post('/api/workforce/imports/preview', data={
+            'source_key':'urp:П15', 'date':'2026-09-16',
+            'file':(BytesIO(self.last_upload_bytes),'Перевахтовка ППС-15.xlsx')}, headers={'Test-Role':'rotation'})
+        self.assertEqual(replay.status_code, 403, replay.json)
+        self.assertNotIn('Закрытая карточка', replay.get_data(as_text=True))
+        self.assertEqual(self.request('post', path, data, 'rotation').status_code, 403)
+
+    def test_hidden_smu_identity_requires_privileged_review_without_disclosure(self):
+        category = self.db.native('SELECT name FROM gdlr_categories WHERE active=1 LIMIT 1').fetchone()['name']
+        name = 'Совпадение ' + self.suffix
+        self.db.native("UPDATE workers SET full_name=%s,employer='ЛГСС' WHERE id=%s", (name, self.ids[1]))
+        self.db.native("UPDATE workforce_profiles SET birth_date='1990-01-01' WHERE worker_id=%s", (self.ids[1],))
+        preview = self.upload_source([[name, '', 'TEST-SMU', category, 'Рабочий', 'ЛГСС', '01.01.1990']], extra_headers=['Дата рождения'])
+        self.assertEqual(preview.status_code, 200, preview.json)
+        item = preview.json['items'][0]
+        self.assertTrue(item['restricted_identity'])
+        self.assertIsNone(item['worker_id'])
+        self.assertEqual(item['candidates'], [])
+        result = self.request('post', 'imports/' + preview.json['id'] + '/apply', {
+            'token':preview.json['token'], 'confirmed':True,
+            'decisions':[{'index':0,'worker_id':'new','reason':'Создать повторно'}]}, 'rotation')
+        self.assertEqual(result.status_code, 403, result.json)
+        self.assertEqual(self.db.native('SELECT count(*) FROM workers WHERE full_name=%s', (name,)).fetchone()[0], 1)
+
+    def test_hidden_identity_created_after_preview_blocks_apply(self):
+        category = self.db.native('SELECT name FROM gdlr_categories WHERE active=1 LIMIT 1').fetchone()['name']
+        name = 'Конкурирующая личность ' + self.suffix
+        preview = self.upload_source([[name, '', 'TEST-SMU', category, 'Рабочий', 'ЛГСС', '01.01.1990']], extra_headers=['Дата рождения'])
+        self.assertEqual(preview.json['counts']['added'], 1)
+        self.db.native("UPDATE workers SET full_name=%s,employer='ЛГСС' WHERE id=%s", (name, self.ids[1]))
+        self.db.native("UPDATE workforce_profiles SET birth_date='1990-01-01' WHERE worker_id=%s", (self.ids[1],))
+        result = self.request('post', 'imports/' + preview.json['id'] + '/apply', {
+            'token':preview.json['token'], 'confirmed':True, 'decisions':[]}, 'rotation')
+        self.assertEqual(result.status_code, 403, result.json)
+        self.assertEqual(self.db.native('SELECT count(*) FROM workers WHERE full_name=%s', (name,)).fetchone()[0], 1)
+
+    def test_import_missing_manual_record_stays_in_composition(self):
+        from pathlib import Path
+        from unittest.mock import patch
+        category = self.db.native('SELECT name FROM gdlr_categories WHERE active=1 LIMIT 1').fetchone()['name']
+        tab = str(uuid4().int)[:18]
+        with patch('postgres_backup.create', return_value=Path('verified.dump')):
+            preview = self.upload_source([['Ручная запись для сверки', tab, 'TEST-SMU', category, 'Рабочий', 'ЛГСС']])
+            result = self.request('post', 'imports/' + preview.json['id'] + '/apply',
+                {'token': preview.json['token'], 'confirmed': True, 'decisions': []}, 'rotation')
+            self.assertEqual(result.status_code, 200, result.json)
+            worker = self.db.native('SELECT id FROM workers WHERE personnel_no=%s', (tab,)).fetchone()['id']
+            self.db.native('''INSERT INTO manual_employees(worker_id,created_by,created_at,request_key,payload_hash)
+                VALUES (%s,%s,'2026-09-16',%s,'test')''', (worker, self.users['admin']['id'], uuid4().hex))
+            preview = self.upload_source([['Другой человек для сверки', tab + '1', 'TEST-SMU', category, 'Рабочий', 'ЛГСС']], day='2026-09-17')
+            self.assertTrue(preview.json['missing'][0]['manually_created'])
+            result = self.request('post', 'imports/' + preview.json['id'] + '/apply',
+                {'token': preview.json['token'], 'confirmed': True, 'decisions': []}, 'rotation')
+            self.assertEqual(result.json['manual_preserved'], 1)
+            self.assertEqual(result.json['removed_from_source'], 0)
+            self.assertTrue(self.db.native('SELECT staffing_ready FROM workforce_profiles WHERE worker_id=%s', (worker,)).fetchone()['staffing_ready'])
+
+    def test_staffing_reader_does_not_receive_private_hr_data(self):
+        self.db.native("UPDATE workforce_profiles SET birth_date='1990-01-01',phone='private',notes='private' WHERE worker_id=%s", (self.worker,))
+        response = self.request('get', f'people/{self.worker}', role='foreman')
+        self.assertEqual(response.status_code, 200, response.json)
+        self.assertFalse(response.json['private_details'])
+        for field in ('birth_date', 'phone', 'notes'):
+            self.assertNotIn(field, response.json['profile'])
+        self.assertEqual(response.json['history'], [])
+        self.assertEqual(response.json['sources'], [])
+        admin = self.request('get', f'people/{self.worker}')
+        self.assertEqual(admin.json['profile']['phone'], 'private')
+
+    def test_smu_visibility_and_ready_base_role(self):
+        response = self.request('get', 'people?date=2026-09-16', role='rotation')
+        self.assertEqual(response.status_code, 200, response.json)
+        self.assertEqual([row['id'] for row in response.json['rows']], [self.worker])
+        self.assertEqual(self.request('get', f'people/{self.ids[1]}', role='rotation').status_code, 404)
+        for kind, body in [('movement', self.movement()), ('stage', {'stage_code': 'stage.leave',
+                'effective_date': '2026-09-16', 'confirmed': True, 'reason': 'Причина', 'request_key': str(uuid4())})]:
+            self.assertEqual(self.request('post', f'people/{self.worker}/{kind}', body, 'foreman').status_code, 403)
+
+    def test_service_boundaries_and_missing_scope(self):
+        self.assertEqual(self.request('post', f'people/{self.worker}/movement', self.movement(), 'recruitment').status_code, 403)
+        document = {'document_code': 'document.patent', 'reason': 'Патент получен', 'request_key': str(uuid4())}
+        self.assertEqual(self.request('post', f'people/{self.worker}/document', document, 'rotation').status_code, 403)
+        self.assertEqual(self.request('post', f'people/{self.worker}/document', document, 'recruitment').status_code, 201)
+        self.db.native('DELETE FROM user_smu_access WHERE user_id=%s', (self.users['recruitment']['id'],))
+        self.assertEqual(self.request('get', 'people?date=2026-09-16', role='recruitment').json['totals']['total'], 0)
+
+    def test_replay_stale_edit_and_audit(self):
+        body = self.movement()
+        first = self.request('post', f'people/{self.worker}/movement', body, 'rotation')
+        self.assertEqual(first.status_code, 201, first.json)
+        again = self.request('post', f'people/{self.worker}/movement', body, 'rotation')
+        self.assertEqual(first.json['id'], again.json['id'])
+        altered = {**body, 'actual_date': '2026-09-17'}
+        self.assertEqual(self.request('post', f'people/{self.worker}/movement', altered, 'rotation').status_code, 409)
+        path = f'people/{self.worker}/movement/{first.json["id"]}'
+        patch = {'token': first.json['edit_token'], 'notes': 'Уточнение', 'reason': 'Обновление', 'request_key': str(uuid4())}
+        self.assertEqual(self.request('patch', path, patch, 'rotation').status_code, 200)
+        self.assertEqual(self.request('patch', path, {**patch, 'request_key': str(uuid4())}, 'rotation').status_code, 409)
+        history = self.request('get', f'people/{self.worker}').json['history']
+        self.assertEqual(len([row for row in history if row['entity_type'] == 'movement']), 2)
+        self.assertEqual(len([row for row in history if row['entity_type'] == 'stage']), 1)
+        self.assertTrue(all(row['actor_id'] == self.users['rotation']['id'] for row in history))
+
+    def test_confirmed_trip_updates_presence_and_correction_retracts_old_fact(self):
+        created = self.request('post', f'people/{self.worker}/movement', self.movement(direction='arrival'), 'rotation')
+        self.assertEqual(created.status_code, 201, created.json)
+        before = self.request('get', 'people?date=2026-09-15', role='rotation').json
+        self.assertIsNone(before['rows'][0]['stage_code'])
+        current = self.request('get', 'people?date=2026-09-16', role='rotation').json
+        self.assertEqual(current['rows'][0]['stage_code'], 'stage.onsite')
+        corrected = self.request('patch', f'people/{self.worker}/movement/{created.json["id"]}',
+            {'token': created.json['edit_token'], 'actual_date': '2026-09-17', 'reason': 'Дата была ошибочной', 'request_key': str(uuid4())}, 'rotation')
+        self.assertEqual(corrected.status_code, 200, corrected.json)
+        self.assertIsNone(self.request('get', 'people?date=2026-09-16', role='rotation').json['rows'][0]['stage_code'])
+        self.assertEqual(self.request('get', 'people?date=2026-09-17', role='rotation').json['rows'][0]['stage_code'], 'stage.onsite')
+        cancelled = self.request('patch', f'people/{self.worker}/movement/{created.json["id"]}',
+            {'token': corrected.json['edit_token'], 'result_code': 'result.cancelled', 'reason': 'Подтверждение было ошибочным', 'request_key': str(uuid4())}, 'rotation')
+        self.assertEqual(cancelled.status_code, 200, cancelled.json)
+        self.assertIsNone(self.request('get', 'people?date=2026-09-17', role='rotation').json['rows'][0]['stage_code'])
+        self.assertEqual(self.db.native('SELECT count(*) n FROM workforce_stage_events WHERE worker_id=%s AND retracted', (self.worker,)).fetchone()['n'], 2)
+
+    def test_departure_warning_does_not_infer_from_elapsed_plan(self):
+        from workforce_core import departure_warnings
+        self.request('post', f'people/{self.worker}/movement', self.movement(), 'rotation')
+        self.assertEqual(departure_warnings(self.db, '2026-09-15', [self.worker]), {})
+        self.assertIn(self.worker, departure_warnings(self.db, '2026-09-16', [self.worker]))
+        self.request('post', f'people/{self.worker}/movement', self.movement(direction='arrival', actual_date='2026-09-17', result_code=None), 'rotation')
+        self.assertIn(self.worker, departure_warnings(self.db, '2026-09-18', [self.worker]))
+        self.request('post', f'people/{self.worker}/movement', self.movement(direction='arrival', actual_date='2026-09-18'), 'rotation')
+        self.assertEqual(departure_warnings(self.db, '2026-09-18', [self.worker]), {})
+
+    def test_stage_asof_ignores_unconfirmed_and_future_events(self):
+        for day, stage, confirmed in [('2026-09-14', 'stage.leave', True), ('2026-09-15', 'stage.onsite', False),
+                                      ('2026-09-17', 'stage.pvp', True)]:
+            response = self.request('post', f'people/{self.worker}/stage', {'effective_date': day, 'stage_code': stage,
+                'confirmed': confirmed, 'reason': 'Проверка состояния', 'request_key': str(uuid4())}, 'rotation')
+            self.assertEqual(response.status_code, 201, response.json)
+        rows = self.request('get', 'people?date=2026-09-16', role='rotation').json['rows']
+        self.assertEqual(rows[0]['stage_code'], 'stage.leave')
+        rows = self.request('get', 'people?date=2026-09-17', role='rotation').json['rows']
+        self.assertEqual(rows[0]['stage_code'], 'stage.pvp')
+
+    def test_profile_stale_token_and_employer_sync(self):
+        before = self.request('get', f'people/{self.worker}').json['profile']
+        self.db.native('UPDATE workers SET employer=%s WHERE id=%s', ('Работодатель изменён', self.worker))
+        current = self.request('get', f'people/{self.worker}').json['profile']
+        self.assertEqual(current['employer'], 'Работодатель изменён')
+        data = {'token': before['token'], 'phone': '+7 900 000 00 00', 'reason': 'Контакт', 'request_key': str(uuid4())}
+        self.assertEqual(self.request('patch', f'people/{self.worker}/profile', data, 'rotation').status_code, 409)
+        data.update(token=current['token'], request_key=str(uuid4()))
+        response = self.request('patch', f'people/{self.worker}/profile', data, 'rotation')
+        self.assertEqual(response.status_code, 200, response.json)
+        self.assertEqual(response.json['phone'], data['phone'])
+        self.assertEqual(self.request('patch', f'people/{self.worker}/profile', data, 'recruitment').status_code, 403)
+
+    def test_validation_and_regex_errors_are_explicit(self):
+        self.assertEqual(self.request('post', f'people/{self.worker}/movement', self.movement(actual_date=None), 'rotation').status_code, 400)
+        self.assertEqual(self.request('post', f'people/{self.worker}/movement', self.movement(basis_code='document.patent'), 'rotation').status_code, 400)
+        response = self.request('get', 'people?date=2026-09-16&regex=1&q=%5B', role='rotation')
+        self.assertEqual(response.status_code, 400, response.json)
+
+    def test_catalog_admin_only_and_scope_required(self):
+        data = {'label': 'Тестовое гражданство ' + self.suffix, 'reason': 'Справочник', 'request_key': str(uuid4())}
+        self.assertEqual(self.request('post', 'catalog/citizenship', data, 'foreman').status_code, 403)
+        self.assertEqual(self.request('post', 'catalog/citizenship', data, 'recruitment').status_code, 403)
+        result = self.request('post', 'catalog/citizenship', data)
+        self.assertEqual(result.status_code, 201, result.json)
+        self.assertTrue(result.json['code'].startswith('citizenship.'))
+
+    def test_arrival_rescheduling_preserves_chain_and_rejects_completed(self):
+        plan = self.movement(direction='arrival', actual_date=None, planned_date='2026-09-20', result_code=None)
+        first = self.request('post', f'people/{self.worker}/movement', plan, 'rotation').json
+        path = f'people/{self.worker}/movements/{first["id"]}/reschedule'
+        data = {'planned_date': '2026-09-22', 'token': first['edit_token'],
+                'reason': 'Изменение билета', 'request_key': str(uuid4())}
+        response = self.request('post', path, data, 'rotation')
+        self.assertEqual(response.status_code, 201, response.json)
+        self.assertEqual(response.json['previous']['planned_date'], '2026-09-20')
+        self.assertEqual(response.json['previous']['result_code'], 'result.postponed')
+        second = response.json['current']
+        self.assertEqual(second['planned_date'], '2026-09-22')
+        self.assertEqual(second['rescheduled_from'], first['id'])
+        self.assertIsNone(second['result_code'])
+        repeated = self.request('post', path, data, 'rotation')
+        self.assertEqual(repeated.json['current']['id'], second['id'])
+        data2 = {**data, 'planned_date': '2026-09-24', 'token': second['edit_token'], 'request_key': str(uuid4())}
+        latest = self.request('post', f'people/{self.worker}/movements/{second["id"]}/reschedule', data2, 'rotation')
+        self.assertEqual(latest.status_code, 201, latest.json)
+        third = latest.json['current']
+        complete = {'actual_date': '2026-09-24', 'result_code': 'result.happened', 'token': third['edit_token'],
+                    'reason': 'Прибыл', 'request_key': str(uuid4())}
+        completed = self.request('patch', f'people/{self.worker}/movement/{third["id"]}', complete, 'rotation')
+        self.assertEqual(completed.status_code, 200, completed.json)
+        prohibited = {**data2, 'token': completed.json['edit_token'], 'request_key': str(uuid4())}
+        self.assertEqual(self.request('post', f'people/{self.worker}/movements/{third["id"]}/reschedule', prohibited, 'rotation').status_code, 400)
+
+    def test_rotation_extension_uses_schedule_snapshot_and_preserves_ticket(self):
+        schedule_data = {'name': 'График ' + self.suffix, 'onsite_days': 30, 'leave_days': 30, 'travel_days': 2,
+                         'reason': 'Утверждён график', 'request_key': str(uuid4())}
+        schedule = self.request('post', 'rotation-schedules', schedule_data).json
+        data = {'schedule_id': schedule['id'], 'start_date': '2026-09-01', 'reason': 'Новая вахта', 'request_key': str(uuid4())}
+        result = self.request('post', f'people/{self.worker}/rotations', data, 'rotation')
+        self.assertEqual(result.status_code, 201, result.json)
+        first = result.json
+        self.assertEqual(first['planned_end_date'], '2026-09-30')
+        self.assertEqual(first['leave_end_date'], '2026-10-30')
+        self.assertEqual(first['next_arrival_date'], '2026-11-01')
+        # Editing the directory must not silently alter a previously saved cycle.
+        self.db.native('UPDATE workforce_rotation_schedules SET leave_days=45 WHERE id=%s', (schedule['id'],))
+        ticket = self.request('post', f'people/{self.worker}/movement', self.movement(direction='arrival',
+            planned_date='2026-11-01', actual_date=None, result_code=None, basis_code='basis.ticket'), 'rotation').json
+        extension = {'new_end_date': '2026-10-05', 'token': first['edit_token'], 'reason': 'Продление по согласованию', 'request_key': str(uuid4())}
+        response = self.request('post', f'people/{self.worker}/rotations/{first["id"]}/extend', extension, 'rotation')
+        self.assertEqual(response.status_code, 200, response.json)
+        self.assertEqual(response.json['rotation']['next_arrival_date'], '2026-11-06')
+        self.assertEqual(response.json['trip_plans_to_review'][0]['id'], ticket['id'])
+        current = self.request('get', f'people/{self.worker}').json
+        self.assertEqual(current['movements'][0]['planned_date'], '2026-11-01')
+        self.assertEqual(current['history'][0]['before_json']['planned_end_date'], '2026-09-30')
+        self.assertEqual(current['history'][0]['after_json']['planned_end_date'], '2026-10-05')
+        extension['request_key'] = str(uuid4())
+        self.assertEqual(self.request('post', f'people/{self.worker}/rotations/{first["id"]}/extend', extension, 'rotation').status_code, 409)
+
+    def test_report_columns_scope_dates_and_formula_injection(self):
+        import io
+        from openpyxl import load_workbook
+        from workforce_export import FIRST_HEADERS, SECOND_HEADERS
+        self.db.native("UPDATE workers SET category='Арматурщик',full_name='=HYPERLINK(\"https://example.invalid\")' WHERE id=%s", (self.worker,))
+        self.db.native("UPDATE workforce_profiles SET leave_end_date='2026-09-20' WHERE worker_id=%s", (self.worker,))
+        event = {'stage_code': 'stage.leave', 'effective_date': '2026-09-01', 'confirmed': True,
+                 'reason': 'Межвахтовый отпуск', 'request_key': str(uuid4())}
+        self.request('post', f'people/{self.worker}/stage', event, 'rotation')
+        response = self.request('get', 'export?date=2026-09-16', role='rotation')
+        self.assertEqual(response.status_code, 200, response.get_json(silent=True))
+        book = load_workbook(io.BytesIO(response.data))
+        self.assertEqual(book.sheetnames, ['Явка и аутстаффинг', 'Неявка, заезд и ПВП'])
+        self.assertEqual([cell.value for cell in book.worksheets[0][1]], FIRST_HEADERS)
+        self.assertEqual([cell.value for cell in book.worksheets[1][1]], SECOND_HEADERS)
+        sheet = book.worksheets[1]
+        self.assertEqual(sheet.max_row, 2)
+        self.assertEqual(sheet['K2'].value.date().isoformat(), '2026-09-22')
+        self.assertEqual(sheet['L2'].value, 'Заезд')
+        self.assertEqual(sheet['F2'].data_type, 's')
+        self.assertEqual(sheet['F2'].value, '=HYPERLINK("https://example.invalid")')
+
+
+if __name__ == '__main__':
+    unittest.main()

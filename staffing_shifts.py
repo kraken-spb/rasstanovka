@@ -68,6 +68,8 @@ def responsibility_states(db, ids):
     if not ids:
         return {}
     result = {}
+    from query_helpers import membership
+    clause, parameters = membership(db, 'w.id', ids)
     for row in db.execute(f'''SELECT w.id,m.crew_id,c.owner_user_id,c.details_token,
             c.linear_itr,c.linear_itr_person_id,c.brigadier,c.brigadier_person_id,
             d.linear_itr_override,d.linear_itr_person_id row_itr_id,d.brigadier_override,
@@ -81,7 +83,7 @@ def responsibility_states(db, ids):
             THEN c.linear_itr_person_id ELSE d.linear_itr_person_id END
         LEFT JOIN workers ow ON ow.id=CASE WHEN d.linear_itr_override IS NULL
             THEN c.linear_itr_worker_id ELSE d.linear_itr_worker_id END
-        WHERE w.id IN ({','.join('?' for _ in ids)})''', ids):
+        WHERE {clause}''', parameters):
         name = row['linear_itr_override'] if row['linear_itr_override'] is not None else row['linear_itr'] or ''
         if not name:
             identity, label = ['none'], 'Линейный ИТР не указан'
@@ -108,14 +110,15 @@ def validate_group_snapshot(db, ids, payload):
         abort(409, description='Состав группы или ответственные изменились. Обновите таблицу.')
 
 
-def day_states(db, day, ids):
+def day_states(db, day, ids, records=None):
     if not ids:
         return {}
-    marks = ','.join('?' for _ in ids)
-    schedules = {r['worker_id']: dict(r) for r in db.execute(
-        f'SELECT * FROM staffing_shifts WHERE work_date=? AND worker_id IN ({marks})', [day, *ids])}
+    from query_helpers import dated_records
+    if records is None:
+        records = {table: dated_records(db, table, day, ids) for table in ('staffing_shifts', 'assignments')}
+    schedules = {r['worker_id']: dict(r) for r in records['staffing_shifts']}
     assignments = {worker_id: [] for worker_id in ids}
-    for row in db.execute(f'SELECT * FROM assignments WHERE work_date=? AND worker_id IN ({marks}) ORDER BY id', [day, *ids]):
+    for row in records['assignments']:
         assignments[row['worker_id']].append(dict(row))
     result = {}
     for worker_id in ids:

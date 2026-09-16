@@ -12,10 +12,13 @@ from flask import abort, g, jsonify, request, send_file
 
 
 MOSCOW = timezone(timedelta(hours=3))
-SUFFIXES = {'.sqlite3', '.sqlite', '.db'}
+SUFFIXES = {'.sqlite3', '.sqlite', '.db', '.dump'}
 
 
 def backup_folder(db):
+    if getattr(db, 'dialect', None) == 'postgres':
+        from postgres_backup import folder
+        return None, folder()
     database = Path(db.execute('PRAGMA database_list').fetchone()[2]).resolve()
     return database, database.parent / 'backups'
 
@@ -29,6 +32,9 @@ def placement_counts(db, work_date):
 
 def create_backup(db, work_date=None, reason='manual'):
     work_date = work_date or datetime.now(MOSCOW).date().isoformat()
+    if getattr(db, 'dialect', None) == 'postgres':
+        from postgres_backup import create
+        return create(work_date, reason)
     database, folder = backup_folder(db)
     folder.mkdir(parents=True, exist_ok=True)
     started = datetime.now(timezone.utc)
@@ -61,6 +67,9 @@ def create_backup(db, work_date=None, reason='manual'):
 @lru_cache(maxsize=256)
 def inspect_backup(filename, size, modified_ns, work_date):
     path = Path(filename)
+    if path.suffix == '.dump':
+        from postgres_backup import inspect
+        return inspect(path, size, modified_ns, work_date)
     created_at = datetime.fromtimestamp(modified_ns / 1_000_000_000, timezone.utc).isoformat()
     result = {'name': path.name, 'size_bytes': size, 'created_at': created_at,
               'time_source': 'file', 'reason': 'existing', 'work_date': work_date}
@@ -140,6 +149,6 @@ def register_backup_routes(app, get_db, roles_required):
                 or target.resolve().parent != folder.resolve()):
             abort(404, description='Резервная копия не найдена.')
         response = send_file(target, as_attachment=True, download_name=target.name,
-                             mimetype='application/vnd.sqlite3', max_age=0, conditional=False)
+                             mimetype='application/octet-stream' if target.suffix == '.dump' else 'application/vnd.sqlite3', max_age=0, conditional=False)
         response.headers['Cache-Control'] = 'private, no-store'
         return response

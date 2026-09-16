@@ -64,6 +64,10 @@ def register_employer_routes(app, get_db, roles_required, utc_now):
             actor = db.execute('SELECT role,active FROM users WHERE id=?', (g.user['id'],)).fetchone()
             if not actor or not actor['active'] or actor['role'] not in ('admin', 'super_admin', 'foreman'):
                 abort(403, description='Нет права изменять расстановку.')
+            if getattr(db, 'dialect', None) == 'postgres' and actor['role'] == 'foreman':
+                if not db.native('SELECT id FROM workforce_organizations WHERE name_key=log_casefold(trim(%s)) AND active',
+                                 (name,)).fetchone():
+                    abort(400, description='Выберите работодателя из готового справочника. Новую организацию добавляет администратор.')
             workers = db.execute('''SELECT w.id,w.active,w.employer,m.crew_id,e.edit_token
                 FROM workers w LEFT JOIN crew_members m ON m.worker_id=w.id
                 LEFT JOIN employee_employers e ON e.worker_id=w.id

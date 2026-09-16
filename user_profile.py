@@ -30,7 +30,7 @@ def migrate_user_profile(db):
 
 
 def available(role):
-    if role == 'hr_viewer':
+    if role in ('hr_viewer', 'rotation', 'recruitment'):
         return [s for s in SHORTCUTS if s['id'] not in ('actions', 'import')]
     return [s for s in SHORTCUTS if not (s.get('admin') and role not in ('admin', 'super_admin'))
             and not (s.get('editing') and role == 'viewer')]
@@ -82,14 +82,14 @@ def validate(data, role):
 
 def register_user_profile(app, get_db, roles_required, utc_now):
     @app.get('/api/profile')
-    @roles_required('admin', 'foreman', 'viewer')
+    @roles_required('admin', 'foreman', 'viewer', 'rotation', 'recruitment')
     def get_profile():
         response = jsonify(profile(get_db(), g.user))
         response.headers['Cache-Control'] = 'no-store'
         return response
 
     @app.put('/api/profile')
-    @roles_required('admin', 'foreman', 'viewer')
+    @roles_required('admin', 'foreman', 'viewer', 'rotation', 'recruitment')
     def save_profile():
         data = validate(request.get_json(silent=True), g.user['role'])
         db = get_db()

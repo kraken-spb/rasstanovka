@@ -4,7 +4,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SKIP = {".git", ".venv", "__pycache__", "data", "output", "outputs", "backups", ".playwright-cli"}
-SUFFIXES = {".py", ".js", ".css", ".html", ".md", ".json", ".yaml", ".yml", ".txt", ".example"}
+SUFFIXES = {".py", ".js", ".css", ".html", ".md", ".json", ".yaml", ".yml", ".txt", ".example", ".sql"}
 MARKERS = {"\ufffd", "\u00d0", "\u00d1", "?" * 4}
 
 
@@ -29,7 +29,8 @@ seed_paths = [ROOT / "seed.example.json", ROOT / "seed.json"]
 for seed_path in seed_paths:
     if seed_path.exists():
         json.loads(seed_path.read_text(encoding="utf-8"))
-html = [path for path in paths if path.suffix == ".html"]
+html = [path for path in paths if path.suffix == ".html"
+        and ('<html' in texts[path].lower() or '<!doctype html' in texts[path].lower())]
 if not all('<meta charset="UTF-8">' in texts[path] for path in html):
     raise SystemExit("Не во всех HTML-файлах указан UTF-8.")
 

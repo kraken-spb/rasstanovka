@@ -102,7 +102,10 @@ class HrViewerTest(unittest.TestCase):
         for rule in self.module.app.url_map.iter_rules():
             if rule.endpoint == 'login':
                 continue
-            values = {key:identifiers.get(key,1) for key in rule.arguments}
+            from uuid import UUID
+            from werkzeug.routing import UUIDConverter
+            values = {key: UUID(int=1) if isinstance(rule._converters.get(key), UUIDConverter)
+                      else identifiers.get(key,1) for key in rule.arguments}
             values.update(rule.defaults or {})
             for method in rule.methods & {'POST','PUT','PATCH','DELETE'}:
                 if (rule.endpoint,method) in HR_PERSONAL_OPERATIONS:
