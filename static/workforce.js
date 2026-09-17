@@ -159,14 +159,88 @@
     else if (spec.type === 'schedule') rows = state.reference.rotation_schedules.map(row => ({...row,value:row.id,
       text:row.name + (row.needs_review ? ' · параметры не уточнены' : '')}));
     else return spec.values.map(([value,text]) => [String(value),text]);
-    return rows.filter(row => includeInactive || (isActive(row) && (spec.type !== 'schedule' || spec.allowIncomplete || !row.needs_review)))
+    return rows.filter(row => includeInactive || (isActive(row) &&
+      (spec.kind !== 'profession' || state.reference.catalog.some(parent => parent.kind === 'specialty' && parent.code === row.specialty_code && isActive(parent))) &&
+      (spec.type !== 'schedule' || spec.allowIncomplete || !row.needs_review)))
       .map(row => [String(row.value),row.text]);
   }
   function referenceText(spec, value) {
     return referenceValues(spec,true).find(([code]) => code === String(value))?.[1] || value || '—';
   }
   let fieldId = 0;
+  function professionField(control, values, existing) {
+    const {input,spec} = control, id = 'wf-profession-' + (++fieldId), original = String(existing?.[spec.key] || '');
+    const catalog = state.reference.catalog, originalRow = catalog.find(row => row.kind === 'profession' && row.code === original);
+    const originalParent = original ? originalRow?.specialty_code || '__ungrouped__' : '';
+    const legacy = !original && existing?.[spec.legacy] ? String(existing[spec.legacy]) : '';
+    const normalize = value => String(value ?? '').toLocaleLowerCase('ru').replace(/ё/g,'е').trim();
+    const parents = catalog.filter(row => row.kind === 'specialty' && (isActive(row) || row.code === originalParent))
+      .map(row => ({value:row.code,text:row.label + (isActive(row) ? '' : ' · архив')})).sort((a,b) => a.text.localeCompare(b.text,'ru'));
+    if (originalParent && !parents.some(row => row.value === originalParent)) parents.push({value:originalParent,text:'Без специальности (исходное значение)'});
+    const candidates = values.map(([value,text]) => {
+      const row = catalog.find(item => item.kind === 'profession' && item.code === value);
+      if (value === original && !row && existing?.[spec.legacy]) text=String(existing[spec.legacy]);
+      return {value,parent:row?.specialty_code || '__ungrouped__',text:row?.grade != null ? row.grade + ' разряд · ' + text : text,grade:row?.grade};
+    }).sort((a,b) => (a.grade ?? 0) - (b.grade ?? 0) || a.text.localeCompare(b.text,'ru'));
+    const parent = E('select',{id:id + '-specialty','aria-label':'Специальность'});
+    const parentSearch = E('input',{type:'search',placeholder:'Поиск специальности',autocomplete:'off','aria-label':'Поиск специальности','aria-controls':parent.id});
+    const search = E('input',{type:'search',placeholder:'Поиск разряда или варианта',autocomplete:'off','aria-label':'Поиск разряда или варианта должности','aria-controls':id});
+    const hint = E('small',{id:id + '-hint',className:'wf-reference-hint'});
+    const count = E('small',{className:'wf-reference-count',role:'status','aria-live':'polite'});
+    const clear = E('button',{type:'button',className:'secondary-button wf-reference-clear'},'Очистить');
+    input.id=id;input.setAttribute('aria-describedby',hint.id);
+    parent.setAttribute('aria-describedby',hint.id);
+    let chosenParent=originalParent;
+    function renderParents() {
+      const query=normalize(parentSearch.value);
+      parent.replaceChildren(E('option',{value:'',disabled:true},'Выберите специальность'),
+        ...parents.filter(row => row.value === chosenParent || normalize(row.text).includes(query)).map(row => E('option',{value:row.value},row.text)));
+      parent.value=chosenParent;
+    }
+    function updateHint() {
+      const pending=!!chosenParent&&!input.value;
+      const selectedText=input.value === original && !originalRow && existing?.[spec.legacy] ? String(existing[spec.legacy]) : values.find(([value]) => value === input.value)?.[1] || existing?.[spec.legacy] || input.value;
+      hint.textContent=pending ? 'Выберите разряд или вариант должности. Изменения ещё не сохранены.' : legacy ?
+        control.forceClear ? 'Исходное значение будет очищено после сохранения.' : input.value ? 'Исходное значение: '+legacy : 'Не сопоставлено: '+legacy :
+        input.value ? selectedText : original ? 'Должность будет очищена после сохранения.' : 'Выберите специальность, затем разряд или вариант должности.';
+      hint.classList.toggle('is-unmapped',!!legacy&&!input.value&&!control.forceClear);
+      clear.textContent=legacy&&control.forceClear ? 'Вернуть исходное' : 'Очистить';
+      clear.disabled=!input.value&&!legacy&&!chosenParent;
+    }
+    function renderVariants() {
+      const selected=input.value, query=normalize(search.value);
+      const available=candidates.filter(row => row.parent === chosenParent);
+      const matched=available.filter(row => normalize(row.text).includes(query));
+      const shown=available.filter(row => row.value === selected || normalize(row.text).includes(query));
+      input.replaceChildren(E('option',{value:''},chosenParent ? 'Выберите разряд / вариант должности' : legacy&&!control.forceClear ? 'Сохранить исходное значение' : 'Не выбрано'),
+        ...shown.map(row => E('option',{value:row.value},row.text)));
+      input.value=selected;
+      input.required=!!chosenParent;
+      count.textContent=chosenParent ? query ? `Найдено: ${matched.length} из ${available.length}` : `Вариантов: ${available.length}` : '';
+      search.disabled=!chosenParent;
+      updateHint();
+    }
+    parentSearch.addEventListener('input',renderParents);
+    parentSearch.addEventListener('keydown',event => {if(event.key==='Enter'){event.preventDefault();parent.focus();}});
+    search.addEventListener('input',renderVariants);
+    search.addEventListener('keydown',event => {if(event.key==='Enter'){event.preventDefault();input.focus();}});
+    parent.addEventListener('change',() => {
+      chosenParent=parent.value;input.value='';search.value='';control.forceClear=false;state.dirty=true;renderVariants();
+    });
+    input.addEventListener('change',() => {control.forceClear=!!legacy&&!input.value;state.dirty=true;renderVariants();});
+    clear.addEventListener('click',() => {
+      input.value='';chosenParent='';search.value='';parentSearch.value='';
+      control.forceClear=legacy ? !control.forceClear : false;state.dirty=true;renderParents();renderVariants();
+    });
+    renderParents();renderVariants();
+    return E('div',{className:'wf-reference-field wf-profession-field wf-wide'},
+      E('div',{className:'wf-profession-pickers'},
+        E('div',{className:'wf-reference-picker'},E('label',{htmlFor:parent.id},'Специальность'),parentSearch,parent),
+        E('div',{className:'wf-reference-picker'},E('label',{htmlFor:id},'Разряд / вариант должности'),search,input)),
+      hint,E('div',{className:'wf-reference-footer'},count,clear));
+  }
   function searchableField(control, values, existing) {
+    if (control.spec.kind === 'profession') return professionField(control,values,existing);
     const {input,spec} = control, id = 'wf-reference-' + (++fieldId);
     const legacy = !existing?.[spec.key] && existing?.[spec.legacy] ? String(existing[spec.legacy]) : '';
     const search = E('input',{type:'search',placeholder:'Поиск по вариантам',autocomplete:'off','aria-label':'Поиск: ' + spec.title});

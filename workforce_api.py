@@ -79,10 +79,12 @@ def validate_fields(db, values, rules, required=()):
             clean[key] = value
         elif spec[0] == 'catalog_text':
             value = text_value(value, key, spec[2], key in required)
-            row = db.native('SELECT label FROM workforce_catalog WHERE kind=%s AND label_key=log_casefold(trim(%s)) AND active',
+            row = db.native('SELECT code,label FROM workforce_catalog WHERE kind=%s AND label_key=log_casefold(trim(%s)) AND active',
                             (spec[1], value)).fetchone() if value else None
             if value and not row:
                 abort(400, description='Выберите значение из справочника. Новые значения добавляет администратор.')
+            if row:
+                catalog_value(db, row['code'], spec[1], True)
             clean[key] = row['label'] if row else ''
         elif spec[0] == 'choice':
             if value not in spec[1]:
@@ -625,11 +627,11 @@ def register_workforce_routes(app, get_db, roles_required):
     @roles_required('admin')
     def workforce_catalog(kind, code=None):
         if kind not in {'citizenship', 'employment', 'stage', 'basis', 'result', 'document', 'docstate',
-                        'check', 'checkstate', 'project', 'organization', 'place', 'profession', 'travelpoint', 'direction', 'destination'}:
+                        'check', 'checkstate', 'project', 'organization', 'place', 'profession', 'specialty', 'travelpoint', 'direction', 'destination'}:
             abort(404)
         if kind in {'employment', 'stage', 'basis', 'result', 'docstate', 'checkstate', 'direction', 'destination'}:
             abort(400, description='Этот перечень закреплён правилами учёта и доступен только для просмотра.')
-        data = payload({'label', 'active', 'address', 'capacity', 'token', 'request_key', 'reason'},
+        data = payload({'label', 'active', 'address', 'capacity', 'specialty_code', 'grade', 'token', 'request_key', 'reason'},
                        {'request_key', 'reason'} | ({'token'} if code else {'label'}))
         reason = text_value(data['reason'], 'Основание изменения', 10000, True)
         db = database()
@@ -662,11 +664,26 @@ def register_workforce_routes(app, get_db, roles_required):
             values = {}
             if 'label' in data:
                 values['label' if identity == 'code' else 'name'] = text_value(data['label'], 'Название',
-                    500 if kind == 'profession' else 300 if kind == 'travelpoint' else 200, True)
+                    500 if kind in {'profession', 'specialty'} else 300 if kind == 'travelpoint' else 200, True)
             if 'active' in data:
                 if type(data['active']) is not bool:
                     abort(400, description='Укажите активность значения.')
                 values['active'] = data['active']
+            if set(data) & {'specialty_code', 'grade'} and kind != 'profession':
+                abort(400, description='Специальность и разряд доступны только для должностей и профессий.')
+            if 'specialty_code' in data:
+                specialty = data['specialty_code'] or None
+                # Keep an existing archived parent; changing the relation requires an active one.
+                if before is None or specialty != before.get('specialty_code'):
+                    specialty = catalog_value(db, specialty, 'specialty', True)
+                values['specialty_code'] = specialty
+            if 'grade' in data:
+                grade = data['grade']
+                if grade is not None and (type(grade) is not int or not 1 <= grade <= 99):
+                    abort(400, description='Разряд должен быть целым числом от 1 до 99 или не указан.')
+                if grade is not None and not values.get('specialty_code', (before or {}).get('specialty_code')):
+                    abort(400, description='Для разряда выберите специальность.')
+                values['grade'] = grade
             if set(data) & {'address', 'capacity'} and kind != 'place':
                 abort(400, description='Адрес и вместимость доступны только для ПВП.')
             if 'address' in data:

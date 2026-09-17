@@ -109,7 +109,10 @@ def catalog_value(db, value, kind, required=False):
         return None
     if not isinstance(value, str) or not value.startswith(kind + '.'):
         abort(400, description='Выберите значение справочника: ' + kind)
-    row = db.native('SELECT code FROM workforce_catalog WHERE code=%s AND kind=%s AND active',
+    row = db.native('''SELECT c.code FROM workforce_catalog c
+                    LEFT JOIN workforce_catalog s ON s.code=c.specialty_code
+                    WHERE c.code=%s AND c.kind=%s AND c.active
+                      AND (c.specialty_code IS NULL OR s.active)''',
                     (value, kind)).fetchone()
     if not row:
         abort(400, description='Значение справочника недоступно. Обновите список.')
