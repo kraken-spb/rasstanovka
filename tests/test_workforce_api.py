@@ -95,6 +95,101 @@ class WorkforceApiTest(unittest.TestCase):
         self.assertEqual(revoked['rows'], [])
         self.assertEqual(revoked['totals']['total'], 0)
 
+    def add_source_record(self, worker_id, source_key, role='rotation', sheet='Явка', active=True):
+        # A reviewed initial batch can contain both services; membership belongs to each row.
+        if not hasattr(self, 'source_batch'):
+            self.source_batch = self.db.native('''INSERT INTO workforce_import_batches
+                (request_key,file_sha256,filename,service,source_key,report_date,state,preview_json,created_by)
+                VALUES (%s,%s,'Согласованные источники.xlsx','reviewed',%s,'2026-09-16','applied','{}',%s)
+                RETURNING id''', (uuid4(), self.suffix * 2, 'test:' + self.suffix, self.users['admin']['id'])).fetchone()['id']
+            self.source_row = 0
+        self.source_row += 1
+        return self.db.native('''INSERT INTO workforce_source_records
+            (batch_id,worker_id,filename,sheet,source_row,source_role,raw_json,mapped_json,source_key,active)
+            VALUES (%s,%s,'Исходник.xlsx',%s,%s,%s,'{}','{}',%s,%s) RETURNING id''',
+            (self.source_batch, worker_id, sheet, self.source_row, role, source_key, active)).fetchone()['id']
+
+    def test_registry_sections_use_row_sources_without_duplicate_people(self):
+        self.add_source_record(self.worker, 'urp:П15')
+        self.add_source_record(self.worker, 'urp:П19', sheet='Неявка')
+        self.add_source_record(self.worker, 'urp:К19', role='recruitment', sheet='Патенты ПВП')
+        # Current employment/stage and a familiar sheet title do not establish source ownership.
+        self.db.native("UPDATE workforce_profiles SET employment_code='employment.recruitment' WHERE worker_id=%s", (self.worker,))
+        self.add_source_record(self.ids[1], 'unrecognized:' + self.suffix, sheet='Явка')
+        self.add_source_record(self.ids[1], 'urp:К15', role='recruitment', sheet='ПВП', active=False)
+        for section in ('rotation', 'recruitment'):
+            with self.subTest(section=section):
+                response = self.request('get', 'people?date=2026-09-16&section=' + section + '&q=Тестовый Сотрудник')
+                self.assertEqual(response.status_code, 200, response.data)
+                self.assertEqual([row['id'] for row in response.json['rows']], [self.worker])
+                self.assertEqual(response.json['totals']['total'], 1)
+
+    def test_registry_sections_keep_source_less_manual_people_in_compatible_list(self):
+        self.db.native('''INSERT INTO manual_employees(worker_id,created_by,created_at,request_key,payload_hash)
+            VALUES (%s,%s,'2026-09-16',%s,'test')''', (self.worker, self.users['admin']['id'], uuid4().hex))
+        path = 'people?date=2026-09-16&department=TEST-SMU'
+        compatible = self.request('get', path).json
+        self.assertEqual([row['id'] for row in compatible['rows']], [self.worker])
+        self.assertEqual(self.request('get', path + '&section=').json, compatible)
+        for section in ('rotation', 'recruitment'):
+            self.assertEqual(self.request('get', path + '&section=' + section).json['totals']['total'], 0)
+        self.add_source_record(self.worker, 'urp:П15')
+        self.assertEqual(self.request('get', path + '&section=rotation').json['totals']['total'], 1)
+        self.assertEqual(self.request('get', path + '&section=recruitment').json['totals']['total'], 0)
+
+    def test_registry_section_pagination_totals_filters_scope_and_outstaff(self):
+        outstaff = self.db.native('''INSERT INTO workers(full_name,personnel_no,department)
+            VALUES ('Аутстафф Проверка',%s,'TEST-SMU') RETURNING id''', (self.suffix + 'outstaff',)).fetchone()['id']
+        inactive = self.db.native('''INSERT INTO workers(full_name,personnel_no,department,active)
+            VALUES ('Неактивный Проверка',%s,'TEST-SMU',0) RETURNING id''', (self.suffix + 'inactive',)).fetchone()['id']
+        self.add_source_record(self.worker, 'urp:П15')
+        self.add_source_record(self.ids[1], 'urp:П19')
+        self.add_source_record(outstaff, 'urp:П19', role='outstaff', sheet='Аутстаффинг')
+        self.add_source_record(outstaff, 'urp:П19', role='outstaff', sheet='Аустаффинг')
+        self.add_source_record(inactive, 'urp:П15')
+        for worker, stage in ((self.worker, 'stage.onsite'), (outstaff, 'stage.pvp')):
+            self.db.native('''INSERT INTO workforce_stage_events
+                (worker_id,stage_code,effective_date,confirmed,reason,created_by,request_key)
+                VALUES (%s,%s,'2026-09-16',TRUE,'Проверка фильтра',%s,%s)''',
+                (worker, stage, self.users['admin']['id'], uuid4()))
+        path = 'people?date=2026-09-16&section=rotation&limit=1'
+        pages = [self.request('get', path + '&offset=' + str(offset), role='rotation').json for offset in (0, 1, 2)]
+        self.assertEqual({row['id'] for page in pages for row in page['rows']}, {self.worker, outstaff})
+        self.assertEqual([len(page['rows']) for page in pages], [1, 1, 0])
+        expected = {'total': 2, 'onsite': 1, 'pvp': 1, 'inbound': 0, 'on_leave': 0, 'unconfirmed': 0}
+        for page in pages:
+            self.assertEqual(page['totals'], expected)
+        self.assertEqual(self.request('get', path + '&department=OTHER-SMU', role='rotation').json['totals']['total'], 0)
+        self.assertEqual(self.request('get', path + '&department=OTHER-SMU').json['totals']['total'], 1)
+        selected = self.request('get', path + '&stage=stage.pvp&q=^Аутстафф&regex=1', role='rotation').json
+        self.assertEqual([row['id'] for row in selected['rows']], [outstaff])
+        self.assertEqual(selected['totals']['pvp'], 1)
+        self.assertEqual(self.request('get', path + '&active=0', role='rotation').json['totals']['total'], 1)
+
+    def test_registry_section_cache_tracks_membership_only_changes(self):
+        self.app.config['TESTING'] = False
+        rotation = self.add_source_record(self.worker, 'urp:П15')
+        self.add_source_record(self.worker, 'urp:К15', role='recruitment', sheet='ПВП')
+        path = 'people?date=2026-09-16&department=TEST-SMU&section='
+        first = self.request('get', path + 'rotation').json
+        self.assertEqual(first['totals']['total'], 1)
+        self.assertEqual(self.request('get', path + 'recruitment').json['totals']['total'], 1)
+        self.db.native('UPDATE workforce_source_records SET active=FALSE WHERE id=%s', (rotation,))
+        removed = self.request('get', path + 'rotation').json
+        self.assertEqual(removed['rows'], [])
+        self.assertEqual(removed['totals']['total'], 0)
+        self.assertNotEqual(removed['revision'], first['revision'])
+        self.assertEqual(self.request('get', path + 'recruitment').json['totals']['total'], 1)
+        replacement = self.add_source_record(self.worker, 'urp:П19')
+        self.assertEqual(self.request('get', path + 'rotation').json['totals']['total'], 1)
+        self.db.native('DELETE FROM workforce_source_records WHERE id=%s', (replacement,))
+        self.assertEqual(self.request('get', path + 'rotation').json['totals']['total'], 0)
+
+    def test_registry_rejects_unknown_section(self):
+        response = self.request('get', 'people?section=staff')
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('Неизвестный раздел', response.json['error'])
+
     def test_postgres_dashboard_colors_are_catalog_backed_and_scoped(self):
         from personnel_dashboard import register_personnel_dashboard
         from gdlr_api import register_gdlr_routes

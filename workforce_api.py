@@ -142,7 +142,7 @@ def register_workforce_routes(app, get_db, roles_required):
     register_workforce_export(app, database, roles_required)
     from workforce_jobs import register_export_jobs
     register_export_jobs(app, database, roles_required)
-    from workforce_imports import register_import_routes
+    from workforce_imports import SOURCES, register_import_routes
     register_import_routes(app, database, roles_required)
     from workforce_board import register_board_routes, stage_token, transition_targets
     register_board_routes(app, database, roles_required)
@@ -180,11 +180,18 @@ def register_workforce_routes(app, get_db, roles_required):
         except ValueError:
             abort(400, description='Неверная страница списка.')
         search = text_value(request.args.get('q', ''), 'Поиск', 200)
+        section = request.args.get('section', '')
+        if section not in ('', 'rotation', 'recruitment'):
+            abort(400, description='Неизвестный раздел учёта.')
         with db:
             db.execute('BEGIN')
             db.native("SET LOCAL statement_timeout='1000ms'")
             actor, scope, args = actor_scope(db)
             clauses = [scope]
+            if section:
+                clauses.append('''EXISTS(SELECT 1 FROM workforce_source_records sr
+                    WHERE sr.worker_id=w.id AND sr.active AND sr.source_key=ANY(%s))''')
+                args.append([key for key, (service, _) in SOURCES.items() if service == section])
             queue = request.args.get('queue', '')
             if queue not in ('', 'movements', 'plans', 'pvp', 'rotations'):
                 abort(400, description='Неизвестный раздел учёта.')

@@ -20,7 +20,7 @@ function app({workforce = true, hash = '#workforce', role = 'admin', entries = n
   const views = ['staffing','employees','placement','dashboard','catalogs', ...(workforce ? ['workforce'] : [])].map(view => ({
     id:'view-' + view, active:false, classList:{toggle(_name, active) { this.active = active; }}
   }));
-  const buttons = views.map(node => ({dataset:{view:node.id.slice(5)}, classList:{toggle() {}}, addEventListener() {}}));
+  const buttons = [...views.map(node => node.id.slice(5)), ...(workforce ? ['workforce/rotation','workforce/recruitment'] : [])].map(view => ({dataset:{view}, active:false,classList:{toggle(_name,active) {this.active=active;}}, addEventListener() {}}));
   const stack = entries ? structuredClone(entries) : [{state:null, hash}];
   let cursor = index;
   const location = {get hash() {return stack[cursor].hash;}};
@@ -31,8 +31,8 @@ function app({workforce = true, hash = '#workforce', role = 'admin', entries = n
   };
   if (workforce) window.workforceScreen = {
     routeView(route) {
-      const match = /^workforce\/people\/([1-9]\d*)$/.exec(route);
-      return route === 'workforce' || match && Number.isSafeInteger(Number(match[1])) ? 'workforce' : null;
+      const match = /^workforce(?:\/(rotation|recruitment))?(?:\/people\/([1-9]\d*))?$/.exec(route);
+      return match && (!match[2] || Number.isSafeInteger(Number(match[2]))) ? 'workforce' : null;
     },
     canLeave() {calls.guards++;return hooks.leave;},
     activate:async route => {calls.activate.push(route);if (hooks.activate) await hooks.activate(route);},
@@ -58,7 +58,7 @@ function app({workforce = true, hash = '#workforce', role = 'admin', entries = n
     toast:message => calls.errors.push(message), loadLocationReference:async () => {calls.locations++;},
     loadCrews:async () => {}, loadCalendar:async () => {}, loadManagement:async () => {}};
   vm.runInNewContext(routing, context, {filename:'app-navigation.js'});
-  return {window, history, location, state, calls, hooks, stack, context, index:() => cursor,
+  return {window, history, location, state, calls, hooks, stack, context, buttons, index:() => cursor,
     navigate:context.switchView, dispatch};
 }
 
@@ -67,17 +67,17 @@ test('list opens a card in history; close/back/forward reuse activation and one 
   await a.navigate('workforce');
   a.calls.guards = 0;
   await a.window.openWorkforcePerson(12);
-  assert.equal(a.location.hash, '#workforce/people/12');
+  assert.equal(a.location.hash, '#workforce/rotation/people/12');
   assert.equal(a.stack.length, 2);
   assert.equal(a.calls.guards, 1);
   a.window.closeWorkforcePerson();
   a.window.closeWorkforcePerson();
   await settle();
-  assert.equal(a.location.hash, '#workforce');
+  assert.equal(a.location.hash, '#workforce/rotation');
   assert.equal(a.calls.guards, 2);
   a.history.forward();await settle();
-  assert.equal(a.location.hash, '#workforce/people/12');
-  assert.deepEqual(a.calls.activate, ['workforce','workforce/people/12','workforce','workforce/people/12']);
+  assert.equal(a.location.hash, '#workforce/rotation/people/12');
+  assert.deepEqual(a.calls.activate, ['workforce/rotation','workforce/rotation/people/12','workforce/rotation','workforce/rotation/people/12']);
   assert.equal(a.calls.guards, 3);
   assert.equal(a.calls.locations, 0);
 });
@@ -86,13 +86,13 @@ test('declined browser Back restores the original entry without activating or di
   const a = app();await a.navigate('workforce');await a.window.openWorkforcePerson(12);
   const before = a.calls.activate.length;a.calls.guards = 0;a.hooks.leave = false;
   a.history.back();await settle();
-  assert.equal(a.location.hash, '#workforce/people/12');
+  assert.equal(a.location.hash, '#workforce/rotation/people/12');
   assert.equal(a.index(), 1);
   assert.equal(a.calls.activate.length, before);
   assert.equal(a.calls.deactivate, 0);
   assert.equal(a.calls.guards, 1);
   a.hooks.leave = true;a.history.back();await settle();
-  assert.equal(a.location.hash, '#workforce');
+  assert.equal(a.location.hash, '#workforce/rotation');
   assert.equal(a.calls.guards, 2);
 });
 
@@ -100,13 +100,13 @@ test('direct card link closes to the list with replace; refresh retains a known 
   const direct = app({hash:'#workforce/people/9'});
   await direct.navigate('workforce/people/9');
   await direct.window.closeWorkforcePerson();
-  assert.equal(direct.location.hash, '#workforce');
+  assert.equal(direct.location.hash, '#workforce/rotation');
   assert.equal(direct.stack.length, 1);
   const before = app();await before.navigate('workforce');await before.window.openWorkforcePerson(9);
   const refreshed = app({entries:before.stack,index:before.index()});
-  await refreshed.navigate('workforce/people/9');
+  await refreshed.navigate('workforce/rotation/people/9');
   refreshed.window.closeWorkforcePerson();await settle();
-  assert.equal(refreshed.location.hash, '#workforce');
+  assert.equal(refreshed.location.hash, '#workforce/rotation');
   assert.equal(refreshed.index(), 0);
 });
 
@@ -145,12 +145,35 @@ test('late activation failure cannot change or report an error over a newer card
   a.hooks.activate = route => route.endsWith('/1') ? new Promise((_resolve, reject) => {rejectOlder = reject;}) : undefined;
   const older = a.window.openWorkforcePerson(1);
   await a.window.openWorkforcePerson(2);rejectOlder(new Error('Old request failed'));await older;
-  assert.equal(a.location.hash, '#workforce/people/2');assert.deepEqual(a.calls.errors, []);
+  assert.equal(a.location.hash, '#workforce/rotation/people/2');assert.deepEqual(a.calls.errors, []);
 });
 
 test('same-card refresh replaces history and preserves the list return target', async () => {
   const a = app();await a.navigate('workforce');await a.window.openWorkforcePerson(7);
   await a.window.openWorkforcePerson(7);assert.equal(a.stack.length, 2);
   a.window.closeWorkforcePerson();await settle();
-  assert.equal(a.location.hash, '#workforce');assert.equal(a.index(), 0);
+  assert.equal(a.location.hash, '#workforce/rotation');assert.equal(a.index(), 0);
+});
+
+test('both HR sections retain card context, highlight their own menu and restore on Back', async () => {
+  for (const section of ['rotation','recruitment']) {
+    const a=app(), route='workforce/'+section;
+    await a.navigate(route);await a.window.openWorkforcePerson(24);
+    assert.equal(a.location.hash,'#'+route+'/people/24');
+    assert.equal(a.buttons.find(button => button.dataset.view===route).classList.active,true);
+    a.window.closeWorkforcePerson();await settle();
+    assert.equal(a.location.hash,'#'+route);
+    a.history.forward();await settle();assert.equal(a.location.hash,'#'+route+'/people/24');
+  }
+});
+
+test('direct recruitment cards close to recruitment and a rejected section switch preserves the draft route', async () => {
+  const a=app({hash:'#workforce/recruitment/people/9'});
+  await a.navigate('workforce/recruitment/people/9');a.hooks.leave=false;
+  assert.equal(await a.navigate('workforce/rotation'),false);
+  assert.equal(a.location.hash,'#workforce/recruitment/people/9');
+  a.hooks.leave=true;await a.window.closeWorkforcePerson();
+  assert.equal(a.location.hash,'#workforce/recruitment');assert.equal(a.stack.length,1);
+  const recruiter=app({role:'recruitment'});await recruiter.navigate('workforce');
+  assert.equal(recruiter.location.hash,'#workforce/recruitment');
 });

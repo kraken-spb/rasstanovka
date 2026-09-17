@@ -40,7 +40,7 @@
   <header class="topbar">
     <a class="brand" href="{{ '#dashboard' if user.role == 'viewer' else '#staffing' }}"><span class="brand-mark">Р</span><strong>Расстановка</strong></a>
     <nav class="desktop-nav" aria-label="Разделы">
-      {% if workforce_enabled %}<button id="sidebar-toggle" type="button" aria-label="Развернуть меню" aria-expanded="false">Меню</button><button data-view="workforce">Учёт персонала</button>{% endif %}
+      {% if workforce_enabled %}<button id="sidebar-toggle" type="button" aria-label="Развернуть меню" aria-expanded="false">Меню</button><button data-view="workforce/rotation">Перевахта</button><button data-view="workforce/recruitment">Комплектование</button>{% endif %}
       {% if user.role != 'viewer' %}<button data-view="staffing">Расстановка</button><button data-view="verification">Верификация</button>{% endif %}
       {% if user.role != 'viewer' %}<button data-view="employees">Сотрудники</button><button data-view="outstaff">Аутстафф</button>{% endif %}
       <button data-view="dashboard">Отчеты</button>

@@ -2,7 +2,7 @@
   'use strict';
   const root = document.querySelector('.app-shell'), $ = s => document.querySelector(s);
   if (!root || !$('#view-workforce')) return;
-  const state = {reference: null, offset: 0, limit: 50, total: 0, request: 0, cardRequest: 0, card: null, tab: 'profile', busy: false, dirty: false, queue:'', view:'board', listLoaded: false, returnScroll: 0, returnFocus: null};
+  const state = {reference: null, offset: 0, limit: 50, total: 0, request: 0, cardRequest: 0, card: null, tab: 'profile', busy: false, dirty: false, section:'', queue:'', view:'board', listLoaded: false, returnScroll: 0, returnFocus: null};
   const E = (tag, attrs = {}, ...children) => {
     const node = document.createElement(tag);
     for (const [key, value] of Object.entries(attrs)) {
@@ -50,7 +50,7 @@
       const query = new URLSearchParams({date: $('#wf-date').value, q: $('#wf-search').value,
         regex: $('#wf-regex').checked ? '1' : '0', department: $('#wf-department').value,
         stage: $('#wf-stage').value, employer: $('#wf-employer').value, category: $('#wf-category').value,
-        conflicts: $('#wf-conflicts').checked ? '1' : '0', queue:state.queue === 'lifecycle' ? '' : state.queue, offset: state.offset, limit: state.limit});
+        conflicts: $('#wf-conflicts').checked ? '1' : '0', section:state.section, queue:state.queue === 'lifecycle' ? '' : state.queue, offset: state.offset, limit: state.limit});
       if (state.view === 'board') {
         const data = await board.load(query, state.reference);
         if (seq !== state.request || !data) return;
@@ -143,9 +143,23 @@
       window.scrollTo(0, state.returnScroll);
     });
   }
+  function workforceRoute(route) {
+    const match = /^workforce(?:\/(rotation|recruitment))?(?:\/people\/([1-9]\d*))?$/.exec(route);
+    return match && (!match[2] || Number.isSafeInteger(Number(match[2]))) ? {section:match[1] || '',personId:match[2] ? Number(match[2]) : null} : null;
+  }
   async function activate(route) {
-    const match = /^workforce\/people\/([1-9]\d*)$/.exec(route);
-    if (match) return fetchCard(Number(match[1]));
+    const target = workforceRoute(route);
+    if (!target) return;
+    if (state.section !== target.section) {
+      ++state.request; state.section = target.section; state.offset = 0;
+      state.listLoaded = false; state.returnScroll = 0; state.returnFocus = null;
+      $('#wf-rows').replaceChildren(); $('#wf-board-region').replaceChildren(); $('#wf-stats').replaceChildren();
+    }
+    const sections = {rotation:['Перевахта','Состав из таблиц перевахтовки · общие карточки сотрудников'],
+      recruitment:['Комплектование','Состав из таблиц комплектации · общие карточки сотрудников']};
+    const heading = sections[state.section] || ['Учёт персонала','Единая карточка сотрудника · история присутствия и движения'];
+    $('#wf-title').textContent = heading[0]; $('#wf-description').textContent = heading[1];
+    if (target.personId) return fetchCard(target.personId);
     const wasOpen = !$('#wf-card').hidden;
     closeCard(wasOpen);
     if (!wasOpen || !state.listLoaded) await load();
@@ -574,12 +588,11 @@
   new ResizeObserver(renderCardSplit).observe(cardWorkspace);
   cardSplitMobile.addEventListener('change', renderCardSplit);
   window.addEventListener('beforeunload',event => {if (state.dirty || state.busy || board.busy()) {event.preventDefault();event.returnValue = '';}});
-  window.workforceScreen = {load,activate,routeView:route => {
-    const match = /^workforce\/people\/([1-9]\d*)$/.exec(route);
-    return route === 'workforce' || (match && Number.isSafeInteger(Number(match[1]))) ? 'workforce' : null;
-  },
+  window.workforceScreen = {load,activate,routeView:route => workforceRoute(route) ? 'workforce' : null,
     deactivate:() => closeCard(false),invalidate:() => {state.reference=null;},canLeave:() => board.canLeave() && ($('#wf-card').hidden || canDiscard())};
   const paths = {workforce:'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M16 3a4 4 0 0 1 0 8 M22 21v-2a4 4 0 0 0-3-3.87 M13 7a4 4 0 1 1-8 0a4 4 0 0 1 8 0',
+    'workforce/rotation':'M20 7h-9 M16 3l4 4-4 4 M4 17h9 M8 13l-4 4 4 4',
+    'workforce/recruitment':'M15 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2 M12 7a4 4 0 1 1-8 0a4 4 0 0 1 8 0 M19 8v6 M16 11h6',
     staffing:'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z',dashboard:'M4 3h16v18H4z M8 7h8 M8 11h8 M8 15h4',
     analytics:'M3 3v18h18 M7 16v-5 M12 16V7 M17 16V4',catalogs:'M4 4h16v5H4z M4 15h16v5H4z',
     accounts:'M12 12a4 4 0 1 0 0-8a4 4 0 0 0 0 8 M4 21v-2a6 6 0 0 1 6-5h4a6 6 0 0 1 6 5v2',

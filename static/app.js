@@ -63,10 +63,15 @@
     let route = typeof value === 'string' ? value.replace(/^#/, '') : '';
     if (route === 'categories') route = 'catalogs';
     const available = new Set(all('.view').map(node => node.id.slice(5)));
+    if (route === 'workforce' && available.has('workforce')) route = 'workforce/' + (role === 'recruitment' ? 'recruitment' : 'rotation');
     if (window.workforceScreen?.routeView(route) === 'workforce' && available.has('workforce')) return {route, view:'workforce'};
     if (available.has(route)) return {route, view:route};
     const view = role === 'viewer' ? 'dashboard' : readOnly ? 'staffing' : 'placement';
     return {route:view, view};
+  }
+  function workforceListRoute(route) {
+    const section = /^workforce\/(rotation|recruitment)(?:\/|$)/.exec(route || '');
+    return section ? 'workforce/' + section[1] : 'workforce';
   }
   async function switchView(route, staffingFilter = null, navigation = {}) {
     if (restoringNavigation) return false;
@@ -82,11 +87,12 @@
     const old = currentNavigation, saved = historyEntry(navigation.state), push = navigation.mode === 'push' && old?.route !== next.route;
     const entry = navigation.mode === 'pop' && saved?.route === next.route ? {...saved, view} : {
       owner:navigationOwner, index:push ? (old?.index ?? 0) + 1 : old?.index ?? saved?.index ?? 0,
-      route:next.route, view, cardFromList:push ? old?.route === 'workforce' : (!old || old.route === next.route) && saved?.route === next.route ? !!saved.cardFromList : false
+      route:next.route, view, cardFromList:push ? old?.view === 'workforce' && old.route === workforceListRoute(old.route) : (!old || old.route === next.route) && saved?.route === next.route ? !!saved.cardFromList : false
     };
     if (old?.view === 'workforce' && view !== 'workforce') window.workforceScreen?.deactivate();
     all(".view").forEach((el) => el.classList.toggle("active", el.id === "view-" + view));
-    all("[data-view]").forEach((el) => { el.classList.toggle("active", el.dataset.view === view); });
+    const navigationTab = view === 'workforce' ? (workforceListRoute(next.route) === 'workforce' ? 'workforce/' + (role === 'recruitment' ? 'recruitment' : 'rotation') : workforceListRoute(next.route)) : view;
+    all("[data-view]").forEach((el) => { el.classList.toggle("active", el.dataset.view === navigationTab); });
     currentNavigation = entry;
     writeHistory(entry, push ? 'push' : 'replace');
     try {
@@ -143,14 +149,14 @@
   window.openWorkforcePerson = id => {
     const value = String(id);
     if (!/^[1-9]\d*$/.test(value) || !Number.isSafeInteger(Number(value)) || !window.workforceScreen) return Promise.resolve(false);
-    return switchView('workforce/people/' + value, null, {mode:'push'});
+    return switchView(workforceListRoute(currentNavigation?.route) + '/people/' + value, null, {mode:'push'});
   };
   window.closeWorkforcePerson = () => {
     if (restoringNavigation || requestedBack || currentNavigation?.view !== 'workforce') return;
     const entry = historyEntry();
-    if (currentNavigation.route !== 'workforce' && entry?.route === currentNavigation.route && entry.cardFromList && entry.index > 0) {
+    if (currentNavigation.route !== workforceListRoute(currentNavigation.route) && entry?.route === currentNavigation.route && entry.cardFromList && entry.index > 0) {
       requestedBack = true;history.back();
-    } else return switchView('workforce');
+    } else return switchView(workforceListRoute(currentNavigation.route));
   };
   window.openStaffingReport = filter => switchView('staffing', filter);
   all("[data-view]").forEach((el) => el.addEventListener("click", () => switchView(el.dataset.view)));

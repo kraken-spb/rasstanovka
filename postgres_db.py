@@ -145,7 +145,7 @@ def get_pool():
             pool.wait(timeout=10)
             with pool.connection() as connection:
                 version = connection.execute('SELECT MAX(version) FROM workforce_schema_versions').fetchone()[0]
-                if version != 19:
+                if version != 20:
                     raise RuntimeError('Apply the reviewed PostgreSQL migration before starting the app.')
                 identities = connection.execute("SELECT table_name FROM information_schema.columns WHERE table_schema='public' AND column_name='id' AND is_identity='YES'").fetchall()
                 _identity_tables = frozenset(row[0] for row in identities)
