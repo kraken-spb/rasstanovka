@@ -31,11 +31,12 @@
     </header>
     <p id="wf-card-error" class="error-text" role="alert" hidden></p>
     <div class="wf-card-workspace">
-      <section class="wf-card-details" aria-label="Данные сотрудника">
+      <section id="wf-card-details" class="wf-card-details" aria-label="Данные сотрудника">
         <nav id="wf-card-tabs" class="wf-tabs" aria-label="Разделы карточки"></nav>
         <label class="wf-card-section-picker">Раздел карточки<select id="wf-card-section"></select></label>
         <div id="wf-card-content"></div>
       </section>
+      <div id="wf-card-splitter" class="wf-card-splitter" role="separator" tabindex="0" aria-label="Ширина данных сотрудника" aria-orientation="vertical" aria-controls="wf-card-details wf-card-activity" aria-valuemin="0" aria-valuemax="100" aria-valuenow="61" title="Перетащите для изменения ширины. Стрелки ← → — изменить, Enter или двойной щелчок — сбросить."></div>
       <aside id="wf-card-activity" class="wf-card-activity" aria-labelledby="wf-card-activity-title">
         <div class="wf-activity-heading"><h2 id="wf-card-activity-title">История сотрудника</h2><span id="wf-activity-count"></span></div>
         <div id="wf-card-timeline"></div>

@@ -128,7 +128,7 @@
       $('#wf-card-stage').textContent = stage ? label(stage.stage_code) : 'Состояние не подтверждено';
       $('#wf-card-stage').className = 'wf-tag ' + ((stage?.stage_code || '').split('.')[1] || '');
       $('#wf-card-stage').title = 'На ' + displayDate($('#wf-date').value);
-      renderCard(); renderActivity();
+      renderCard(); renderActivity(); renderCardSplit();
       if (!keep) $('#wf-card-title').focus({preventScroll:true});
     } catch (err) { if (seq === state.cardRequest) {$('#wf-card-subtitle').textContent = '';error(err.message, true);} }
     finally { if (seq === state.cardRequest) $('#wf-card').removeAttribute('aria-busy'); }
@@ -515,6 +515,64 @@
   $('#wf-prev').addEventListener('click',() => {state.offset = Math.max(0,state.offset-state.limit);load();});
   $('#wf-next').addEventListener('click',() => {state.offset += state.limit;load();});
   $('#wf-card-close').addEventListener('click',() => window.closeWorkforcePerson());
+  const cardWorkspace = $('.wf-card-workspace'), cardSplitter = $('#wf-card-splitter');
+  const cardSplitKey = 'workforce-card-split:' + root.dataset.userId;
+  const cardSplitMobile = window.matchMedia('(max-width: 760px)');
+  const defaultCardSplit = .61;
+  let cardSplit = defaultCardSplit, cardDrag = null;
+  try {
+    const saved = localStorage.getItem(cardSplitKey);
+    if (saved !== null && saved.trim() && Number.isFinite(Number(saved)) && Number(saved) > 0 && Number(saved) < 1) cardSplit = Number(saved);
+  } catch (_) {}
+  function cardSplitBounds() {
+    const width = cardWorkspace.getBoundingClientRect().width - cardSplitter.getBoundingClientRect().width;
+    if (cardSplitMobile.matches || cardWorkspace.classList.contains('is-stacked') || $('#wf-card').hidden || $('#wf-card-activity').hidden || width < 560) return null;
+    return {width, min: 320 / width, max: 1 - 240 / width};
+  }
+  function renderCardSplit() {
+    cardWorkspace.classList.toggle('is-stacked', cardWorkspace.getBoundingClientRect().width < 572);
+    const bounds = cardSplitBounds();
+    if (!bounds) {finishCardDrag(); return;}
+    const ratio = Math.max(bounds.min, Math.min(bounds.max, cardSplit));
+    cardWorkspace.style.setProperty('--wf-card-details-width', (bounds.width * ratio) + 'px');
+    for (const [key,value] of Object.entries({min:Math.round(bounds.min * 100),max:Math.round(bounds.max * 100),now:Math.round(ratio * 100)})) cardSplitter.setAttribute('aria-value' + key, String(value));
+    cardSplitter.setAttribute('aria-valuetext', 'Карточка ' + Math.round(ratio * 100) + '%, история ' + Math.round((1 - ratio) * 100) + '%');
+  }
+  function rememberCardSplit() {try {localStorage.setItem(cardSplitKey, String(cardSplit));} catch (_) {}}
+  function finishCardDrag() {
+    if (!cardDrag) return;
+    const pointerId = cardDrag.pointerId; cardDrag = null;
+    cardSplitter.classList.remove('is-dragging'); document.body.classList.remove('wf-card-resizing');
+    if (cardSplitter.hasPointerCapture(pointerId)) cardSplitter.releasePointerCapture(pointerId);
+    rememberCardSplit();
+  }
+  cardSplitter.addEventListener('pointerdown', event => {
+    if (event.button !== 0 || !event.isPrimary || !cardSplitBounds()) return;
+    event.preventDefault(); cardSplitter.focus({preventScroll:true});
+    cardDrag = {pointerId:event.pointerId,offset:event.clientX - cardSplitter.getBoundingClientRect().left};
+    cardSplitter.setPointerCapture(event.pointerId);
+    cardSplitter.classList.add('is-dragging'); document.body.classList.add('wf-card-resizing');
+  });
+  cardSplitter.addEventListener('pointermove', event => {
+    if (!cardDrag || event.pointerId !== cardDrag.pointerId) return;
+    const bounds = cardSplitBounds();
+    if (!bounds) {finishCardDrag(); return;}
+    cardSplit = Math.max(bounds.min, Math.min(bounds.max, (event.clientX - cardWorkspace.getBoundingClientRect().left - cardDrag.offset) / bounds.width));
+    renderCardSplit();
+  });
+  for (const event of ['pointerup','pointercancel','lostpointercapture']) cardSplitter.addEventListener(event, finishCardDrag);
+  window.addEventListener('blur', finishCardDrag);
+  cardSplitter.addEventListener('keydown', event => {
+    const bounds = cardSplitBounds();
+    if (!bounds || !['ArrowLeft','ArrowRight','Home','End','Enter'].includes(event.key)) return;
+    event.preventDefault();
+    const current = Math.max(bounds.min, Math.min(bounds.max, cardSplit));
+    const next = event.key === 'Home' ? bounds.min : event.key === 'End' ? bounds.max : event.key === 'Enter' ? defaultCardSplit : current + (event.key === 'ArrowLeft' ? -1 : 1) * (event.shiftKey ? .1 : .02);
+    cardSplit = Math.max(bounds.min, Math.min(bounds.max, next)); renderCardSplit(); rememberCardSplit();
+  });
+  cardSplitter.addEventListener('dblclick', () => {cardSplit = defaultCardSplit; renderCardSplit(); rememberCardSplit();});
+  new ResizeObserver(renderCardSplit).observe(cardWorkspace);
+  cardSplitMobile.addEventListener('change', renderCardSplit);
   window.addEventListener('beforeunload',event => {if (state.dirty || state.busy || board.busy()) {event.preventDefault();event.returnValue = '';}});
   window.workforceScreen = {load,activate,routeView:route => {
     const match = /^workforce\/people\/([1-9]\d*)$/.exec(route);
