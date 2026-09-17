@@ -323,11 +323,23 @@ def register_crew_routes(app, get_db, roles_required, utc_now):
 
     def catalog_crew_history(db):
         # Undo/redo guards also retain brigade IDs after a roster transfer.
-        return {row[0] for row in db.execute('''
+        history_sql = '''
             SELECT crew_id FROM assignments WHERE crew_id IS NOT NULL
             UNION SELECT crew_id FROM assignment_events WHERE crew_id IS NOT NULL
             UNION SELECT crew_id FROM employee_removals WHERE crew_id IS NOT NULL
             UNION SELECT crew_id FROM employee_restorations WHERE crew_id IS NOT NULL
+        '''
+        if getattr(db, 'dialect', None) == 'postgres':
+            # Match existing IDs as text so unrelated/non-numeric JSON values
+            # cannot break the catalog through an integer cast.
+            return {row[0] for row in db.native(history_sql + '''
+                UNION SELECT c.id FROM staffing_action_history h
+                CROSS JOIN LATERAL jsonb_array_elements_text(
+                    COALESCE(NULLIF(h.guards_json::jsonb->'crew_ids', 'null'::jsonb), '[]'::jsonb)
+                ) AS guarded(crew_id)
+                JOIN crews c ON c.id::text=guarded.crew_id
+            ''')}
+        return {row[0] for row in db.execute(history_sql + '''
             UNION SELECT value FROM staffing_action_history,
                 json_each(staffing_action_history.guards_json, '$.crew_ids')
         ''')}

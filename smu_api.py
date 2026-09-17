@@ -123,9 +123,11 @@ def register_smu_routes(app, get_db, roles_required, utc_now):
         db = get_db()
         rows = [dict(r) for r in db.execute('''
             SELECT c.*,u.full_name site_chief_name,u.active site_chief_active,
-                   COUNT(e.worker_id) employee_count FROM smu_catalog c
+                   COALESCE(e.employee_count,0) employee_count FROM smu_catalog c
             LEFT JOIN users u ON u.id=c.site_chief_user_id
-            LEFT JOIN employee_smu e ON e.smu_id=c.id GROUP BY c.id ORDER BY c.name''')]
+            LEFT JOIN (SELECT smu_id,COUNT(worker_id) employee_count
+                       FROM employee_smu GROUP BY smu_id) e ON e.smu_id=c.id
+            ORDER BY c.name''')]
         options = [dict(r) for r in db.execute('''SELECT id,full_name,username FROM users
             WHERE active=1 ORDER BY full_name,username,id''')] if g.user['role'] == 'super_admin' else []
         return jsonify({'rows': rows, 'chief_options': options})
