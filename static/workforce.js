@@ -71,7 +71,7 @@
         return E('tr', {}, cell('Сотрудник', E('button', {type: 'button', className: 'wf-person-link', onclick: () => openCard(row.id)}, row.full_name),
           E('small', {}, row.personnel_no || 'Табельный номер не указан'), row.conflicts ? E('small', {}, `⚠ Замечаний: ${row.conflicts}`) : null),
         cell('Проект / СМУ', row.project || 'Проект не уточнён', E('small', {}, row.department || '—')),
-        cell('Работодатель', row.employer || '—'), cell('Должность / ГДЛР', row.profession || '—', E('small', {}, row.category || 'ГДЛР не указан')),
+        cell('Работодатель', row.employer || '—'), cell('Должность', row.profession || '—'), cell('Категория ГДЛР', row.category || 'ГДЛР не указан'),
         cell('Статус сотрудника', row.employment || 'Не уточнён'), cell('Состояние', E('span', {className: 'wf-tag ' + (row.stage_code || '').split('.')[1]}, row.stage || 'Не подтверждено'),
           row.effective_date ? E('small', {}, 'с ' + displayDate(row.effective_date)) : null),
         cell('Заезд / прогноз выезда', displayDate(row.arrival_date), E('small', {}, displayDate(row.forecast_departure_date)),
