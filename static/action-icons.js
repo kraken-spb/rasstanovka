@@ -41,7 +41,7 @@
     input.setAttribute('aria-label', title);
   }
   function decorate(control) {
-    if (control.closest('.table-pagination') || control.matches('.multi-filter-button, [data-display]')) return;
+    if (control.closest('.table-pagination, #catalog-rail') || control.id === 'catalog-rail-backdrop' || control.matches('.multi-filter-button, [data-display]')) return;
     const text = control.textContent.replace(/\s+/g, ' ').trim();
     const previous = metadata.get(control);
     const clean = text.replace(/^[+＋]\s*/, '');

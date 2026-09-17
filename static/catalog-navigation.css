@@ -1,0 +1,86 @@
+/* The second rail belongs only to Catalogs; its expanded menu overlays the workspace. */
+body.workforce-layout:has(#view-catalogs.active) { --catalog-rail-width: 48px; }
+body.workforce-layout:has(#view-catalogs.active) .app-shell {
+  margin-left: calc(var(--wf-content-rail, var(--wf-rail)) + var(--catalog-rail-width));
+  width: calc(100% - var(--wf-content-rail, var(--wf-rail)) - var(--catalog-rail-width));
+}
+#view-catalogs { min-width: 0; }
+#view-catalogs .catalog-workspace { min-width: 0; container-type: inline-size; }
+#catalog-rail {
+  position: fixed; top: 56px; bottom: 0; left: var(--wf-content-rail, var(--wf-rail));
+  width: var(--catalog-rail-width); z-index: 44; display: flex; flex-direction: column;
+  background: #f7faf8; border-right: 1px solid var(--wf-line); padding: 10px 4px;
+}
+#view-catalogs.catalog-rail-open #catalog-rail {
+  width: min(260px, calc(100vw - var(--wf-content-rail, var(--wf-rail)) - 8px));
+  box-shadow: 8px 0 22px #193e2b18;
+}
+#catalog-rail button {
+  display: grid; grid-template-columns: 22px minmax(0,1fr); align-items: center;
+  justify-content: start; gap: 10px; width: 100%; min-width: 0; max-width: none;
+  height: 40px; min-height: 40px; flex: 0 0 40px; padding: 9px 8px;
+  color: #486454; background: transparent; border: 0; border-radius: 7px;
+  text-align: left; font-size: 12px; line-height: 1.2; overflow: hidden;
+}
+#catalog-rail button::before { display: none; }
+#catalog-rail button svg { width: 22px; height: 22px; flex: 0 0 22px; }
+#catalog-rail button span { display: none; min-width: 0; white-space: normal; }
+#view-catalogs.catalog-rail-open #catalog-rail button span { display: block; }
+#catalog-rail button.active { background: #e1efe6; color: #176d50; box-shadow: inset 3px 0 #176d50; }
+#catalog-rail button:hover { background: #eaf2ed; }
+#catalog-rail button:focus-visible { outline: 2px solid #087e79; outline-offset: -2px; }
+#catalog-rail #catalog-rail-toggle { margin-bottom: 7px; }
+#catalog-rail-toggle svg { transition: transform .12s; }
+.catalog-rail-open #catalog-rail-toggle svg { transform: rotate(180deg); }
+#catalog-rail .catalog-subnav {
+  display: flex; flex-direction: column; flex-wrap: nowrap; gap: 3px; margin: 0; padding: 0;
+  overflow: auto; scrollbar-width: none; flex: 1 1 auto; min-height: 0;
+}
+.catalog-rail-open #catalog-rail .catalog-subnav { scrollbar-width: thin; }
+#catalog-rail [hidden] { display: none !important; }
+#catalog-rail .catalog-subnav button { flex-shrink: 0; }
+#catalog-rail .catalog-nav-group { flex: 0 0 auto; margin: 5px 5px 2px; padding-top: 7px; border-top: 1px solid #dce5df; color: #708174; font-size: 10px; }
+#catalog-rail .catalog-nav-group span { display: none; }
+.catalog-rail-open #catalog-rail .catalog-nav-group span { display: inline; }
+#catalog-rail .catalog-rail-search { display: none; margin: 0 4px 8px; }
+.catalog-rail-open #catalog-rail .catalog-rail-search { display: block; }
+#catalog-rail-search { width: 100%; min-width: 0; max-width: 100%; }
+#catalog-rail #catalog-search-empty { font-size: 12px; color: var(--muted); margin: 8px; }
+#view-catalogs #catalog-rail-backdrop { position: fixed; inset: 56px 0 0 var(--wf-content-rail, var(--wf-rail)); z-index: 43; border: 0; border-radius: 0; width: auto; background: #183b2908; }
+#workforce-catalog-panel .wf-catalog-title { font-size: 16px; margin: 0; align-self: center; overflow-wrap: anywhere; }
+#workforce-catalog-panel .wf-toolbar > input { flex: 1 1 170px; min-width: 0; }
+#workforce-catalog-panel .wf-toolbar > button { flex: 0 0 auto; }
+/* Fit editors to their actual available width, including an expanded primary menu. */
+@container (max-width: 900px) {
+  #view-catalogs .category-catalog-row,
+  #view-catalogs .category-catalog-row:has(> label:nth-child(2):not(.check-label)),
+  #view-catalogs .category-catalog-row:not(:has(> label)) { grid-template-columns: minmax(0,1fr) minmax(120px,1fr) 132px; gap: 6px; }
+  #view-catalogs .category-catalog-row > small { grid-column: 1; grid-row: 2; }
+  #view-catalogs .category-catalog-row > .category-actions { grid-column: 3; grid-row: 1 / span 2; width: 132px; }
+  #view-catalogs .category-catalog-row:has(> label:nth-child(2):not(.check-label)) > .check-label { grid-column: 1; grid-row: 2; }
+  #view-catalogs .category-catalog-row:has(> label:nth-child(2):not(.check-label)) > small { grid-column: 2; }
+  #view-catalogs .location-catalog-toolbar { grid-template-columns: repeat(2,minmax(0,1fr)); }
+}
+@container (max-width: 620px) {
+  #view-catalogs .category-catalog-row,
+  #view-catalogs .category-catalog-row:has(> label:nth-child(2):not(.check-label)),
+  #view-catalogs .category-catalog-row:not(:has(> label)) { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  #view-catalogs .category-catalog-row > label:not(.check-label), #view-catalogs .category-catalog-row > strong { grid-column: 1 / -1; }
+  #view-catalogs .category-catalog-row > small,
+  #view-catalogs .category-catalog-row:has(> label:nth-child(2):not(.check-label)) > small,
+  #view-catalogs .category-catalog-row:has(> label:nth-child(2):not(.check-label)) > .check-label { grid-column: auto; grid-row: auto; }
+  #view-catalogs .category-catalog-row > .category-actions { grid-column: 1 / -1; grid-row: auto; width: 100%; }
+  #view-catalogs .category-create-form, #view-catalogs .category-create-form:has(> label:nth-child(2)),
+  #view-catalogs .location-catalog-toolbar, #view-catalogs .location-catalog-toolbar[aria-label],
+  #view-catalogs .location-catalog-row { grid-template-columns: minmax(0,1fr); }
+}
+@media (max-width: 760px) {
+  body.workforce-layout:has(#view-catalogs.active) { --catalog-rail-width: 44px; }
+  #catalog-rail { padding: 6px 0; }
+  #catalog-rail button { height: 44px; min-height: 44px; flex-basis: 44px; padding: 11px; }
+  #catalog-rail .catalog-subnav { gap: 0; }
+  #catalog-rail-search { font-size: 16px; }
+  #catalog-rail .catalog-rail-search { margin-inline: 8px; }
+  #view-catalogs #catalog-rail-backdrop { min-height: 0; }
+}
+@media (prefers-reduced-motion: reduce) { #catalog-rail-toggle svg { transition: none; } }

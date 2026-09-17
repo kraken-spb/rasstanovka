@@ -33,6 +33,7 @@
   <link rel="stylesheet" href="{{ asset_url('table-pagination.css') }}">
   <link rel="stylesheet" href="{{ asset_url('user-profile.css') }}">
   {% if workforce_enabled %}<link rel="stylesheet" href="{{ asset_url('workforce.css') }}">{% endif %}
+  {% if workforce_enabled %}<link rel="stylesheet" href="{{ asset_url('catalog-navigation.css') }}">{% endif %}
 </head>
 <body{% if workforce_enabled %} class="workforce-layout"{% endif %}>
   <header class="topbar">
@@ -318,7 +319,12 @@
     </section>
     <section id="view-catalogs" class="view">
       <div class="page-heading"><div><h1>Справочники</h1><p>Категории сотрудников, бригады, подрядчики, СМУ, этапы и подобъекты.</p>{% if user.role != 'super_admin' %}<p id="catalog-permission-note" class="table-note">Только просмотр. Редактирование доступно супер-администратору.</p>{% endif %}</div></div>
-      <nav class="catalog-subnav" aria-label="Подразделы справочников">
+      {% if workforce_enabled %}
+      <aside id="catalog-rail" aria-label="Меню справочников">
+        <button id="catalog-rail-toggle" type="button" aria-label="Развернуть справочники" aria-expanded="false" aria-controls="catalog-navigation"><span>Справочники</span></button>
+        <div class="catalog-rail-search"><input id="catalog-rail-search" type="search" placeholder="Найти справочник" aria-label="Найти справочник" autocomplete="off"></div>
+      {% endif %}
+      <nav id="catalog-navigation" class="catalog-subnav" aria-label="Подразделы справочников">
         <button type="button" data-catalog="categories" aria-pressed="true" class="secondary-button active">ГДТЛР</button>
         <button type="button" data-catalog="crews" aria-pressed="false" class="secondary-button">Бригады</button>
         <button type="button" data-catalog="smu" aria-pressed="false" class="secondary-button">СМУ</button>
@@ -326,8 +332,13 @@
         <button type="button" data-catalog="stages" aria-pressed="false" class="secondary-button">Этапы</button>
         <button type="button" data-catalog="groups" aria-pressed="false" class="secondary-button">Группы подобъектов</button>
         <button type="button" data-catalog="subobjects" aria-pressed="false" class="secondary-button">Подобъекты</button>
-        {% if workforce_enabled %}<button type="button" data-catalog="workforce" aria-pressed="false" class="secondary-button">Учёт персонала</button>{% endif %}
       </nav>
+      {% if workforce_enabled %}
+        <p id="catalog-search-empty" role="status" hidden>Справочник не найден</p>
+      </aside>
+      <button id="catalog-rail-backdrop" type="button" tabindex="-1" aria-label="Свернуть справочники" hidden></button>
+      {% endif %}
+      <div class="catalog-workspace">
       {% if workforce_enabled %}<section id="workforce-catalog-panel" hidden></section>{% endif %}
     <section id="view-categories" class="catalog-category-section active">
       <div class="page-heading"><div><h2>ГДТЛР</h2><p>Справочник для ручной привязки сотрудников из текущего файла.</p></div><button id="categories-refresh" type="button" class="secondary-button">Обновить справочник</button></div>
@@ -385,6 +396,7 @@
           <section id="catalog-subobjects"><div class="location-catalog-heading"><h3>Подобъекты</h3><button {% if user.role != 'super_admin' %}hidden{% endif %} id="location-site-add" type="button" class="secondary-button">Добавить подобъект</button></div><div id="location-site-list" class="location-catalog-list"></div></section>
         </div>
       </section>
+      </div>
     </section>
     <section id="view-logs" class="view">
       <div class="page-heading"><div><h1>Журнал действий</h1><p>История изменений расстановки и удаления сотрудников.</p></div></div>
