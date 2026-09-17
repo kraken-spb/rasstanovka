@@ -115,12 +115,12 @@
       const generation = ++state.generation;
       state.query = new URLSearchParams(query);state.query.delete('queue');state.reference = reference;
       state.loading = true;container.inert = true;container.setAttribute('aria-busy', 'true');clearDrag();
-      const selectedStage = state.query.get('stage');
+      const selectedStages = state.query.getAll('stage').filter(Boolean);
       try {
         let responses;
         for (let attempt = 0; attempt < 3; attempt++) {
           responses = await Promise.all(stages.map(async ([code]) => {
-            if (selectedStage && selectedStage !== code) return {rows: [], totals: {total: 0}};
+            if (selectedStages.length && !selectedStages.includes(code)) return {rows: [], totals: {total: 0}};
             const params = new URLSearchParams(state.query);params.set('stage', code);params.set('limit', '20');params.set('offset', '0');
             return api('people?' + params);
           }));
@@ -139,7 +139,7 @@
         container.replaceChildren(state.selectionBar, state.notice, board);
         stages.forEach(([code, name], index) => {
           const lane = createLane(code, name, responses[index]);
-          if (code === 'unconfirmed') {lane.open = selectedStage === 'unconfirmed';container.append(lane);} else board.append(lane);
+          if (code === 'unconfirmed') {lane.open = selectedStages.includes('unconfirmed');container.append(lane);} else board.append(lane);
         });
         const totals = {total: 0};
         stages.forEach(([, , key], index) => {totals[key] = responses[index].totals.total;totals.total += totals[key];});

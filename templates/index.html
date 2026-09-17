@@ -6,6 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Бригады и расстановка</title>
   <script src="{{ asset_url('api-response.js') }}" defer></script>
+  <script src="{{ asset_url('multi-filter.js') }}" defer></script>
   <link rel="stylesheet" href="{{ asset_url('styles.css') }}">
   <link rel="stylesheet" href="{{ asset_url('catalog-layout.css') }}">
   <link rel="stylesheet" href="{{ asset_url('crew-catalog.css') }}">
@@ -488,7 +489,6 @@
     {% if user.role in ('admin', 'super_admin', 'hr_viewer') %}<button data-view="plan">План</button><button data-view="catalogs">Справочники</button><button data-view="accounts">Управление</button><button data-view="logs">Логи</button>{% endif %}{% if user.role == 'super_admin' %}<button data-view="backups">Резервные копии</button>{% endif %}
   </nav>
   <div id="toast" class="toast" role="status"></div>
-  <script src="{{ asset_url('multi-filter.js') }}" defer></script>
   <script src="{{ asset_url('search-regex.js') }}" defer></script>
   <script src="{{ asset_url('reference-cache.js') }}" defer></script>
   {% if user.role in ('admin', 'super_admin', 'hr_viewer') %}<script src="{{ asset_url('locations.js') }}" defer></script>{% endif %}

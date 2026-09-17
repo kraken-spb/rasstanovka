@@ -144,7 +144,7 @@ def register_workforce_routes(app, get_db, roles_required):
     register_export_jobs(app, database, roles_required)
     from workforce_imports import SOURCES, register_import_routes
     register_import_routes(app, database, roles_required)
-    from workforce_board import register_board_routes, stage_token, transition_targets
+    from workforce_board import STAGES, register_board_routes, stage_token, transition_targets
     register_board_routes(app, database, roles_required)
 
     @app.get('/api/workforce/reference')
@@ -183,6 +183,9 @@ def register_workforce_routes(app, get_db, roles_required):
         section = request.args.get('section', '')
         if section not in ('', 'rotation', 'recruitment'):
             abort(400, description='Неизвестный раздел учёта.')
+        stages = sorted({value for value in request.args.getlist('stage') if value})
+        if any(value not in (*STAGES, 'unconfirmed') for value in stages):
+            abort(400, description='Выберите доступные состояния сотрудника.')
         with db:
             db.execute('BEGIN')
             db.native("SET LOCAL statement_timeout='1000ms'")
@@ -215,10 +218,16 @@ def register_workforce_routes(app, get_db, roles_required):
             if active:
                 clauses.append('w.active=%s')
                 args.append(int(active))
-            if request.args.get('stage') == 'unconfirmed':
-                clauses.append('st.stage_code IS NULL')
-            for key, column in [('department', 'w.department'), ('employment', 'p.employment_code'),
-                                *([] if request.args.get('stage') == 'unconfirmed' else [('stage', 'st.stage_code')])]:
+            if stages:
+                stage_clauses = []
+                codes = [value for value in stages if value != 'unconfirmed']
+                if codes:
+                    stage_clauses.append('st.stage_code=ANY(%s)')
+                    args.append(codes)
+                if 'unconfirmed' in stages:
+                    stage_clauses.append('st.stage_code IS NULL')
+                clauses.append(' OR '.join(stage_clauses))
+            for key, column in [('department', 'w.department'), ('employment', 'p.employment_code')]:
                 if request.args.get(key):
                     clauses.append(column + '=%s')
                     args.append(request.args[key])

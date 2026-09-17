@@ -190,6 +190,98 @@ class WorkforceApiTest(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn('Неизвестный раздел', response.json['error'])
 
+    def add_stage_record(self, worker_id, stage, day='2026-09-16', confirmed=True, retracted=False):
+        return self.db.native('''INSERT INTO workforce_stage_events
+            (worker_id,stage_code,effective_date,confirmed,retracted,reason,created_by,request_key)
+            VALUES (%s,%s,%s,%s,%s,'Проверка фильтра состояний',%s,%s) RETURNING id''',
+            (worker_id, stage, day, confirmed, retracted, self.users['admin']['id'], uuid4())).fetchone()['id']
+
+    def test_registry_stage_multiselect_combines_unknown_and_resets_with_cache(self):
+        self.app.config['TESTING'] = False
+        unknown = self.db.native('''INSERT INTO workers(full_name,personnel_no,department)
+            VALUES ('Состояние не подтверждено',%s,'TEST-SMU') RETURNING id''', (self.suffix + 'unknown',)).fetchone()['id']
+        leave = self.db.native('''INSERT INTO workers(full_name,personnel_no,department)
+            VALUES ('Межвахтовый отпуск',%s,'TEST-SMU') RETURNING id''', (self.suffix + 'leave',)).fetchone()['id']
+        self.add_stage_record(self.worker, 'stage.onsite')
+        self.add_stage_record(self.ids[1], 'stage.pvp')
+        self.add_stage_record(leave, 'stage.leave')
+        path = 'people?date=2026-09-16&q=' + self.suffix
+        cases = [
+            ('&stage=stage.onsite', {self.worker}),
+            ('&stage=stage.onsite&stage=stage.pvp', set(self.ids)),
+            ('&stage=unconfirmed&stage=stage.onsite', {self.worker, unknown}),
+            ('&stage=unconfirmed', {unknown}),
+            ('&stage=stage.pvp&stage=stage.onsite&stage=stage.pvp', set(self.ids)),
+            ('&stage=&stage=stage.onsite', {self.worker}),
+            ('&stage=&stage=', {*self.ids, unknown, leave}),
+            ('', {*self.ids, unknown, leave}),
+        ]
+        for query, expected in cases:
+            with self.subTest(query=query):
+                response = self.request('get', path + query)
+                self.assertEqual(response.status_code, 200, response.data)
+                self.assertEqual({row['id'] for row in response.json['rows']}, expected)
+                self.assertEqual(len(response.json['rows']), len(expected))
+                self.assertEqual(response.json['totals']['total'], len(expected))
+        mixed = self.request('get', path + '&stage=stage.onsite&stage=unconfirmed').json
+        self.assertEqual(mixed['totals']['onsite'], 1)
+        self.assertEqual(mixed['totals']['unconfirmed'], 1)
+
+    def test_registry_stage_multiselect_uses_latest_confirmed_state_on_report_date(self):
+        self.add_stage_record(self.worker, 'stage.leave', '2026-09-14')
+        self.add_stage_record(self.worker, 'stage.pvp', '2026-09-15')
+        self.add_stage_record(self.worker, 'stage.inbound', '2026-09-15')
+        self.add_stage_record(self.worker, 'stage.onsite', '2026-09-16', confirmed=False)
+        self.add_stage_record(self.worker, 'stage.pvp', '2026-09-16', retracted=True)
+        self.add_stage_record(self.worker, 'stage.onsite', '2026-09-17')
+        for day, query, expected in [
+            ('2026-09-13', '&stage=unconfirmed&stage=stage.onsite', {self.worker}),
+            ('2026-09-14', '&stage=stage.leave&stage=stage.inbound', {self.worker}),
+            ('2026-09-16', '&stage=stage.leave&stage=stage.inbound', {self.worker}),
+            ('2026-09-16', '&stage=stage.pvp&stage=stage.onsite', set()),
+            ('2026-09-16', '&stage=unconfirmed', set()),
+            ('2026-09-17', '&stage=stage.pvp&stage=stage.onsite', {self.worker}),
+            ('2026-09-17', '&stage=stage.inbound', set()),
+        ]:
+            with self.subTest(day=day, query=query):
+                response = self.request('get', f'people?date={day}&department=TEST-SMU' + query, role='rotation')
+                self.assertEqual(response.status_code, 200, response.data)
+                self.assertEqual({row['id'] for row in response.json['rows']}, expected)
+                self.assertEqual(response.json['totals']['total'], len(expected))
+
+    def test_registry_stage_multiselect_keeps_section_scope_totals_and_pagination(self):
+        onsite = self.db.native('''INSERT INTO workers(full_name,personnel_no,department)
+            VALUES ('Явка обоих источников',%s,'TEST-SMU') RETURNING id''', (self.suffix + 'onsite',)).fetchone()['id']
+        pvp = self.db.native('''INSERT INTO workers(full_name,personnel_no,department)
+            VALUES ('ПВП комплектации',%s,'TEST-SMU') RETURNING id''', (self.suffix + 'pvp',)).fetchone()['id']
+        for worker in (self.worker, self.ids[1], onsite):
+            self.add_source_record(worker, 'urp:П15')
+        for worker in (onsite, pvp):
+            self.add_source_record(worker, 'urp:К19', role='recruitment', sheet='ПВП')
+        self.add_stage_record(onsite, 'stage.onsite')
+        self.add_stage_record(self.ids[1], 'stage.onsite')
+        self.add_stage_record(pvp, 'stage.pvp')
+        path = 'people?date=2026-09-16&q=' + self.suffix + '&stage=stage.onsite&stage=unconfirmed'
+        pages = [self.request('get', path + f'&section=rotation&limit=1&offset={offset}', role='rotation').json
+                 for offset in (0, 1, 2)]
+        self.assertEqual([len(page['rows']) for page in pages], [1, 1, 0])
+        self.assertEqual({row['id'] for page in pages for row in page['rows']}, {self.worker, onsite})
+        for page in pages:
+            self.assertEqual(page['totals'], {'total': 2, 'onsite': 1, 'pvp': 0, 'inbound': 0, 'on_leave': 0, 'unconfirmed': 1})
+        self.assertEqual(self.request('get', path + '&section=rotation').json['totals']['total'], 3)
+        self.assertEqual(self.request('get', path + '&section=rotation&department=OTHER-SMU', role='rotation').json['totals']['total'], 0)
+        recruitment = self.request('get', path + '&section=recruitment', role='recruitment').json
+        self.assertEqual([row['id'] for row in recruitment['rows']], [onsite])
+        self.assertEqual(recruitment['totals']['total'], 1)
+
+    def test_registry_stage_multiselect_rejects_unknown_codes(self):
+        for query in ('stage=unknown', 'stage=stage.onsite&stage=unknown', 'stage=unconfirmed&stage=employment.staff',
+                      'stage=stage.onsite,stage.pvp'):
+            with self.subTest(query=query):
+                response = self.request('get', 'people?' + query)
+                self.assertEqual(response.status_code, 400)
+                self.assertIn('состояния', response.json['error'])
+
     def test_postgres_dashboard_colors_are_catalog_backed_and_scoped(self):
         from personnel_dashboard import register_personnel_dashboard
         from gdlr_api import register_gdlr_routes

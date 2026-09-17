@@ -2,6 +2,7 @@
   'use strict';
   const root = document.querySelector('.app-shell'), $ = s => document.querySelector(s);
   if (!root || !$('#view-workforce')) return;
+  const MF = window.MultiFilter;
   const state = {reference: null, offset: 0, limit: 50, total: 0, request: 0, cardRequest: 0, card: null, tab: 'profile', busy: false, dirty: false, section:'', queue:'', view:'board', listLoaded: false, returnScroll: 0, returnFocus: null};
   const E = (tag, attrs = {}, ...children) => {
     const node = document.createElement(tag);
@@ -22,13 +23,14 @@
   const displayDate = value => value ? new Date(value + 'T12:00:00').toLocaleDateString('ru-RU') : '—';
   const label = value => state.reference?.catalog.find(row => row.code === value)?.label || value || '—';
   const board = window.createWorkforceBoard({container: $('#wf-board-region'), api, E, displayDate, openCard, reload: load});
+  MF.enable($('#wf-stage'));
   function error(message, card = false) {
     const node = $(card ? '#wf-card-error' : '#wf-error'); node.textContent = message || ''; node.hidden = !message;
   }
   function selectOptions(node, rows, key, text) {
-    const previous = node.value;
+    const previous = node.multiple ? MF.get(node) : node.value;
     node.replaceChildren(node.options[0], ...rows.filter(r => r.active !== false && r.active !== 0).map(row => E('option', {value: row[key]}, row[text])));
-    node.value = previous;
+    if (node.multiple) MF.set(node, previous); else node.value = previous;
   }
   async function reference() {
     if (state.reference) return;
@@ -49,8 +51,9 @@
       if (seq !== state.request) return;
       const query = new URLSearchParams({date: $('#wf-date').value, q: $('#wf-search').value,
         regex: $('#wf-regex').checked ? '1' : '0', department: $('#wf-department').value,
-        stage: $('#wf-stage').value, employer: $('#wf-employer').value, category: $('#wf-category').value,
+        employer: $('#wf-employer').value, category: $('#wf-category').value,
         conflicts: $('#wf-conflicts').checked ? '1' : '0', section:state.section, queue:state.queue === 'lifecycle' ? '' : state.queue, offset: state.offset, limit: state.limit});
+      MF.params(query, 'stage', MF.get($('#wf-stage')));
       if (state.view === 'board') {
         const data = await board.load(query, state.reference);
         if (seq !== state.request || !data) return;
@@ -506,7 +509,7 @@
     $('#wf-workspaces').append(E('button',{type:'button','data-workspace':value,'aria-pressed':String(!value),className:!value?'active':'',onclick:()=>{
       if (!board.canLeave()) return;
       state.queue=value;state.offset=0;
-      if (value === 'lifecycle') {state.view='board';$('#wf-stage').value='';filterLabel();}
+      if (value === 'lifecycle') {state.view='board';MF.set($('#wf-stage'), '');filterLabel();}
       else if (['plans','pvp','rotations'].includes(value)) state.view='table';
       load();
     }},title));
@@ -519,10 +522,11 @@
   });
   $('#wf-filter-panel').open = !window.matchMedia('(max-width: 760px)').matches;
   function filterLabel() {
-    const count = ['search','department','stage','employer','category'].filter(id => $('#wf-' + id).value).length + Number($('#wf-conflicts').checked) + Number($('#wf-regex').checked);
+    const count = ['search','department','employer','category'].filter(id => $('#wf-' + id).value).length + Number(!!MF.get($('#wf-stage'))) + Number($('#wf-conflicts').checked) + Number($('#wf-regex').checked);
     $('#wf-filter-summary').textContent = 'Фильтры' + (count ? ' · выбрано ' + count : '');
   }
   $('#wf-filter-panel').addEventListener('input',filterLabel);
+  $('#wf-filter-panel').addEventListener('change',filterLabel);
   $('#wf-search').addEventListener('input', () => {clearTimeout(timer);timer = setTimeout(() => {state.offset = 0;load();},250);});
   for (const id of ['date','regex','department','stage','employer','category','conflicts']) $('#wf-' + id).addEventListener('change',() => {state.offset = 0;load();});
   $('#wf-refresh').addEventListener('click',() => {state.reference = null;load();});
