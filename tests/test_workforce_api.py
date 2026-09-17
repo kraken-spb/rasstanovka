@@ -95,6 +95,35 @@ class WorkforceApiTest(unittest.TestCase):
         self.assertEqual(revoked['rows'], [])
         self.assertEqual(revoked['totals']['total'], 0)
 
+    def test_postgres_dashboard_colors_are_catalog_backed_and_scoped(self):
+        from personnel_dashboard import register_personnel_dashboard
+        from gdlr_api import register_gdlr_routes
+        register_personnel_dashboard(self.app, lambda:self.db, lambda *roles:lambda fn:fn)
+        register_gdlr_routes(self.app, lambda:self.db, lambda *roles:lambda fn:fn, lambda:'2026-09-17T00:00:00Z')
+        self.db.native("UPDATE users SET role='super_admin' WHERE id=%s", (self.users['admin']['id'],))
+        made = self.client.post('/api/gdlr-categories', json={'name':'Тест цвета '+self.suffix, 'color':'#17aa88'})
+        self.assertEqual(made.status_code, 201, made.data)
+        category_id = made.json['id']
+        self.db.native('''INSERT INTO employee_gdlr(worker_id,category_id,edit_token,updated_by,updated_at)
+            VALUES (%s,%s,'test',%s,'now') ON CONFLICT(worker_id) DO UPDATE SET category_id=excluded.category_id''',
+            (self.worker, category_id, self.users['admin']['id']))
+        site = self.db.native('SELECT id FROM subobjects LIMIT 1').fetchone()[0]
+        for worker_id in self.ids:
+            for shift in ('1 смена','2 смена'):
+                self.db.native('''INSERT INTO assignments(work_date,shift,subobject_id,worker_id,foreman_user_id,created_at)
+                    VALUES ('2026-09-16',%s,%s,%s,%s,'now')''', (shift,site,worker_id,self.users['foreman']['id']))
+        path = '/api/personnel-dashboard?start=2026-09-16&end=2026-09-16'
+        result = self.client.get(path, headers={'Test-Role':'foreman'})
+        self.assertEqual(result.status_code, 200, result.data)
+        self.assertEqual(result.json['counts'], [1])
+        self.assertEqual(result.json['category_series'], [{'id':str(category_id),'name':'Тест цвета '+self.suffix,
+            'color':'#17AA88','counts':[1]}])
+        category = next(row for row in self.client.get('/api/gdlr-categories').json['rows'] if row['id']==category_id)
+        patch = {'name':category['name'],'active':True,'color':'#dd2299','expected_token':category['edit_token']}
+        self.assertEqual(self.client.patch('/api/gdlr-categories/'+str(category_id),json=patch).status_code, 200)
+        self.assertEqual(self.client.get(path,headers={'Test-Role':'foreman'}).json['category_series'][0]['color'], '#DD2299')
+        self.assertEqual(self.client.patch('/api/gdlr-categories/'+str(category_id),json=patch).status_code, 409)
+
     def test_staffing_source_has_one_row_and_requires_ready_base(self):
         from staffing_import import postgres_member_source_sql
         source = postgres_member_source_sql()

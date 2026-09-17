@@ -4,7 +4,9 @@
   if (!$('view-categories')) return;
   const root = document.querySelector('.app-shell');
   const canEdit = root.dataset.role === 'super_admin';
-  const state = {rows: [], drafts: new Map(), createDraft: '', busy: false};
+  const DEFAULT_COLOR = '#2563EB';
+  const colorValue = value => /^#[0-9a-f]{6}$/i.test(value || '') ? value.toUpperCase() : DEFAULT_COLOR;
+  const state = {rows: [], drafts: new Map(), createDraft: '', createColor: DEFAULT_COLOR, busy: false};
   const el = (tag, props = {}, ...children) => {
     const node = document.createElement(tag);
     Object.entries(props).forEach(([key, value]) => {
@@ -16,7 +18,7 @@
     return node;
   };
   const visible = () => $('view-categories').classList.contains('active');
-  const hasDrafts = () => state.drafts.size || state.createDraft.length > 0;
+  const hasDrafts = () => state.drafts.size || state.createDraft.length > 0 || state.createColor !== DEFAULT_COLOR;
   function status(message, isError = false) {
     const node = $('categories-status'); node.textContent = message; node.classList.toggle('error-text', isError);
   }
@@ -47,7 +49,11 @@
     finally { state.busy = false; $('view-categories').inert = false; }
   }
   async function load() { await refresh(true); }
-  function rowDraft(item) { return state.drafts.get(item.id) || {name: item.name, active: !!item.active, expected_token: item.edit_token}; }
+  function rowDraft(item) { return state.drafts.get(item.id) || {name: item.name, active: !!item.active, color: colorValue(item.color), expected_token: item.edit_token}; }
+  function createColorPreview() {
+    $('category-create-color-value').textContent = state.createColor;
+    $('category-create-cancel').hidden = !state.createDraft.length && state.createColor === DEFAULT_COLOR;
+  }
   function render() {
     const count = state.rows.length;
     const bound = state.rows.reduce((total, item) => total + item.employee_count, 0);
@@ -55,25 +61,34 @@
     $('categories-bound').textContent = bound.toLocaleString('ru-RU');
     const create = $('category-create-name');
     if (create.value !== state.createDraft) create.value = state.createDraft;
+    $('category-create-color').value = state.createColor;createColorPreview();
     const list = $('category-catalog-list');
     list.replaceChildren(...state.rows.map(item => {
-      if (!canEdit) return el('article', {className: 'category-catalog-row'},
-        el('strong', {}, item.name), el('span', {}, item.active ? 'Доступна для выбора' : 'Отключена'),
-        el('small', {}, 'Связано сотрудников: ' + item.employee_count + (item.staffing_allowed ? ' · Расстановка' : ' · Общий учёт')));
+      if (!canEdit) {
+        const swatch = el('span', {className: 'category-color-swatch', 'aria-hidden': 'true'});swatch.style.backgroundColor = colorValue(item.color);
+        return el('article', {className: 'category-catalog-row category-catalog-readonly'},
+          el('strong', {}, item.name), el('span', {className: 'category-color-readonly'}, swatch, colorValue(item.color)),
+          el('span', {}, item.active ? 'Доступна для выбора' : 'Отключена'),
+          el('small', {}, 'Связано сотрудников: ' + item.employee_count + (item.staffing_allowed ? ' · Расстановка' : ' · Общий учёт')));
+      }
       const draft = rowDraft(item);
       const name = el('input', {value: draft.name, maxLength: 200, required: true, 'aria-label': 'Название категории ' + item.name});
       const active = el('input', {type: 'checkbox', checked: draft.active, 'aria-label': 'Доступность категории ' + item.name});
+      const color = el('input', {type: 'color', value: draft.color, 'aria-label': 'Цвет категории ' + item.name});
+      const hex = el('output', {}, colorValue(draft.color));
       const save = el('button', {className: 'primary-button', disabled: !state.drafts.has(item.id), onclick: () => saveCategory(item)}, 'Сохранить');
       const cancel = el('button', {className: 'text-button', hidden: !state.drafts.has(item.id), onclick: () => {
         state.drafts.delete(item.id); render(); status('Изменение отменено. Обновите справочник, если нужно получить текущие данные.');
       }}, 'Отмена');
       const changed = () => {
-        if (name.value === item.name && active.checked === !!item.active) state.drafts.delete(item.id);
-        else state.drafts.set(item.id, {name: name.value, active: active.checked, expected_token: draft.expected_token});
+        const chosenColor = colorValue(color.value);hex.textContent = chosenColor;
+        if (name.value === item.name && active.checked === !!item.active && chosenColor === colorValue(item.color)) state.drafts.delete(item.id);
+        else state.drafts.set(item.id, {name: name.value, active: active.checked, color: chosenColor, expected_token: draft.expected_token});
         save.disabled = !state.drafts.has(item.id); cancel.hidden = save.disabled;
       };
-      name.addEventListener('input', changed); active.addEventListener('change', changed);
+      name.addEventListener('input', changed); active.addEventListener('change', changed);color.addEventListener('input', changed);color.addEventListener('change', changed);
       return el('article', {className: 'category-catalog-row'}, el('label', {}, 'Название', name),
+        el('label', {className: 'category-color-label'}, 'Цвет диаграммы', el('span', {className: 'category-color-control'}, color, hex)),
         el('label', {className: 'check-label'}, active, 'Доступна для выбора'),
         el('small', {}, 'Связано сотрудников: ' + item.employee_count + (item.staffing_allowed ? ' · Расстановка' : ' · Общий учёт')), el('div', {className: 'category-actions'}, save, cancel,
           el('button', {type: 'button', className: 'text-button error-text', 'aria-label': 'Удалить категорию ' + item.name,
@@ -111,14 +126,16 @@
     if (!canEdit || !name || state.busy) return;
     state.busy = true; $('view-categories').inert = true; error(); status('Добавление категории…');
     try {
-      await api('/api/gdlr-categories', {method: 'POST', body: JSON.stringify({name})});
-      state.createDraft = ''; state.rows = (await api('/api/gdlr-categories')).rows;
+      await api('/api/gdlr-categories', {method: 'POST', body: JSON.stringify({name, color: state.createColor})});
+      state.createDraft = '';state.createColor = DEFAULT_COLOR;state.rows = (await api('/api/gdlr-categories')).rows;
       render(); status('Категория добавлена.');
     } catch (failure) { error(failure.message + ' Название осталось в поле.'); }
     finally { state.busy = false; $('view-categories').inert = false; }
   }
   $('category-create-form').addEventListener('submit', create);
-  $('category-create-name').addEventListener('input', event => { state.createDraft = event.target.value; });
+  $('category-create-name').addEventListener('input', event => {state.createDraft = event.target.value;createColorPreview();});
+  $('category-create-color').addEventListener('input', event => {state.createColor = colorValue(event.target.value);createColorPreview();});
+  $('category-create-cancel').addEventListener('click', () => {state.createDraft = '';state.createColor = DEFAULT_COLOR;render();status('Создание категории отменено.');});
   $('categories-refresh').addEventListener('click', () => refresh());
   window.addEventListener('beforeunload', event => {
     if (visible() && (state.busy || hasDrafts())) { event.preventDefault(); event.returnValue = ''; }

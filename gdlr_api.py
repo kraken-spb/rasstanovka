@@ -1,6 +1,7 @@
 """Administrator-owned category catalog, independent of attendance text."""
 from user_smu_access import can_worker, can_crew, require_workers, require_crew, allowed_workers, worker_clause, explicit_scope, legacy_foreman
 import secrets
+import re
 import sqlite3
 import unicodedata
 
@@ -13,6 +14,16 @@ STAFFING_CATEGORY_NAMES = (
     'Прочие монтажники', 'Прочие основные рабочие', 'Прочие сварщики и газорезчики',
     'Сварщик АиПАМ', 'Сварщик МК', 'Сварщик ТТ', 'Электромонтажник', 'Изолировщик',
 )
+
+DEFAULT_CATEGORY_COLOR = '#2563EB'
+CATEGORY_PALETTE = ('#2563EB', '#0D9488', '#D97706', '#7C3AED', '#DB2777', '#0891B2',
+                    '#65A30D', '#E11D48', '#4F46E5', '#059669', '#C2410C', '#9333EA')
+
+
+def category_color(value):
+    if not isinstance(value, str) or not re.fullmatch(r'#[0-9a-fA-F]{6}', value):
+        abort(400, description='Цвет категории должен быть в формате #RRGGBB, например #2563EB.')
+    return value.upper()
 
 
 def staffing_eligible_sql(worker='w'):
@@ -63,6 +74,13 @@ def migrate_gdlr(db):
             NOT NULL DEFAULT 0 CHECK(staffing_allowed IN (0,1))''')
         keys = [name.casefold() for name in STAFFING_CATEGORY_NAMES]
         db.execute(f"UPDATE gdlr_categories SET staffing_allowed=1 WHERE name_key IN ({','.join('?' for _ in keys)})", keys)
+    if 'color' not in {r['name'] for r in db.execute('PRAGMA table_info(gdlr_categories)')}:
+        db.execute("""ALTER TABLE gdlr_categories ADD COLUMN color TEXT NOT NULL DEFAULT '#2563EB'
+            CHECK(length(color)=7 AND substr(color,1,1)='#' AND substr(color,2) NOT GLOB '*[^0-9A-Fa-f]*')""")
+        keys = [name.casefold() for name in STAFFING_CATEGORY_NAMES]
+        for row in db.execute('SELECT id,name_key FROM gdlr_categories').fetchall():
+            index = keys.index(row['name_key']) if row['name_key'] in keys else row['id'] - 1
+            db.execute('UPDATE gdlr_categories SET color=? WHERE id=?', (CATEGORY_PALETTE[index % len(CATEGORY_PALETTE)], row['id']))
 
 
 def register_gdlr_routes(app, get_db, roles_required, utc_now):
@@ -189,14 +207,16 @@ def register_gdlr_routes(app, get_db, roles_required, utc_now):
     @app.post('/api/gdlr-categories')
     @roles_required('super_admin')
     def create_category():
-        name, key = name_values(payload())
+        data = payload()
+        name, key = name_values(data)
+        color = category_color(data.get('color', DEFAULT_CATEGORY_COLOR))
         db = get_db()
         try:
             with db:
                 db.execute('BEGIN IMMEDIATE')
                 check_admin(db)
-                category_id = db.execute('''INSERT INTO gdlr_categories(name,name_key,edit_token,updated_by,updated_at)
-                    VALUES (?,?,?,?,?)''', (name, key, secrets.token_hex(16), g.user['id'], utc_now())).lastrowid
+                category_id = db.execute('''INSERT INTO gdlr_categories(name,name_key,color,edit_token,updated_by,updated_at)
+                    VALUES (?,?,?,?,?,?)''', (name, key, color, secrets.token_hex(16), g.user['id'], utc_now())).lastrowid
         except sqlite3.IntegrityError:
             abort(409, description='Категория с таким названием уже есть, в том числе среди отключённых.')
         return jsonify({'id': category_id}), 201
@@ -218,8 +238,9 @@ def register_gdlr_routes(app, get_db, roles_required, utc_now):
                     abort(404, description='Категория не найдена.')
                 if data.get('expected_token') != row['edit_token']:
                     abort(409, description='Категория изменена другим пользователем. Обновите справочник.')
-                db.execute('''UPDATE gdlr_categories SET name=?,name_key=?,active=?,edit_token=?,updated_by=?,updated_at=?
-                    WHERE id=?''', (name, key, data['active'], secrets.token_hex(16), g.user['id'], utc_now(), category_id))
+                color = category_color(data['color']) if 'color' in data else row['color']
+                db.execute('''UPDATE gdlr_categories SET name=?,name_key=?,active=?,color=?,edit_token=?,updated_by=?,updated_at=?
+                    WHERE id=?''', (name, key, int(data['active']), color, secrets.token_hex(16), g.user['id'], utc_now(), category_id))
         except sqlite3.IntegrityError:
             abort(409, description='Категория с таким названием уже есть, в том числе среди отключённых.')
         return jsonify({'updated': category_id})

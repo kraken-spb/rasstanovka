@@ -204,7 +204,7 @@
     {% endif %}
     {% endif %}
     <section id="view-analytics" class="view">
-      <div class="page-heading"><div><h1>Динамика расстановки</h1><p>Численность персонала по датам и авторам назначения</p></div></div>
+      <div class="page-heading"><div><h1>Динамика расстановки</h1><p>Численность по датам, категориям ГДЛР и авторам назначения</p></div></div>
       <form id="analytics-form" class="analytics-filters">
         <label>Начало периода<input id="analytics-start" type="date" value="{{ today }}" required></label>
         <label>Конец периода<input id="analytics-end" type="date" value="{{ today }}" required></label>
@@ -219,16 +219,18 @@
           <div id="analytics-chart"></div>
           <p id="analytics-chart-note" class="table-note"></p>
         </section>
-        <section class="panel" aria-labelledby="analytics-users-title">
-          <div class="analytics-chart-heading"><h2 id="analytics-users-title">По пользователям</h2><label>Дата сравнения<input id="analytics-detail-date" type="date"></label></div>
+        <details class="panel analytics-secondary" aria-labelledby="analytics-users-title">
+          <summary><h2 id="analytics-users-title">По пользователям</h2><span id="analytics-users-count" class="analytics-section-count">—</span></summary>
+          <div class="analytics-chart-heading"><span>Назначения и динамика каждого автора</span><label>Дата сравнения<input id="analytics-detail-date" type="date"></label></div>
           <p class="table-note">Выберите ФИО, чтобы посмотреть график пользователя. Изменение — относительно первого дня периода.</p>
           <div id="analytics-users"></div>
-        </section>
-        <p class="table-note">Учитываются действующие назначения на даты расстановки, а не число действий в приложении. Один сотрудник в двух сменах считается один раз за день. Если смены назначали разные пользователи, он учитывается у каждого из них, но в общем итоге — один раз. Снятые назначения не входят в численность.</p>
+        </details>
+        <details class="analytics-method"><summary>Как считается численность</summary><p class="table-note">Учитываются действующие назначения на даты расстановки, а не число действий в приложении. Один сотрудник в двух сменах считается один раз за день. Если смены назначали разные пользователи, он учитывается у каждого из них, но в общем итоге — один раз. Снятые назначения не входят в численность.</p></details>
       </div>
       {% if user.role in ('admin', 'super_admin', 'hr_viewer') %}
-      <section id="user-activity-panel" class="panel" aria-labelledby="user-activity-title">
-        <div class="analytics-chart-heading"><div><h2 id="user-activity-title">Активность пользователей</h2><p class="table-note">Успешные входы за выбранную дату. Статус онлайн — на текущий момент.</p></div></div>
+      <details id="user-activity-panel" class="panel analytics-secondary" aria-labelledby="user-activity-title">
+        <summary><h2 id="user-activity-title">Активность пользователей</h2><span id="analytics-activity-count" class="analytics-section-count">—</span></summary>
+        <p class="table-note">Успешные входы за выбранную дату. Статус онлайн — на текущий момент.</p>
         <form id="user-activity-form" class="analytics-filters">
           <label>Дата входов (МСК)<input id="user-activity-date" type="date" required></label>
           <button type="submit" class="secondary-button">Обновить активность</button>
@@ -238,7 +240,7 @@
         <div id="user-activity-users"></div>
         <p id="user-activity-note" class="table-note"></p>
         <p class="table-note">Онлайн: открытая вкладка подтверждала присутствие в последние 3 минуты. После закрытия вкладки статус обновится в течение 3 минут. Время указано по Москве.</p>
-      </section>
+      </details>
       {% endif %}
     </section>
     <section id="view-dashboard" class="view{% if user.role == 'viewer' %} active{% endif %}">
@@ -332,7 +334,7 @@
       <div class="categories-stats" aria-live="polite"><div><span>Категорий</span><strong id="categories-count">—</strong></div><div><span>Связано сотрудников</span><strong id="categories-bound">—</strong></div></div>
       <section class="panel category-catalog">
         <p class="table-note">Переименование применяется ко всем связанным сотрудникам. Отключённые категории сохраняют существующие привязки, но недоступны для новых назначений.</p>
-        <form {% if user.role != 'super_admin' %}hidden{% endif %} id="category-create-form" class="category-create-form"><label>Новая категория<input id="category-create-name" maxlength="200" required autocomplete="off"></label><button class="primary-button">Добавить категорию</button></form>
+        <form {% if user.role != 'super_admin' %}hidden{% endif %} id="category-create-form" class="category-create-form"><label>Новая категория<input id="category-create-name" maxlength="200" required autocomplete="off"></label><label class="category-color-label">Цвет диаграммы<span class="category-color-control"><input id="category-create-color" type="color" value="#2563eb" aria-label="Цвет новой категории"><output id="category-create-color-value" for="category-create-color">#2563EB</output></span></label><button class="primary-button">Добавить категорию</button><button type="button" id="category-create-cancel" class="text-button" hidden>Отмена</button></form>
         <p id="categories-error" class="error-text" role="alert" hidden></p><p id="categories-status" class="save-status" role="status"></p>
         <p id="categories-empty" class="empty-state" hidden>Справочник пока пуст. Категории добавляет супер-администратор.</p>
         <div id="category-catalog-list"></div>
