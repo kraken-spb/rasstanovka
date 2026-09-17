@@ -142,9 +142,9 @@ def remember(db, actor, operation, payload, response):
 
 PROFILE_SELECT = '''SELECT w.id,w.uuid,w.full_name,
     CASE WHEN w.personnel_is_internal THEN '' ELSE w.personnel_no::text END personnel_no,
-    w.profession,w.department,w.active,w.contractor,p.employer_id,o.name employer,
+    w.profession,w.profession_code,w.department,w.active,w.contractor,p.employer_id,o.name employer,
     p.citizenship_code,ct.label citizenship,p.employment_code,et.label employment,
-    p.birth_date,p.phone,p.messenger,p.origin_city,p.rotation_schedule,p.rotation_schedule_id,p.arrival_date,
+    p.birth_date,p.phone,p.messenger,p.origin_city,p.origin_code,p.rotation_schedule,p.rotation_schedule_id,p.arrival_date,
     p.forecast_departure_date,p.leave_start_date,p.leave_end_date,p.notes,p.edit_token,
     eg.category_id,COALESCE(gc.name,w.category) category,es.smu_id,pr.label project
     FROM workers w JOIN workforce_profiles p ON p.worker_id=w.id

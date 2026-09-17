@@ -101,6 +101,7 @@
   async function openCard(id, keep = false) {
     if (!keep && !canDiscard()) return;
     try {
+      await reference();
       const card = await api('people/' + id);
       state.card = card; state.dirty = false;
       if (!keep) state.tab = 'profile';
@@ -110,18 +111,18 @@
     } catch (err) { error(err.message, $('#wf-card').open); }
   }
   function field(key, title, type = 'text', options = {}) { return {key, title, type, ...options}; }
-  const profileFields = [field('full_name','ФИО','text',{required:true}), field('profession','Должность / профессия'),
+  const profileFields = [field('full_name','ФИО','text',{required:true}), field('profession_code','Должность / профессия','catalog',{kind:'profession',searchable:true,legacy:'profession'}),
     field('employer_id','Организация-работодатель','organization'),
     field('citizenship_code','Гражданство','catalog',{kind:'citizenship'}), field('employment_code','Статус сотрудника','catalog',{kind:'employment'}),
-    field('birth_date','Дата рождения','date'), field('phone','Телефон'), field('messenger','Мессенджер'), field('origin_city','Город отправления'),
+    field('birth_date','Дата рождения','date'), field('phone','Телефон'), field('messenger','Мессенджер'), field('origin_code','Город отправления','catalog',{kind:'travelpoint',searchable:true,legacy:'origin_city'}),
     field('rotation_schedule_id','График вахты','schedule',{allowIncomplete:true}), field('arrival_date','Дата заезда','date'), field('forecast_departure_date','Прогноз окончания вахты','date'),
     field('leave_start_date','Начало межвахтового отпуска','date'), field('leave_end_date','Окончание межвахтового отпуска','date'), field('notes','Примечания','textarea')];
   const schemas = {
     stage: [field('stage_code','Состояние','catalog',{kind:'stage',required:true}),field('effective_date','Дата события','date',{required:true}),field('confirmed','Событие подтверждено','checkbox')],
-    movement: [field('direction','Направление','select',{values:[['arrival','Заезд'],['departure','Выезд']],required:true}),field('planned_date','Плановая дата','date'),
-      field('actual_date','Фактическая дата','date'),field('destination_kind','Место назначения','select',{values:[['site','Участок'],['pvp','ПВП'],['home','Домой'],['other','Другое']],required:true}),
+    movement: [field('direction','Направление','catalog',{kind:'direction',unprefixed:true,required:true}),field('planned_date','Плановая дата','date'),
+      field('actual_date','Фактическая дата','date'),field('destination_kind','Место назначения','catalog',{kind:'destination',unprefixed:true,required:true}),
       field('basis_code','Тип заезда/выезда','catalog',{kind:'basis'}),field('result_code','Статус заезда/выезда','catalog',{kind:'result'}),
-      field('origin','Откуда'),field('destination','Куда'),field('travel_details','Билет / транспорт','textarea'),field('notes','Примечания','textarea')],
+      field('origin_code','Откуда','catalog',{kind:'travelpoint',searchable:true,legacy:'origin'}),field('destination_code','Куда','catalog',{kind:'travelpoint',searchable:true,legacy:'destination'}),field('travel_details','Билет / транспорт','textarea'),field('notes','Примечания','textarea')],
     document: [field('document_code','Документ','catalog',{kind:'document',required:true}),field('state_code','Состояние','catalog',{kind:'docstate'}),field('number','Номер'),
       field('issued_on','Дата выдачи','date'),field('expires_on','Действует до','date'),field('notes','Примечания','textarea')],
     pvp: [field('place_id','Место ПВП','place'),field('planned_arrival','План прибытия','date'),field('arrived_on','Фактически прибыл','date'),field('departed_on','Выбыл','date'),field('notes','Примечания','textarea')],
@@ -150,20 +151,71 @@
     } catch (err) { error(err.message, true); }
     finally { state.busy = false; $('#wf-card-content').inert = false; }
   }
+  const isActive = row => row.active !== false && row.active !== 0;
+  function referenceValues(spec, includeInactive = false) {
+    let rows;
+    if (spec.type === 'catalog') rows = state.reference.catalog.filter(row => row.kind === spec.kind).map(row => ({...row,
+      value:spec.unprefixed ? row.code.slice(spec.kind.length + 1) : row.code, text:row.label}));
+    else if (spec.type === 'place') rows = state.reference.places.map(row => ({...row,value:row.id,text:row.name}));
+    else if (spec.type === 'organization') rows = state.reference.organizations.map(row => ({...row,value:row.id,text:row.name}));
+    else if (spec.type === 'schedule') rows = state.reference.rotation_schedules.map(row => ({...row,value:row.id,
+      text:row.name + (row.needs_review ? ' · параметры не уточнены' : '')}));
+    else return spec.values.map(([value,text]) => [String(value),text]);
+    return rows.filter(row => includeInactive || (isActive(row) && (spec.type !== 'schedule' || spec.allowIncomplete || !row.needs_review)))
+      .map(row => [String(row.value),row.text]);
+  }
+  function referenceText(spec, value) {
+    return referenceValues(spec,true).find(([code]) => code === String(value))?.[1] || value || '—';
+  }
+  let fieldId = 0;
+  function searchableField(control, values, existing) {
+    const {input,spec} = control, id = 'wf-reference-' + (++fieldId);
+    const legacy = !existing?.[spec.key] && existing?.[spec.legacy] ? String(existing[spec.legacy]) : '';
+    const search = E('input',{type:'search',placeholder:'Поиск по вариантам',autocomplete:'off','aria-label':'Поиск: ' + spec.title});
+    const hint = E('small',{id:id + '-hint',className:'wf-reference-hint'});
+    const count = E('small',{className:'wf-reference-count',role:'status','aria-live':'polite'});
+    const clear = E('button',{type:'button',className:'secondary-button wf-reference-clear'},'Очистить');
+    input.id = id;input.setAttribute('aria-describedby',hint.id);
+    search.setAttribute('aria-controls',id);
+    const normalize = value => value.toLocaleLowerCase('ru').replace(/ё/g,'е').trim();
+    const indexed = values.map(([value,text]) => ({value,text,search:normalize(text)}));
+    function renderOptions() {
+      const selected = input.value, query = normalize(search.value), matched = indexed.filter(row => row.search.includes(query));
+      const shown = indexed.filter(row => row.value === selected || row.search.includes(query));
+      input.replaceChildren(E('option',{value:''},legacy && !control.forceClear ? 'Сохранить исходное значение' : 'Не выбрано'),
+        ...shown.map(row => E('option',{value:row.value},row.text)));
+      input.value = selected;
+      count.textContent = query ? `Найдено: ${matched.length} из ${indexed.length}` : `Вариантов: ${indexed.length}`;
+    }
+    function updateHint() {
+      hint.textContent = legacy ? control.forceClear ? 'Исходное значение будет очищено после сохранения.' : input.value ?
+        'Исходное значение: ' + legacy : 'Не сопоставлено: ' + legacy : input.value ? referenceText(spec,input.value) : 'Выберите значение из справочника.';
+      hint.classList.toggle('is-unmapped',!!legacy && !input.value && !control.forceClear);
+      clear.textContent = legacy && control.forceClear ? 'Вернуть исходное' : 'Очистить';
+      clear.disabled = !input.value && !legacy;
+    }
+    search.addEventListener('input',renderOptions);
+    search.addEventListener('keydown',event => {if (event.key === 'Enter') {event.preventDefault();input.focus();}});
+    input.addEventListener('change',() => {control.forceClear = !!legacy && !input.value;state.dirty = true;renderOptions();updateHint();});
+    clear.addEventListener('click',() => {
+      input.value = '';control.forceClear = legacy ? !control.forceClear : false;
+      state.dirty = true;renderOptions();updateHint();
+    });
+    renderOptions();updateHint();
+    return E('div',{className:'wf-reference-field'},E('label',{htmlFor:id},spec.title),
+      E('div',{className:'wf-reference-picker'},search,input,hint,E('div',{className:'wf-reference-footer'},count,clear)));
+  }
   function form(kind, fields, existing = null) {
     const formNode = E('form', {className:'wf-form'}), controls = {};
     let attempt = null;
     for (const spec of [...fields, field('reason','Основание изменения','textarea',{required:true})]) {
-      let input;
+      let input, values;
       if (['catalog','select','place','schedule','organization'].includes(spec.type)) {
-        const values = spec.type === 'catalog' ? state.reference.catalog.filter(r => r.kind === spec.kind && r.active).map(r => [r.code,r.label]) :
-          spec.type === 'place' ? state.reference.places.filter(r => r.active).map(r => [r.id,r.name]) :
-            spec.type === 'organization' ? state.reference.organizations.filter(r => r.active).map(r => [r.id,r.name]) :
-            spec.type === 'schedule' ? state.reference.rotation_schedules.filter(r => r.active && (spec.allowIncomplete || !r.needs_review)).map(r => [r.id,r.name + (r.needs_review ? ' · параметры не уточнены' : '')]) : spec.values;
-        input = E('select', {required:!!spec.required}, E('option',{value:''},'Выберите'), ...values.map(([value,text]) => E('option',{value},text)));
-        if (existing?.[spec.key] && !values.some(([value]) => value === existing[spec.key])) {
-          input.append(E('option',{value:existing[spec.key]},label(existing[spec.key]) + ' · недоступно для новых назначений'));
+        values = referenceValues(spec);
+        if (existing?.[spec.key] && !values.some(([value]) => value === String(existing[spec.key]))) {
+          values.push([String(existing[spec.key]),referenceText(spec,existing[spec.key]) + ' · недоступно для новых назначений']);
         }
+        input = E('select', {required:!!spec.required}, E('option',{value:''},'Выберите'), ...values.map(([value,text]) => E('option',{value},text)));
       } else input = E(spec.type === 'textarea' ? 'textarea' : 'input', {type:spec.type === 'textarea' ? undefined : spec.type, required:!!spec.required});
       input.name = spec.key;
       if (spec.type === 'checkbox') input.checked = !!existing?.[spec.key];
@@ -172,14 +224,18 @@
         input.disabled = true; input.title = 'Изменение даты — через действие «Перенести поездку».';
       }
       input.addEventListener('input', () => {state.dirty = true;});
-      controls[spec.key] = {input,spec};
-      formNode.append(E('label',{className:spec.type === 'textarea' ? 'wf-wide' : ''}, spec.title, input));
+      const control = {input,spec,initial:spec.type === 'checkbox' ? input.checked : input.value,forceClear:false};
+      controls[spec.key] = control;
+      formNode.append(spec.searchable ? searchableField(control,values,existing) : E('label',{className:spec.type === 'textarea' ? 'wf-wide' : ''}, spec.title, input));
     }
     formNode.append(E('button',{type:'submit',className:'primary-button wf-wide'},existing ? 'Сохранить изменения' : 'Добавить запись'));
     formNode.addEventListener('submit', event => {
       event.preventDefault(); if (state.busy || !formNode.reportValidity()) return;
       const values = {};
-      for (const [key,{input,spec}] of Object.entries(controls)) if (!input.disabled) {
+      const patch = existing && !['extend','finish_rotation','reschedule','check','rotation_schedule'].includes(kind);
+      for (const [key,{input,spec,initial,forceClear}] of Object.entries(controls)) if (!input.disabled) {
+        const current = spec.type === 'checkbox' ? input.checked : input.value;
+        if (patch && key !== 'reason' && current === initial && !forceClear) continue;
         if (spec.type === 'organization' && !input.value && !existing?.[key]) continue;
         values[key] = spec.type === 'checkbox' ? input.checked : spec.type === 'number' ? Number(input.value) : input.value;
       }
@@ -216,8 +272,9 @@
       const editable = perms.profile && !(state.card.role === 'rotation' && p.employment_code !== 'employment.staff') && !(state.card.role === 'recruitment' && p.employment_code === 'employment.staff');
       const fields = state.card.role === 'recruitment' ? profileFields.filter(f => !['arrival_date','forecast_departure_date','leave_start_date','leave_end_date'].includes(f.key)) : profileFields;
       if (editable) content.append(form('profile',fields,p));
-      else content.append(E('dl',{className:'wf-facts'},...profileFields.filter(f => f.key in p).map(f => E('div',{},E('dt',{},f.title),E('dd',{},
-        f.type === 'catalog' ? label(p[f.key]) : f.type === 'schedule' ? p.rotation_schedule || '—' : f.type === 'organization' ? p.employer || '—' : p[f.key] || '—')))));
+      else content.append(E('dl',{className:'wf-facts'},...profileFields.filter(f => f.key in p || (f.legacy && f.legacy in p)).map(f => E('div',{},E('dt',{},f.title),E('dd',{},
+        f.type === 'catalog' ? p[f.key] ? referenceText(f,p[f.key]) : f.legacy && p[f.legacy] ? 'Не сопоставлено: ' + p[f.legacy] : '—' :
+          f.type === 'schedule' ? p.rotation_schedule || '—' : f.type === 'organization' ? p.employer || '—' : p[f.key] || '—')))));
       for (const conflict of state.card.conflicts) content.append(E('article',{className:'wf-entry'},E('h3',{},'⚠ ' + conflict.field_name),E('p',{},conflict.description),E('small',{},conflict.resolution || 'Требует уточнения')));
       for (const source of state.card.sources) content.append(E('small',{className:'wf-entry'},`${source.filename} · ${source.sheet} · строка ${source.source_row}`,source.mapping_notes ? E('p',{},source.mapping_notes) : null));
       return;
@@ -257,10 +314,13 @@
     }
     const kind = {stages:'stage',movements:'movement',pvp:'pvp',documents:'document',checks:'check'}[state.tab];
     if (kind === 'check') {
-      for (const check of state.reference.catalog.filter(r => r.kind === 'check' && r.active)) {
-        const row = state.card.checks.find(r => r.check_code === check.code) || {check_code:check.code};
-        const block = E('details',{className:'wf-entry'},E('summary',{},check.label + ' · ' + label(row.state_code)));
-        if (perms.check) block.append(form('check',schemas.check,row));
+      for (const check of state.reference.catalog.filter(r => r.kind === 'check' && (isActive(r) || state.card.checks.some(row => row.check_code === r.code)))) {
+        const saved = state.card.checks.find(r => r.check_code === check.code), row = saved || {check_code:check.code};
+        const block = E('details',{className:'wf-entry'},E('summary',{},check.label + ' · ' + label(row.state_code) + (!isActive(check) ? ' · архив справочника' : '')));
+        if (perms.check && isActive(check)) block.append(form('check',schemas.check,row));
+        else if (saved) block.append(E('dl',{className:'wf-facts'},...[
+          ['Плановая дата',displayDate(row.planned_date)],['Дата завершения',displayDate(row.completed_date)],['Примечания',row.notes || '—']
+        ].map(([title,value]) => E('div',{},E('dt',{},title),E('dd',{},value)))));
         content.append(block);
       }
       return;

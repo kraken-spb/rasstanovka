@@ -2,10 +2,10 @@
   'use strict';
   const root=document.querySelector('.app-shell');
   let panel, reference, kind='organization', search='', offset=0, busy=false, dirty=false, loading=false, loadId=0, discardedDirty=false;
-  const kinds=[['organization','Работодатели'],['citizenship','Гражданство'],['place','Места ПВП'],['schedule','Графики вахтования'],
+  const kinds=[['organization','Работодатели'],['citizenship','Гражданство'],['profession','Должности и профессии'],['travelpoint','Пункты поездок'],['place','Места ПВП'],['schedule','Графики вахтования'],
     ['document','Документы'],['check','Проверки оформления'],['project','Проекты'],['employment','Статус сотрудника'],
-    ['stage','Присутствие'],['basis','Основание поездки'],['result','Результат поездки'],['docstate','Состояние документа'],['checkstate','Состояние проверки']];
-  const fixed=new Set(['employment','stage','basis','result','docstate','checkstate']);
+    ['stage','Присутствие'],['direction','Направление поездки'],['destination','Тип места назначения'],['basis','Основание поездки'],['result','Результат поездки'],['docstate','Состояние документа'],['checkstate','Состояние проверки']];
+  const fixed=new Set(['employment','stage','direction','destination','basis','result','docstate','checkstate']);
   const el=(tag,attributes={},...children)=>{
     const node=document.createElement(tag);
     for(const [key,value] of Object.entries(attributes)) {
@@ -43,16 +43,17 @@
     } finally {if(current===loadId){loading=false;panel.inert=busy;}}
   }
   function editor(row) {
-    const form=el('form',{className:'wf-form'}), inputs={};let attempt;
+    const form=el('form',{className:'wf-form'}), inputs={}, initial={};let attempt;
     const fields=kind==='schedule' ? [['name','Название','text'],['onsite_days','Дней на участке','number'],['leave_days','Дней МО','number'],['travel_days','Дней до заезда после МО','number']] : [['label','Название','text']];
     if(kind==='place')fields.push(['address','Адрес','text'],['capacity','Вместимость','number']);
     for(const [key,title,type] of fields) {
       const value=key==='label' ? row?.label||row?.name||'' : row?.[key]??'';
-      const input=el('input',{type,value,required:!['address','capacity'].includes(key),maxLength:200});
+      const input=el('input',{type,value,required:!['address','capacity'].includes(key),maxLength:key==='label'&&kind==='profession'?500:key==='label'&&kind==='travelpoint'?300:200});
       if(type==='number'){input.min=key==='leave_days'||key==='capacity'?'0':'1';input.step='1';}
-      inputs[key]=input;form.append(el('label',{},title,input));
+      inputs[key]=input;initial[key]=input.value;form.append(el('label',{},title,input));
     }
-    const active=el('input',{type:'checkbox',checked:row?.active!==false});
+    const initialActive=row?.active!==false&&row?.active!==0;
+    const active=el('input',{type:'checkbox',checked:initialActive});
     form.append(el('label',{className:'check-label'},active,'Действующее значение'));
     const reason=el('textarea',{required:true,maxLength:10000});form.append(el('label',{className:'wf-wide'},'Основание изменения',reason));
     const message=el('p',{className:'error-text wf-wide',role:'alert'});
@@ -60,8 +61,10 @@
     form.addEventListener('input',()=>{dirty=true;});
     form.addEventListener('submit',async event=>{
       event.preventDefault();if(busy||!form.reportValidity())return;
-      const body={active:active.checked,reason:reason.value};
-      for(const [key,input] of Object.entries(inputs))body[key]=input.type==='number'?(input.value===''?null:Number(input.value)):input.value;
+      const body={reason:reason.value};
+      const partial=row&&kind!=='schedule';
+      if(!partial||active.checked!==initialActive)body.active=active.checked;
+      for(const [key,input] of Object.entries(inputs))if(!partial||input.value!==initial[key])body[key]=input.type==='number'?(input.value===''?null:Number(input.value)):input.value;
       if(row)body.token=row.edit_token;
       const fingerprint=JSON.stringify(body);if(!attempt||attempt.fingerprint!==fingerprint)attempt={fingerprint,key:crypto.randomUUID()};
       body.request_key=attempt.key;busy=true;panel.inert=true;submit.disabled=true;message.textContent='';

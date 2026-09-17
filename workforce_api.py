@@ -16,11 +16,12 @@ from workforce_core import (ADMINS, READERS, actor_scope, audit, catalog_value, 
 # Identifiers are server-owned constants. Payload keys are never SQL identifiers.
 ENTITIES = {
     'movement': {'table': 'workforce_movements', 'required': {'direction'},
-                 'fields': {'direction': ('choice', ('arrival', 'departure')),
-                            'destination_kind': ('choice', ('site', 'pvp', 'home', 'other')),
+                 'fields': {'direction': ('catalog_choice', 'direction', ('arrival', 'departure')),
+                            'destination_kind': ('catalog_choice', 'destination', ('site', 'pvp', 'home', 'other')),
                             'planned_date': ('date',), 'actual_date': ('date',),
                             'basis_code': ('catalog', 'basis'), 'result_code': ('catalog', 'result'),
-                            'origin': ('text', 300), 'destination': ('text', 300),
+                            'origin': ('catalog_text', 'travelpoint', 300), 'destination': ('catalog_text', 'travelpoint', 300),
+                            'origin_code': ('catalog', 'travelpoint'), 'destination_code': ('catalog', 'travelpoint'),
                             'travel_details': ('text', 5000), 'notes': ('text', 10000)}},
     'document': {'table': 'workforce_documents', 'required': {'document_code'},
                  'fields': {'document_code': ('catalog', 'document'), 'state_code': ('catalog', 'docstate'),
@@ -30,6 +31,28 @@ ENTITIES = {
             'fields': {'place_id': ('place',), 'planned_arrival': ('date',),
                        'arrived_on': ('date',), 'departed_on': ('date',), 'notes': ('text', 10000)}},
 }
+
+PROFILE_CATALOG_PAIRS = (('profession', 'profession_code'), ('origin_city', 'origin_code'))
+MOVEMENT_CATALOG_PAIRS = (('origin', 'origin_code'), ('destination', 'destination_code'))
+
+
+def changed_fields(data, rules, before=None, pairs=()):
+    """Keep historical disabled references; validate only genuinely changed bindings."""
+    result = {key:value for key,value in data.items() if key in rules and (before is None or value != before.get(key))}
+    if before:
+        for text_key, code_key in pairs:
+            if code_key in data and data[code_key] in ('', None) and before.get(text_key):
+                result[code_key] = data[code_key]
+    return result
+
+
+def clear_catalog_text(clean, pairs):
+    for text_key, code_key in pairs:
+        if text_key in clean and code_key in clean:
+            abort(400, description='Укажите значение из справочника, не передавая одновременно исходный текст.')
+        if code_key in clean and clean[code_key] is None:
+            clean[text_key] = ''
+    return clean
 
 
 def payload(fields, required=()):
@@ -49,6 +72,18 @@ def validate_fields(db, values, rules, required=()):
             clean[key] = text_value(value, key, spec[1], key in required)
         elif spec[0] == 'catalog':
             clean[key] = catalog_value(db, value, spec[1], key in required)
+        elif spec[0] == 'catalog_choice':
+            if value not in spec[2]:
+                abort(400, description='Выберите значение справочника: ' + spec[1])
+            catalog_value(db, spec[1]+'.'+value, spec[1], True)
+            clean[key] = value
+        elif spec[0] == 'catalog_text':
+            value = text_value(value, key, spec[2], key in required)
+            row = db.native('SELECT label FROM workforce_catalog WHERE kind=%s AND label_key=log_casefold(trim(%s)) AND active',
+                            (spec[1], value)).fetchone() if value else None
+            if value and not row:
+                abort(400, description='Выберите значение из справочника. Новые значения добавляет администратор.')
+            clean[key] = row['label'] if row else ''
         elif spec[0] == 'choice':
             if value not in spec[1]:
                 abort(400, description='Выберите значение: ' + key)
@@ -310,12 +345,12 @@ def register_workforce_routes(app, get_db, roles_required):
             if not result['private_details']:
                 # Staffing users need the prepared workforce, not passport, health,
                 # recruitment notes or private source rows from HR spreadsheets.
-                for field in ('birth_date', 'phone', 'messenger', 'origin_city', 'notes'):
+                for field in ('birth_date', 'phone', 'messenger', 'origin_city', 'origin_code', 'notes'):
                     result['profile'].pop(field, None)
                 for name in ('documents', 'checks', 'pvp', 'sources', 'history', 'conflicts'):
                     result[name] = []
                 for row in result['movements']:
-                    for field in ('notes', 'travel_details', 'origin', 'destination'):
+                    for field in ('notes', 'travel_details', 'origin', 'destination', 'origin_code', 'destination_code'):
                         row.pop(field, None)
                 for row in result['rotations']:
                     row.pop('notes', None)
@@ -384,8 +419,9 @@ def register_workforce_routes(app, get_db, roles_required):
                         abort(409, description='Этот заезд уже перенесён. Измените последнюю запись в цепочке.')
                     if 'planned_date' in data and date_value(data['planned_date']) != before['planned_date']:
                         abort(400, description='Для изменения плановой даты используйте «Перенести поездку». Прежняя дата сохранится в истории.')
-            clean = validate_fields(db, {key: value for key, value in data.items() if key in spec['fields']},
-                                    spec['fields'], spec['required'])
+            pairs = MOVEMENT_CATALOG_PAIRS if kind == 'movement' else ()
+            clean = clear_catalog_text(validate_fields(db, changed_fields(data, spec['fields'], before, pairs),
+                                                       spec['fields'], spec['required']), pairs)
             if not clean:
                 abort(400, description='Не переданы изменённые поля.')
             validate_entity(kind, {**(before or {}), **clean})
@@ -437,11 +473,12 @@ def register_workforce_routes(app, get_db, roles_required):
                 edit_token=gen_random_uuid(),updated_by=%s,updated_at=now() WHERE id=%s RETURNING *''',
                 (actor['id'], entity_id)).fetchone())
             new = plain(db.native('''INSERT INTO workforce_movements(worker_id,direction,planned_date,basis_code,
-                origin,destination,travel_details,notes,source_record_id,created_by,updated_by,request_key,rescheduled_from,destination_kind)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *''',
+                origin,destination,travel_details,notes,source_record_id,created_by,updated_by,request_key,rescheduled_from,destination_kind,
+                origin_code,destination_code)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *''',
                 (worker_id, before['direction'], day, before['basis_code'], before['origin'], before['destination'],
                  before['travel_details'], before['notes'], before['source_record_id'], actor['id'], actor['id'],
-                 data['request_key'], entity_id, before['destination_kind'])).fetchone())
+                 data['request_key'], entity_id, before['destination_kind'], before['origin_code'], before['destination_code'])).fetchone())
             audit(db, actor, 'reschedule', 'movement', entity_id, before, old, worker_id=worker_id, reason=reason)
             audit(db, actor, 'create_after_reschedule', 'movement', new['id'], None, new, worker_id=worker_id, reason=reason)
             result = {'previous': old, 'current': new}
@@ -451,10 +488,11 @@ def register_workforce_routes(app, get_db, roles_required):
     @app.patch('/api/workforce/people/<int:worker_id>/profile')
     @roles_required('admin', 'rotation', 'recruitment')
     def workforce_profile(worker_id):
-        rules = {'full_name': ('text', 240), 'profession': ('text', 500),
+        rules = {'full_name': ('text', 240), 'profession': ('catalog_text', 'profession', 500),
+                 'profession_code': ('catalog', 'profession'), 'origin_code': ('catalog', 'travelpoint'),
                  'citizenship_code': ('catalog', 'citizenship'), 'employment_code': ('catalog', 'employment'),
                  'birth_date': ('date',), 'phone': ('text', 300), 'messenger': ('text', 300),
-                 'origin_city': ('text', 300), 'rotation_schedule': ('text', 500), 'arrival_date': ('date',),
+                 'origin_city': ('catalog_text', 'travelpoint', 300), 'rotation_schedule': ('text', 500), 'arrival_date': ('date',),
                  'forecast_departure_date': ('date',), 'leave_start_date': ('date',), 'leave_end_date': ('date',),
                  'notes': ('text', 30000)}
         data = payload(set(rules) | {'employer_id', 'rotation_schedule_id', 'token', 'reason', 'request_key'}, {'token', 'reason', 'request_key'})
@@ -470,7 +508,8 @@ def register_workforce_routes(app, get_db, roles_required):
             before = profile_snapshot(db, worker_id)
             if data['token'] != before['token']:
                 abort(409, description='Карточка изменена другим пользователем. Обновите данные.')
-            clean = validate_fields(db, {key: value for key, value in data.items() if key in rules and value != before.get(key)}, rules)
+            clean = clear_catalog_text(validate_fields(db, changed_fields(data, rules, before, PROFILE_CATALOG_PAIRS), rules),
+                                       PROFILE_CATALOG_PAIRS)
             if 'rotation_schedule_id' in data and (data['rotation_schedule_id'] or None) != before.get('rotation_schedule_id'):
                 schedule_id = uuid_value(data['rotation_schedule_id']) if data['rotation_schedule_id'] else None
                 schedule = db.native('SELECT id,name FROM workforce_rotation_schedules WHERE id=%s AND active', (schedule_id,)).fetchone() if schedule_id else None
@@ -498,7 +537,7 @@ def register_workforce_routes(app, get_db, roles_required):
                 abort(400, description='Окончание отпуска раньше его начала.')
             if 'full_name' in clean and not clean['full_name']:
                 abort(400, description='ФИО не может быть пустым.')
-            worker_changes = {key: clean.pop(key) for key in ('full_name', 'profession') if key in clean}
+            worker_changes = {key: clean.pop(key) for key in ('full_name', 'profession', 'profession_code') if key in clean}
             if worker_changes:
                 db.native('UPDATE workers SET ' + ','.join(key+'=%s' for key in worker_changes) + ' WHERE id=%s',
                           [*worker_changes.values(), worker_id])
@@ -594,9 +633,9 @@ def register_workforce_routes(app, get_db, roles_required):
     @roles_required('admin')
     def workforce_catalog(kind, code=None):
         if kind not in {'citizenship', 'employment', 'stage', 'basis', 'result', 'document', 'docstate',
-                        'check', 'checkstate', 'project', 'organization', 'place'}:
+                        'check', 'checkstate', 'project', 'organization', 'place', 'profession', 'travelpoint', 'direction', 'destination'}:
             abort(404)
-        if kind in {'employment', 'stage', 'basis', 'result', 'docstate', 'checkstate'}:
+        if kind in {'employment', 'stage', 'basis', 'result', 'docstate', 'checkstate', 'direction', 'destination'}:
             abort(400, description='Этот перечень закреплён правилами учёта и доступен только для просмотра.')
         data = payload({'label', 'active', 'address', 'capacity', 'token', 'request_key', 'reason'},
                        {'request_key', 'reason'} | ({'token'} if code else {'label'}))
@@ -630,7 +669,8 @@ def register_workforce_routes(app, get_db, roles_required):
                     abort(400, description='Значение участвует в правилах учёта и не может быть изменено.')
             values = {}
             if 'label' in data:
-                values['label' if identity == 'code' else 'name'] = text_value(data['label'], 'Название', 200, True)
+                values['label' if identity == 'code' else 'name'] = text_value(data['label'], 'Название',
+                    500 if kind == 'profession' else 300 if kind == 'travelpoint' else 200, True)
             if 'active' in data:
                 if type(data['active']) is not bool:
                     abort(400, description='Укажите активность значения.')

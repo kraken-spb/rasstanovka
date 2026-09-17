@@ -134,6 +134,7 @@ class WorkforceApiTest(unittest.TestCase):
         self.assertEqual(self.db.native('SELECT w.id FROM ' + source + ' WHERE w.id=%s', (self.worker,)).fetchall(), [])
 
     def test_profile_master_correction_preserves_unknown_schedule_and_identity(self):
+        self.db.native("INSERT INTO workforce_catalog(code,kind,label) VALUES (%s,'profession','Новая должность')", ('profession.'+self.suffix,))
         self.db.native("UPDATE workforce_profiles SET rotation_schedule='Вахта 1 — длительность неизвестна' WHERE worker_id=%s", (self.worker,))
         before = self.request('get', f'people/{self.worker}', role='rotation').get_json()['profile']
         body = {'full_name':'Уточнённое ФИО', 'profession':'Новая должность', 'rotation_schedule_id':'',
@@ -146,6 +147,122 @@ class WorkforceApiTest(unittest.TestCase):
         self.assertEqual(after['uuid'], before['uuid'])
         self.assertEqual(after['full_name'], 'Уточнённое ФИО')
         self.assertEqual(after['rotation_schedule'], before['rotation_schedule'])
+
+    def create_catalog(self, kind, label):
+        response = self.request('post', 'catalog/'+kind,
+            {'label':label+' '+self.suffix,'reason':'Проверка справочника','request_key':str(uuid4())})
+        self.assertEqual(response.status_code, 201, response.data)
+        return response.json
+
+    def test_profile_catalog_links_preserve_text_roles_and_disabled_history(self):
+        profession = self.create_catalog('profession', 'Должность')
+        point = self.create_catalog('travelpoint', 'Пункт отправления')
+        path = f'people/{self.worker}/profile'
+        before = self.request('get', f'people/{self.worker}').json['profile']
+        body = {'profession_code':profession['code'],'origin_code':point['code'],
+            'token':before['token'],'reason':'Сверка','request_key':str(uuid4())}
+        self.assertEqual(self.request('patch', path, body, 'foreman').status_code, 403)
+        saved = self.request('patch', path, body, 'rotation')
+        self.assertEqual(saved.status_code, 200, saved.data)
+        self.assertEqual(saved.json['profession'], profession['label'])
+        self.assertEqual(saved.json['origin_city'], point['label'])
+        self.assertEqual(saved.json['profession_code'], profession['code'])
+        self.assertEqual(self.request('patch', path, body, 'rotation').status_code, 200)  # same request replay
+        body['request_key'] = str(uuid4())
+        self.assertEqual(self.request('patch', path, body, 'rotation').status_code, 409)
+        renamed = self.request('patch', 'catalog/profession/'+profession['code'],
+            {'label':'Переименована '+self.suffix,'active':False,'token':profession['edit_token'],
+             'reason':'Архивирование должности','request_key':str(uuid4())})
+        self.assertEqual(renamed.status_code, 200, renamed.data)
+        current = self.request('get', f'people/{self.worker}').json['profile']
+        self.assertEqual(current['profession_code'], profession['code'])
+        self.assertEqual(current['profession'], renamed.json['label'])
+        self.assertNotEqual(current['token'], saved.json['token'])
+        change = {'profession_code':profession['code'],'phone':'123','token':current['token'],
+            'reason':'Контакт','request_key':str(uuid4())}
+        result = self.request('patch', path, change, 'rotation')
+        self.assertEqual(result.status_code, 200, result.data)
+        self.assertEqual(result.json['profession_code'], profession['code'])
+        other = self.request('get', f'people/{self.ids[1]}').json['profile']
+        change.update(token=other['token'],request_key=str(uuid4()))
+        self.assertEqual(self.request('patch', f'people/{self.ids[1]}/profile', change).status_code, 400)
+        self.db.native('UPDATE workers SET profession=%s WHERE id=%s', ('Неизвестная из Excel '+self.suffix,self.worker))
+        unknown = self.request('get', f'people/{self.worker}').json['profile']
+        self.assertIsNone(unknown['profession_code'])
+        update = {'notes':'Комментарий','token':unknown['token'],'reason':'Проверка','request_key':str(uuid4())}
+        preserved = self.request('patch', path, update, 'rotation')
+        self.assertEqual(preserved.status_code, 200, preserved.data)
+        self.assertEqual(preserved.json['profession'], unknown['profession'])
+        update.update(profession='Произвольный новый текст',token=preserved.json['token'],request_key=str(uuid4()))
+        self.assertEqual(self.request('patch', path, update, 'rotation').status_code, 400)
+        update.pop('profession')
+        update.update(profession_code=None,request_key=str(uuid4()))
+        cleared = self.request('patch', path, update, 'rotation')
+        self.assertEqual(cleared.status_code, 200, cleared.data)
+        self.assertEqual(cleared.json['profession'], '')
+
+    def test_movement_catalog_links_survive_rename_archive_and_reschedule(self):
+        point = self.create_catalog('travelpoint','Пункт поездки')
+        created = self.request('post', f'people/{self.worker}/movement', self.movement(direction='arrival',
+            actual_date=None, planned_date='2026-10-01', result_code=None, destination_kind='pvp',
+            origin_code=point['code'], destination_code=point['code']), 'rotation')
+        self.assertEqual(created.status_code, 201, created.data)
+        row = created.json
+        self.assertEqual(row['direction_code'], 'direction.arrival')
+        self.assertEqual(row['destination_kind_code'], 'destination.pvp')
+        self.assertEqual(row['origin'], point['label'])
+        self.assertEqual(row['destination'], point['label'])
+        renamed = self.request('patch','catalog/travelpoint/'+point['code'],
+            {'label':'Новое название '+self.suffix,'active':False,'token':point['edit_token'],
+             'reason':'Архивирование','request_key':str(uuid4())})
+        self.assertEqual(renamed.status_code, 200, renamed.data)
+        current = self.db.native('SELECT * FROM workforce_movements WHERE id=%s',(row['id'],)).fetchone()
+        self.assertEqual(current['origin_code'], point['code'])
+        self.assertEqual(current['destination_code'], point['code'])
+        patch = {'origin_code':point['code'],'destination_code':point['code'],'notes':'Дополнение',
+            'token':str(current['edit_token']),'reason':'Дополнение','request_key':str(uuid4())}
+        updated = self.request('patch', f'people/{self.worker}/movement/{row["id"]}', patch, 'rotation')
+        self.assertEqual(updated.status_code, 200, updated.data)
+        moved = self.request('post', f'people/{self.worker}/movements/{row["id"]}/reschedule',
+            {'planned_date':'2026-10-03','token':updated.json['edit_token'],'reason':'Перенос','request_key':str(uuid4())}, 'rotation')
+        self.assertEqual(moved.status_code, 201, moved.data)
+        self.assertEqual(moved.json['current']['origin_code'], point['code'])
+        self.assertEqual(moved.json['current']['destination_code'], point['code'])
+        rejected = self.request('post', f'people/{self.worker}/movement', self.movement(origin_code=point['code']), 'rotation')
+        self.assertEqual(rejected.status_code, 400)
+        ref = self.request('get','reference').json['catalog']
+        self.assertEqual({r['code'] for r in ref if r['kind']=='direction'}, {'direction.arrival','direction.departure'})
+        self.assertEqual(self.request('post','catalog/direction',{'label':'Произвольное','request_key':str(uuid4()),'reason':'Проверка'}).status_code,400)
+
+    def test_disabled_pvp_reference_can_be_retained_but_not_newly_assigned(self):
+        place = self.create_catalog('place','ПВП')
+        body = {'place_id':place['id'],'planned_arrival':'2026-10-01','reason':'План','request_key':str(uuid4())}
+        created = self.request('post',f'people/{self.worker}/pvp',body,'recruitment')
+        self.assertEqual(created.status_code,201,created.data)
+        self.db.native('UPDATE workforce_pvp_places SET active=false WHERE id=%s',(place['id'],))
+        row = created.json
+        saved = self.request('patch',f'people/{self.worker}/pvp/{row["id"]}',
+            {'place_id':place['id'],'notes':'Примечание к архивной записи','token':row['edit_token'],
+             'reason':'Дополнение','request_key':str(uuid4())},'recruitment')
+        self.assertEqual(saved.status_code,200,saved.data)
+        self.assertEqual(saved.json['place_id'],place['id'])
+        body['request_key']=str(uuid4())
+        self.assertEqual(self.request('post',f'people/{self.worker}/pvp',body,'recruitment').status_code,400)
+
+    def test_catalog_exact_binding_does_not_create_or_guess_import_values(self):
+        label = 'Пункт импорта '+self.suffix
+        before = self.db.native("SELECT count(*) FROM workforce_catalog WHERE kind='travelpoint'").fetchone()[0]
+        self.db.native('UPDATE workforce_profiles SET origin_city=%s WHERE worker_id=%s',(label,self.worker))
+        current = self.request('get',f'people/{self.worker}').json['profile']
+        self.assertIsNone(current['origin_code'])
+        self.assertEqual(self.db.native("SELECT count(*) FROM workforce_catalog WHERE kind='travelpoint'").fetchone()[0],before)
+        made = self.request('post','catalog/travelpoint',{'label':label,'reason':'Подтверждённое значение','request_key':str(uuid4())})
+        self.assertEqual(made.status_code,201,made.data)
+        self.assertEqual(self.request('get',f'people/{self.worker}').json['profile']['origin_code'],made.json['code'])
+        self.db.native('UPDATE workforce_profiles SET origin_city=%s WHERE worker_id=%s',(label+' другой',self.worker))
+        self.assertIsNone(self.request('get',f'people/{self.worker}').json['profile']['origin_code'])
+        for role in ('foreman','rotation','recruitment','hr_viewer'):
+            self.assertEqual(self.request('post','catalog/travelpoint',{'label':'Запрещено','reason':'Проверка','request_key':str(uuid4())},role).status_code,403)
 
     def test_background_report_owned_scope_and_download(self):
         from tempfile import TemporaryDirectory
@@ -432,11 +549,18 @@ class WorkforceApiTest(unittest.TestCase):
 
     def test_staffing_reader_does_not_receive_private_hr_data(self):
         self.db.native("UPDATE workforce_profiles SET birth_date='1990-01-01',phone='private',notes='private' WHERE worker_id=%s", (self.worker,))
+        point = self.create_catalog('travelpoint', 'Закрытый пункт поездки')
+        self.db.native('UPDATE workforce_profiles SET origin_code=%s WHERE worker_id=%s', (point['code'],self.worker))
+        movement = self.request('post', f'people/{self.worker}/movement', self.movement(origin_code=point['code'],destination_code=point['code']))
+        self.assertEqual(movement.status_code, 201, movement.data)
         response = self.request('get', f'people/{self.worker}', role='foreman')
         self.assertEqual(response.status_code, 200, response.json)
         self.assertFalse(response.json['private_details'])
-        for field in ('birth_date', 'phone', 'notes'):
+        for field in ('birth_date', 'phone', 'notes', 'origin_city', 'origin_code'):
             self.assertNotIn(field, response.json['profile'])
+        for row in response.json['movements']:
+            for field in ('origin', 'destination', 'origin_code', 'destination_code'):
+                self.assertNotIn(field, row)
         self.assertEqual(response.json['history'], [])
         self.assertEqual(response.json['sources'], [])
         admin = self.request('get', f'people/{self.worker}')
