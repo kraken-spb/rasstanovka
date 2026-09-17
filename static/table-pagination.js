@@ -7,8 +7,8 @@
     const numbers = [...new Set([0, page - 1, page, page + 1, pages - 1])].filter(n => n >= 0 && n < pages).sort((a, b) => a - b);
     return {page, pages, start, end: Math.min(total, start + size), numbers};
   }
-  function mount(target, label, change) {
-    const bars = ['top', 'bottom'].map(position => {
+  function mount(target, label, change, {bottom = true} = {}) {
+    const bars = (bottom ? ['top', 'bottom'] : ['top']).map(position => {
       const bar = document.createElement('nav');
       bar.className = 'table-pagination';
       bar.dataset.position = position;
