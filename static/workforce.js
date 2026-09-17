@@ -2,7 +2,7 @@
   'use strict';
   const root = document.querySelector('.app-shell'), $ = s => document.querySelector(s);
   if (!root || !$('#view-workforce')) return;
-  const state = {reference: null, offset: 0, limit: 50, total: 0, request: 0, card: null, tab: 'profile', busy: false, dirty: false, queue:'', view:'board'};
+  const state = {reference: null, offset: 0, limit: 50, total: 0, request: 0, cardRequest: 0, card: null, tab: 'profile', busy: false, dirty: false, queue:'', view:'board', listLoaded: false, returnScroll: 0, returnFocus: null};
   const E = (tag, attrs = {}, ...children) => {
     const node = document.createElement(tag);
     for (const [key, value] of Object.entries(attrs)) {
@@ -55,12 +55,14 @@
         const data = await board.load(query, state.reference);
         if (seq !== state.request || !data) return;
         state.total = data.totals.total;renderStats(data.totals);
+        state.listLoaded = true;
         $('#wf-count').textContent = `${state.total} сотрудников по фильтру · в каждом этапе первые 20`;
         return;
       }
       const data = await api('people?' + query);
       if (seq !== state.request) return;
       state.total = data.totals.total;
+      state.listLoaded = true;
       renderStats(data.totals);
       $('#wf-count').textContent = data.rows.length ? `${state.offset + 1}–${state.offset + data.rows.length} из ${state.total}` : 'Сотрудники не найдены';
       $('#wf-prev').disabled = !state.offset; $('#wf-next').disabled = state.offset + state.limit >= state.total;
@@ -96,17 +98,77 @@
   }
   const tabs = [['profile','Карточка'],['rotations','Вахты и графики'],['stages','Присутствие'],['movements','Поездки'],['pvp','ПВП'],['documents','Документы'],['checks','Оформление'],['history','История']];
   function canDiscard() { return !state.busy && (!state.dirty || window.confirm('В карточке есть несохранённые изменения. Закрыть их?')); }
-  async function openCard(id, keep = false) {
-    if (!keep && !canDiscard()) return;
+  function openCard(id) { return window.openWorkforcePerson(id); }
+  async function fetchCard(id, keep = false) {
+    const seq = ++state.cardRequest;
+    if (!keep) {
+      if ($('#wf-card').hidden) {
+        state.returnScroll = window.scrollY;
+        state.returnFocus = document.activeElement;
+      }
+      state.card = null; state.dirty = false; state.tab = 'profile';
+      $('#wf-list-workspace').hidden = true; $('#wf-card').hidden = false;
+      document.body.classList.add('wf-card-open'); window.scrollTo(0, 0);
+      $('#wf-card-title').textContent = 'Карточка сотрудника';
+      $('#wf-card-subtitle').textContent = 'Загрузка…';
+      $('#wf-card-stage').textContent = '';
+      $('#wf-card-content').replaceChildren(); $('#wf-card-tabs').replaceChildren();
+      $('#wf-card-section').replaceChildren(); $('#wf-card-activity').hidden = true;
+    }
+    $('#wf-card').setAttribute('aria-busy', 'true'); error('', true);
     try {
       await reference();
+      if (seq !== state.cardRequest) return;
       const card = await api('people/' + id);
+      if (seq !== state.cardRequest) return;
       state.card = card; state.dirty = false;
-      if (!keep) state.tab = 'profile';
       $('#wf-card-title').textContent = card.profile.full_name;
-      $('#wf-card-subtitle').textContent = [card.profile.department, card.profile.employer, card.profile.personnel_no].filter(Boolean).join(' · ');
-      renderCard(); if (!$('#wf-card').open) $('#wf-card').showModal();
-    } catch (err) { error(err.message, $('#wf-card').open); }
+      $('#wf-card-subtitle').textContent = [card.profile.personnel_no ? 'Таб. № ' + card.profile.personnel_no : '', card.profile.department, card.profile.employer].filter(Boolean).join(' · ');
+      const stage = card.stages.find(row => row.confirmed && !row.retracted && row.effective_date <= $('#wf-date').value);
+      $('#wf-card-stage').textContent = stage ? label(stage.stage_code) : 'Состояние не подтверждено';
+      $('#wf-card-stage').className = 'wf-tag ' + ((stage?.stage_code || '').split('.')[1] || '');
+      $('#wf-card-stage').title = 'На ' + displayDate($('#wf-date').value);
+      renderCard(); renderActivity();
+      if (!keep) $('#wf-card-title').focus({preventScroll:true});
+    } catch (err) { if (seq === state.cardRequest) {$('#wf-card-subtitle').textContent = '';error(err.message, true);} }
+    finally { if (seq === state.cardRequest) $('#wf-card').removeAttribute('aria-busy'); }
+  }
+  function closeCard(restore = true) {
+    ++state.cardRequest; state.dirty = false; state.card = null;
+    $('#wf-card').hidden = true; $('#wf-card').removeAttribute('aria-busy');
+    $('#wf-list-workspace').hidden = false; document.body.classList.remove('wf-card-open');
+    if (restore) requestAnimationFrame(() => {
+      if (!$('#view-workforce').classList.contains('active') || !$('#wf-card').hidden) return;
+      (state.returnFocus?.isConnected ? state.returnFocus : $('#wf-search')).focus({preventScroll:true});
+      window.scrollTo(0, state.returnScroll);
+    });
+  }
+  async function activate(route) {
+    const match = /^workforce\/people\/([1-9]\d*)$/.exec(route);
+    if (match) return fetchCard(Number(match[1]));
+    const wasOpen = !$('#wf-card').hidden;
+    closeCard(wasOpen);
+    if (!wasOpen || !state.listLoaded) await load();
+  }
+  function renderActivity() {
+    const card = state.card, activity = $('#wf-card-activity');
+    activity.hidden = card.private_details === false;
+    if (activity.hidden) return;
+    const entities = {profile:'Карточка',stage:'Присутствие',movement:'Поездка',pvp:'ПВП',document:'Документ',check:'Оформление',rotation:'Вахта',rotation_schedule:'График вахтования'};
+    const actions = {create:'Добавлено',source_import:'Импорт',update:'Изменено',reschedule:'Перенос',create_after_reschedule:'Новый план после переноса',extend:'Продление',close:'Завершение',cancel:'Отмена',retract:'Отзыв',resolve:'Уточнение'};
+    const events = card.history.map(row => ({date:row.changed_at, title:(entities[row.entity_type] || row.entity_type) + ' · ' + (actions[row.action] || row.action),
+      note:row.reason, author:row.actor_name, type:'change', detail:row.action === 'extend' ? 'Окончание вахты: ' + displayDate(row.before_json.planned_end_date) + ' → ' + displayDate(row.after_json.planned_end_date) : ''}));
+    const auditedStages = new Set(card.history.filter(row => row.entity_type === 'stage').map(row => String(row.entity_id)));
+    for (const row of card.stages.filter(row => !auditedStages.has(String(row.id)))) events.push({date:row.effective_date, title:label(row.stage_code),
+      note:row.retracted ? 'Ошибочное событие отозвано' : row.confirmed ? 'Подтверждено' : 'Ожидает подтверждения', author:row.actor_name, type:'stage'});
+    events.sort((a,b) => String(b.date).localeCompare(String(a.date)));
+    $('#wf-activity-count').textContent = events.length ? String(events.length) : '';
+    const timeline = $('#wf-card-timeline'); timeline.replaceChildren();
+    if (!events.length) timeline.append(E('p',{className:'wf-activity-empty'},'В новом учёте пока нет событий. История расстановки доступна в разделе «Логи».'));
+    for (const row of events) timeline.append(E('article',{className:'wf-timeline-entry ' + row.type},
+      E('time',{dateTime:row.date},String(row.date).length === 10 ? displayDate(row.date) : new Date(row.date).toLocaleString('ru-RU')),
+      E('h3',{},row.title), row.note ? E('p',{},row.note) : null, row.detail ? E('p',{},row.detail) : null,
+      row.author ? E('small',{},row.author) : null));
   }
   function field(key, title, type = 'text', options = {}) { return {key, title, type, ...options}; }
   const profileFields = [field('full_name','ФИО','text',{required:true}), field('profession_code','Должность / профессия','catalog',{kind:'profession',searchable:true,legacy:'profession'}),
@@ -144,7 +206,7 @@
     try {
       const result = await api(path, {method, body: JSON.stringify(values)});
       if (kind === 'rotation_schedule') {state.reference = null;await reference();}
-      state.dirty = false; await openCard(id, true); await load();
+      state.dirty = false; await fetchCard(id, true); await load();
       if (result.trip_plans_to_review?.length) error('Вахта продлена. Есть ранее оформленные поездки с другими датами — проверьте их на вкладке «Поездки».', true);
     } catch (err) { error(err.message, true); }
     finally { state.busy = false; $('#wf-card-content').inert = false; }
@@ -335,8 +397,12 @@
   function renderCard() {
     error('', true);
     const visibleTabs = state.card.private_details === false ? tabs.filter(([key]) => ['profile','rotations','stages','movements'].includes(key)) : tabs;
+    if (!visibleTabs.some(([key]) => key === state.tab)) state.tab = 'profile';
+    const selectTab = key => {if (key === state.tab) return;if (canDiscard()) {state.tab = key;state.dirty = false;renderCard();}else $('#wf-card-section').value = state.tab;};
     $('#wf-card-tabs').replaceChildren(...visibleTabs.map(([key,text]) => E('button',{type:'button',className:state.tab === key ? 'active' : '',
-      'aria-pressed':String(state.tab === key),onclick:() => {if (canDiscard()) {state.tab = key;state.dirty = false;renderCard();}}},text)));
+      'aria-pressed':String(state.tab === key),onclick:() => selectTab(key)},text)));
+    $('#wf-card-section').replaceChildren(...visibleTabs.map(([key,text]) => E('option',{value:key},text)));
+    $('#wf-card-section').value = state.tab; $('#wf-card-section').onchange = event => selectTab(event.target.value);
     const content = $('#wf-card-content'); content.replaceChildren();
     const p = state.card.profile, perms = state.reference.permissions;
     if (state.tab === 'profile') {
@@ -448,10 +514,13 @@
   $('#wf-refresh').addEventListener('click',() => {state.reference = null;load();});
   $('#wf-prev').addEventListener('click',() => {state.offset = Math.max(0,state.offset-state.limit);load();});
   $('#wf-next').addEventListener('click',() => {state.offset += state.limit;load();});
-  $('#wf-card-close').addEventListener('click',() => {if (canDiscard()) {state.dirty = false;$('#wf-card').close();}});
-  $('#wf-card').addEventListener('cancel',event => {if (!canDiscard()) event.preventDefault();else state.dirty = false;});
+  $('#wf-card-close').addEventListener('click',() => window.closeWorkforcePerson());
   window.addEventListener('beforeunload',event => {if (state.dirty || state.busy || board.busy()) {event.preventDefault();event.returnValue = '';}});
-  window.workforceScreen = {load,invalidate:() => {state.reference=null;},canLeave:() => board.canLeave() && (!$('#wf-card').open || canDiscard())};
+  window.workforceScreen = {load,activate,routeView:route => {
+    const match = /^workforce\/people\/([1-9]\d*)$/.exec(route);
+    return route === 'workforce' || (match && Number.isSafeInteger(Number(match[1]))) ? 'workforce' : null;
+  },
+    deactivate:() => closeCard(false),invalidate:() => {state.reference=null;},canLeave:() => board.canLeave() && ($('#wf-card').hidden || canDiscard())};
   const paths = {workforce:'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M16 3a4 4 0 0 1 0 8 M22 21v-2a4 4 0 0 0-3-3.87 M13 7a4 4 0 1 1-8 0a4 4 0 0 1 8 0',
     staffing:'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z',dashboard:'M4 3h16v18H4z M8 7h8 M8 11h8 M8 15h4',
     analytics:'M3 3v18h18 M7 16v-5 M12 16V7 M17 16V4',catalogs:'M4 4h16v5H4z M4 15h16v5H4z',

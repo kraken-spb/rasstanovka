@@ -1,4 +1,5 @@
 <section id="view-workforce" class="view workforce-view">
+  <div id="wf-list-workspace">
   <div class="wf-heading"><div><h1>Учёт персонала</h1><p>Единая карточка сотрудника · история присутствия и движения</p></div>
     <label>Отчётная дата<input id="wf-date" type="date" value="{{ today }}" required></label>
   </div>
@@ -21,12 +22,27 @@
   <p id="wf-error" class="error-text" role="alert" hidden></p>
   <div id="wf-board-region" role="region" aria-label="Доска движения персонала"></div>
   <div id="wf-table-region" class="wf-table-region" tabindex="0" role="region" aria-label="Реестр персонала" hidden><table class="wf-table"><thead><tr><th>ФИО / табельный №</th><th>Проект / СМУ</th><th>Работодатель</th><th>Должность / ГДЛР</th><th>Статус сотрудника</th><th>Состояние на дату</th><th>Заезд / прогноз выезда</th></tr></thead><tbody id="wf-rows"></tbody></table></div>
+  </div>
+  <section id="wf-card" class="wf-card wf-card-page" aria-labelledby="wf-card-title" hidden>
+    <header class="wf-card-heading">
+      <button id="wf-card-close" type="button" class="secondary-button" aria-label="Вернуться к списку сотрудников">← <span>К списку</span></button>
+      <div class="wf-card-identity"><h1 id="wf-card-title" tabindex="-1">Карточка сотрудника</h1><p id="wf-card-subtitle"></p></div>
+      <span id="wf-card-stage" class="wf-tag"></span>
+    </header>
+    <p id="wf-card-error" class="error-text" role="alert" hidden></p>
+    <div class="wf-card-workspace">
+      <section class="wf-card-details" aria-label="Данные сотрудника">
+        <nav id="wf-card-tabs" class="wf-tabs" aria-label="Разделы карточки"></nav>
+        <label class="wf-card-section-picker">Раздел карточки<select id="wf-card-section"></select></label>
+        <div id="wf-card-content"></div>
+      </section>
+      <aside id="wf-card-activity" class="wf-card-activity" aria-labelledby="wf-card-activity-title">
+        <div class="wf-activity-heading"><h2 id="wf-card-activity-title">История сотрудника</h2><span id="wf-activity-count"></span></div>
+        <div id="wf-card-timeline"></div>
+      </aside>
+    </div>
+  </section>
 </section>
-<dialog id="wf-card" class="wf-card" aria-labelledby="wf-card-title">
-  <header class="wf-card-heading"><div><h2 id="wf-card-title">Карточка сотрудника</h2><p id="wf-card-subtitle"></p></div><button id="wf-card-close" type="button" class="secondary-button" aria-label="Закрыть карточку">×</button></header>
-  <nav id="wf-card-tabs" class="wf-tabs" aria-label="Разделы карточки"></nav>
-  <div id="wf-card-content"></div><p id="wf-card-error" class="error-text" role="alert" hidden></p>
-</dialog>
 <script src="{{ asset_url('workforce-board.js') }}" defer></script>
 <script src="{{ asset_url('workforce.js') }}" defer></script>
 <script src="{{ asset_url('workforce-import.js') }}" defer></script>

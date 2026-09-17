@@ -46,27 +46,53 @@
     const el = $(id);
     if (el) { el.textContent = message; el.classList.toggle("error-text", error); }
   }
-  async function switchView(view, staffingFilter = null) {
-    if (view === "categories") view = "catalogs";
-    if (window.outstaffScreen && !window.outstaffScreen.canLeave()) return;
-    if (window.outstaffImport && !window.outstaffImport.canLeave()) return;
-    if (window.employeesScreen && !window.employeesScreen.canLeave()) return;
-    if (window.categoriesScreen && !window.categoriesScreen.canLeave()) return;
-    if (window.staffingScreen && !window.staffingScreen.canLeave()) return;
-    if (window.backupsScreen && !window.backupsScreen.canLeave()) return;
-    if (window.locationsScreen && !window.locationsScreen.canLeave()) return;
-    if (window.workforceScreen && !window.workforceScreen.canLeave()) return;
-    if (window.catalogsScreen && !window.catalogsScreen.canLeave()) return;
-    if (!$("#view-" + view)) view = role === "viewer" ? "dashboard" : readOnly ? "staffing" : "placement";
-    if (state.busy) { toast("Дождитесь сохранения."); return; }
+  // Section navigation also owns employee-card history; forms own their leave guards.
+  const historyKey = '__crewPlacementNavigation';
+  const initialEntry = history.state?.[historyKey];
+  const navigationOwner = typeof initialEntry?.owner === 'string' ? initialEntry.owner : Date.now().toString(36) + Math.random().toString(36).slice(2);
+  let navigationRequest = 0, currentNavigation = null, restoringNavigation = false, requestedBack = false, pendingHistoryRoute = null;
+  function historyEntry(value = history.state) {
+    const entry = value?.[historyKey];
+    return entry?.owner === navigationOwner && Number.isSafeInteger(entry.index) && entry.index >= 0 && typeof entry.route === 'string' ? entry : null;
+  }
+  function writeHistory(entry, mode = 'replace') {
+    const previous = history.state && typeof history.state === 'object' && !Array.isArray(history.state) ? history.state : {};
+    history[mode === 'push' ? 'pushState' : 'replaceState']({...previous, [historyKey]: entry}, '', '#' + entry.route);
+  }
+  function navigationRoute(value) {
+    let route = typeof value === 'string' ? value.replace(/^#/, '') : '';
+    if (route === 'categories') route = 'catalogs';
+    const available = new Set(all('.view').map(node => node.id.slice(5)));
+    if (window.workforceScreen?.routeView(route) === 'workforce' && available.has('workforce')) return {route, view:'workforce'};
+    if (available.has(route)) return {route, view:route};
+    const view = role === 'viewer' ? 'dashboard' : readOnly ? 'staffing' : 'placement';
+    return {route:view, view};
+  }
+  async function switchView(route, staffingFilter = null, navigation = {}) {
+    if (restoringNavigation) return false;
+    const request = ++navigationRequest, next = navigationRoute(route), view = next.view;
+    for (const screen of ['outstaffScreen','outstaffImport','employeesScreen','categoriesScreen','staffingScreen',
+      'backupsScreen','locationsScreen','workforceScreen','catalogsScreen']) {
+      if (window[screen] && !window[screen].canLeave()) return false;
+    }
+    if (state.busy) { toast("Дождитесь сохранения."); return false; }
     if (state.pendingPlans) await new Promise((resolve) => state.planWaiters.push(resolve));
-    if ((state.planErrors.size || state.planDrafts.size) && view !== "plan") { toast("Завершите ввод в несохранённых ячейках плана.", true); return; }
+    if (request !== navigationRequest) return false;
+    if ((state.planErrors.size || state.planDrafts.size) && view !== "plan") { toast("Завершите ввод в несохранённых ячейках плана.", true); return false; }
+    const old = currentNavigation, saved = historyEntry(navigation.state), push = navigation.mode === 'push' && old?.route !== next.route;
+    const entry = navigation.mode === 'pop' && saved?.route === next.route ? {...saved, view} : {
+      owner:navigationOwner, index:push ? (old?.index ?? 0) + 1 : old?.index ?? saved?.index ?? 0,
+      route:next.route, view, cardFromList:push ? old?.route === 'workforce' : (!old || old.route === next.route) && saved?.route === next.route ? !!saved.cardFromList : false
+    };
+    if (old?.view === 'workforce' && view !== 'workforce') window.workforceScreen?.deactivate();
     all(".view").forEach((el) => el.classList.toggle("active", el.id === "view-" + view));
     all("[data-view]").forEach((el) => { el.classList.toggle("active", el.dataset.view === view); });
-    history.replaceState(null, "", "#" + view);
+    currentNavigation = entry;
+    writeHistory(entry, push ? 'push' : 'replace');
     try {
-      if (view === 'workforce') { await window.workforceScreen.load(); return; }
+      if (view === 'workforce') { await window.workforceScreen.activate(next.route); return true; }
       await loadLocationReference();
+      if (request !== navigationRequest) return true;
       if (view === "staffing") {
         if (staffingFilter) await window.staffingScreen.openFromCalendar(staffingFilter);
         else await window.staffingScreen.load();
@@ -81,8 +107,51 @@
       if (view === "logs") await window.logsScreen.load();
       if (view === "catalogs") await window.catalogsScreen.load();
       if (view === "plan" || view === "dashboard") await loadCalendar(view);
-    } catch (error) { toast(error.message, true); }
+    } catch (error) { if (request === navigationRequest) toast(error.message, true); }
+    return true;
   }
+  function restoreHistory(targetState, targetRoute) {
+    if (!currentNavigation) return;
+    const target = historyEntry(targetState);
+    if (target?.route === targetRoute && target.index !== currentNavigation.index) {
+      restoringNavigation = true;
+      history.go(currentNavigation.index - target.index);
+    } else writeHistory(currentNavigation);
+  }
+  async function historyChanged(event) {
+    requestedBack = false;
+    if (restoringNavigation) {
+      restoringNavigation = false;
+      writeHistory(currentNavigation);
+      return;
+    }
+    const route = location.hash.slice(1), targetState = event.type === 'popstate' ? event.state : history.state;
+    if (currentNavigation?.route === route) {
+      const entry = historyEntry(targetState);
+      if (entry?.route === route) currentNavigation = {...entry, view:currentNavigation.view};
+      return;
+    }
+    if (pendingHistoryRoute === route) return;
+    pendingHistoryRoute = route;
+    const pending = switchView(route, null, {mode:'pop', state:targetState}), request = navigationRequest;
+    try {
+      if (!await pending && request === navigationRequest && location.hash.slice(1) === route) restoreHistory(targetState, route);
+    } finally { if (pendingHistoryRoute === route) pendingHistoryRoute = null; }
+  }
+  window.addEventListener('popstate', historyChanged);
+  window.addEventListener('hashchange', historyChanged);
+  window.openWorkforcePerson = id => {
+    const value = String(id);
+    if (!/^[1-9]\d*$/.test(value) || !Number.isSafeInteger(Number(value)) || !window.workforceScreen) return Promise.resolve(false);
+    return switchView('workforce/people/' + value, null, {mode:'push'});
+  };
+  window.closeWorkforcePerson = () => {
+    if (restoringNavigation || requestedBack || currentNavigation?.view !== 'workforce') return;
+    const entry = historyEntry();
+    if (currentNavigation.route !== 'workforce' && entry?.route === currentNavigation.route && entry.cardFromList && entry.index > 0) {
+      requestedBack = true;history.back();
+    } else return switchView('workforce');
+  };
   window.openStaffingReport = filter => switchView('staffing', filter);
   all("[data-view]").forEach((el) => el.addEventListener("click", () => switchView(el.dataset.view)));
   $(".brand").addEventListener("click", (event) => { event.preventDefault(); switchView(role === "viewer" ? "dashboard" : "staffing"); });
