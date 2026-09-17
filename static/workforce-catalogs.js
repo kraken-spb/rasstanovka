@@ -18,7 +18,7 @@
   };
   async function api(path,options={}) {
     const response=await fetch('/api/workforce/'+path,{...options,cache:'no-store',headers:{'Content-Type':'application/json','X-CSRF-Token':root.dataset.csrf}});
-    const body=await response.json();if(!response.ok)throw new Error(body.error||'Не удалось сохранить справочник.');return body;
+    return window.readApiResponse(response,'Не удалось сохранить справочник.');
   }
   const visible=()=>!!panel&&!panel.hidden&&document.getElementById('view-catalogs')?.classList.contains('active');
   const canLeave=()=>!busy&&!loading&&(!visible()||!dirty||window.confirm('В справочнике есть несохранённые изменения. Закрыть их?'));

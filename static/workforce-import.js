@@ -37,9 +37,7 @@
   async function api(path, options = {}) {
     const response = await fetch('/api/workforce/imports/' + path,{...options,cache:'no-store',
       headers:{'X-CSRF-Token':root.dataset.csrf,...(options.body instanceof FormData ? {} : {'Content-Type':'application/json'})}});
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || 'Не удалось выполнить сверку.');
-    return data;
+    return window.readApiResponse(response, 'Не удалось выполнить сверку.');
   }
   const button = E('button',{type:'button',className:'secondary-button',onclick:async () => {
     date.value = document.querySelector('#wf-date').value;

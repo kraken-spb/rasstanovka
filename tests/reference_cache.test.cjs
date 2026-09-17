@@ -3,15 +3,18 @@ const {test} = require('node:test');
 const vm = require('node:vm');
 const fs = require('node:fs');
 const path = require('node:path');
+const responseCode = fs.readFileSync(path.join(__dirname, '../static/api-response.js'), 'utf8');
 const code = fs.readFileSync(path.join(__dirname, '../static/reference-cache.js'), 'utf8');
 
 function setup() {
   let now = 1000;
   const calls = [];
-  const context = {window: {}, Date: {now: () => now}, fetch: () => new Promise(resolve => calls.push(resolve))};
+  const context = {window: {}, URL, Date: {now: () => now}, fetch: () => new Promise(resolve => calls.push(resolve))};
+  vm.runInNewContext(responseCode, context);
   vm.runInNewContext(code, context);
   return {api: context.window.appReference, calls, advance: ms => {now += ms;},
-    respond: (index, id, ok = true) => calls[index]({ok, json: async () => ok ? {id} : {error: 'failed'}})};
+    respond: (index, id, ok = true) => calls[index](new Response(JSON.stringify(ok ? {id} : {error: 'failed'}),
+      {status: ok ? 200 : 500, headers: {'Content-Type': 'application/json'}}))};
 }
 test('concurrent consumers share one request; an expired catalog is fetched again', async () => {
   const s = setup();
@@ -44,4 +47,21 @@ test('failed current requests and explicit invalidation allow another fetch', as
   const good = s.api.get(); s.respond(1, 683); await good;
   s.api.invalidate(); const next = s.api.get(); s.respond(2, 684);
   assert.equal((await next).id, 684);
+});
+
+test('an HTML failure releases the cache without an automatic retry', async () => {
+  const s = setup(), bad = s.api.get();
+  s.calls[0](new Response('<!doctype html><body>PRIVATE_PROXY_DETAIL</body>', {status: 502, headers: {'Content-Type': 'text/html'}}));
+  await assert.rejects(bad, error => {
+    assert.equal(error.status, 502);
+    assert.match(error.message, /HTTP 502/);
+    assert.doesNotMatch(error.message, /PRIVATE_PROXY_DETAIL|Unexpected token/);
+    return true;
+  });
+  assert.equal(s.calls.length, 1);
+  const recovered = s.api.get();
+  assert.equal(s.calls.length, 2);
+  s.respond(1, 683);
+  assert.equal((await recovered).id, 683);
+  assert.equal(s.api.get(), recovered);
 });

@@ -48,6 +48,8 @@ app.config.update(
 )
 from security import browser_headers
 app.after_request(browser_headers)
+from api_errors import register_api_errors
+register_api_errors(app)
 DUMMY_PASSWORD_HASH = generate_password_hash(secrets.token_urlsafe(32))
 
 ASSET_VERSIONS = {

@@ -17,9 +17,7 @@
   async function api(path, options = {}) {
     const response = await fetch('/api/workforce/' + path, {...options, cache: 'no-store',
       headers: {'Content-Type': 'application/json', 'X-CSRF-Token': root.dataset.csrf}});
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || 'Не удалось выполнить запрос.');
-    return data;
+    return window.readApiResponse(response, 'Не удалось выполнить запрос.');
   }
   const displayDate = value => value ? new Date(value + 'T12:00:00').toLocaleDateString('ru-RU') : '—';
   const label = value => state.reference?.catalog.find(row => row.code === value)?.label || value || '—';

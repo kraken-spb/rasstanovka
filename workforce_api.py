@@ -128,14 +128,6 @@ def register_workforce_routes(app, get_db, roles_required):
             return guarded
         return decorate
 
-    from werkzeug.exceptions import HTTPException
-
-    @app.errorhandler(HTTPException)
-    def workforce_http_error(error):
-        if request.path.startswith('/api/workforce/'):
-            return jsonify(error=error.description), error.code
-        return error
-
     def database():
         db = get_db()
         if getattr(db, 'dialect', None) != 'postgres':

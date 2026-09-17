@@ -90,6 +90,20 @@ class PlacementAppTest(unittest.TestCase):
         self.assertEqual(account.status_code, 201)
         self.assertEqual(self.client.post("/api/plans", json={}, headers=headers).status_code, 410)
 
+    def test_legacy_api_server_error_is_json_after_all_routes_registered(self):
+        def failed_request():
+            raise RuntimeError('private connection details')
+
+        with patch.dict(self.module.app.view_functions, {'reference': failed_request}), \
+                patch.dict(self.module.app.config, {'PROPAGATE_EXCEPTIONS': False}), \
+                patch.object(self.module.app, 'log_exception') as logger:
+            response = self.module.app.test_client().get('/api/reference')
+        self.assertEqual(response.status_code, 500)
+        self.assertTrue(response.is_json)
+        self.assertNotIn('private', response.json['error'])
+        self.assertIn('Сервер не смог', response.json['error'])
+        logger.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

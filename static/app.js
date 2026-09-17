@@ -33,9 +33,7 @@
   async function api(url, options = {}) {
     const response = await fetch(url, { ...options, headers: { "Content-Type": "application/json",
       "X-CSRF-Token": root.dataset.csrf }, cache: "no-store" });
-    const data = await response.json();
-    if (!response.ok) { const error = new Error(data.error || "Не удалось выполнить запрос."); error.status = response.status; throw error; }
-    return data;
+    return window.readApiResponse(response, "Не удалось выполнить запрос.");
   }
   let toastTimer;
   function toast(message, error = false) {

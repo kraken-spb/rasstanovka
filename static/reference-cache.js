@@ -11,8 +11,7 @@
         expiresAt = Infinity;
         const request = fetch('/api/reference?scope=locations', {cache: 'no-cache'})
           .then(async response => {
-            const data = await response.json();
-            if (!response.ok) throw new Error(data.error || 'Не удалось загрузить справочник объектов.');
+            const data = await window.readApiResponse(response, 'Не удалось загрузить справочник объектов.');
             if (pending === request) expiresAt = Date.now() + cacheLifetime;
             return data;
           });
