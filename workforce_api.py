@@ -171,7 +171,7 @@ def register_workforce_routes(app, get_db, roles_required):
 
     @app.get('/api/workforce/people')
     @roles_required(*READERS)
-    def workforce_people():
+    def workforce_people(exporting=False):
         db = database()
         day = date_value(request.args.get('date') or datetime.now(timezone(timedelta(hours=3))).date().isoformat(), required=True)
         try:
@@ -183,6 +183,11 @@ def register_workforce_routes(app, get_db, roles_required):
         section = request.args.get('section', '')
         if section not in ('', 'rotation', 'recruitment'):
             abort(400, description='Неизвестный раздел учёта.')
+        if exporting:
+            from workforce_registry_export import MAX_ROWS, registry_download
+            if not section:
+                abort(400, description='Выберите «Перевахту» или «Комплектование».')
+            limit, offset = MAX_ROWS + 1, 0
         stages = sorted({value for value in request.args.getlist('stage') if value})
         if any(value not in (*STAGES, 'unconfirmed') for value in stages):
             abort(400, description='Выберите доступные состояния сотрудника.')
@@ -269,7 +274,9 @@ def register_workforce_routes(app, get_db, roles_required):
                     count(*) FILTER(WHERE st.stage_code='stage.inbound') inbound,
                     count(*) FILTER(WHERE st.stage_code IS NULL) unconfirmed,
                     count(*) FILTER(WHERE st.stage_code='stage.leave') on_leave ''' + source, bound).fetchone()))
-                rows = cached(db, revision, ('page', cache_key, limit, offset), lambda: plain(db.native('''WITH page AS MATERIALIZED (
+                if exporting and totals['total'] > MAX_ROWS:
+                    abort(422, description=f'В выгрузке больше {MAX_ROWS} сотрудников. Уточните фильтры.')
+                read_rows = lambda: plain(db.native('''WITH page AS MATERIALIZED (
                     SELECT w.id,w.name_search,st.stage_code,st.effective_date ''' + source + '''
                     ORDER BY w.name_search,w.id LIMIT %s OFFSET %s)
                     SELECT w.id,w.uuid,w.full_name,w.department,w.profession,w.active,
@@ -304,7 +311,10 @@ def register_workforce_routes(app, get_db, roles_required):
                     LEFT JOIN workforce_catalog em ON em.code=p.employment_code
                     LEFT JOIN workforce_catalog ci ON ci.code=p.citizenship_code
                     LEFT JOIN workforce_catalog sc ON sc.code=page.stage_code
-                    ORDER BY page.name_search,page.id''', [*bound, limit, offset, day, day]).fetchall()))
+                    ORDER BY page.name_search,page.id''', [*bound, limit, offset, day, day]).fetchall())
+                rows = read_rows() if exporting else cached(db, revision, ('page', cache_key, limit, offset), read_rows)
+                if exporting and len(rows) > MAX_ROWS:
+                    abort(422, description=f'В выгрузке больше {MAX_ROWS} сотрудников. Уточните фильтры.')
             except psycopg.errors.InvalidRegularExpression:
                 abort(400, description='Некорректное регулярное выражение.')
             except psycopg.errors.QueryCanceled:
@@ -325,8 +335,16 @@ def register_workforce_routes(app, get_db, roles_required):
                      'stage_token': stage_token(row['id'], day, row['stage_revision']),
                      'transition_targets': transition_targets(actor['role'], row['stage_code'], row['active']),
                      'pvp_address': addresses.get(row['id']), 'assigned': row['id'] in assigned} for row in rows]
+        if exporting:
+            return registry_download(rows, day, section)
         return jsonify({'rows': rows, 'totals': totals, 'offset': offset, 'limit': limit, 'date': day,
                         'revision': str(revision)})
+
+    @app.get('/api/workforce/people/export')
+    @roles_required(*READERS)
+    def workforce_registry_export():
+        # Use exactly the list's date, source membership, filters and live permissions.
+        return workforce_people(exporting=True)
 
     @app.get('/api/workforce/people/<int:worker_id>')
     @roles_required(*READERS)

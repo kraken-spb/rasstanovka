@@ -41,6 +41,14 @@
     selectOptions($('#wf-employer'), state.reference.organizations, 'id', 'name');
     selectOptions($('#wf-category'), state.reference.categories, 'id', 'name');
   }
+  function listQuery() {
+    const query = new URLSearchParams({date: $('#wf-date').value, q: $('#wf-search').value,
+      regex: $('#wf-regex').checked ? '1' : '0', department: $('#wf-department').value,
+      employer: $('#wf-employer').value, category: $('#wf-category').value,
+      conflicts: $('#wf-conflicts').checked ? '1' : '0', section:state.section, queue:state.queue === 'lifecycle' ? '' : state.queue, offset: state.offset, limit: state.limit});
+    MF.params(query, 'stage', MF.get($('#wf-stage')));
+    return query;
+  }
   async function load() {
     clearTimeout(timer);
     const seq = ++state.request;
@@ -49,11 +57,7 @@
     try {
       await reference();
       if (seq !== state.request) return;
-      const query = new URLSearchParams({date: $('#wf-date').value, q: $('#wf-search').value,
-        regex: $('#wf-regex').checked ? '1' : '0', department: $('#wf-department').value,
-        employer: $('#wf-employer').value, category: $('#wf-category').value,
-        conflicts: $('#wf-conflicts').checked ? '1' : '0', section:state.section, queue:state.queue === 'lifecycle' ? '' : state.queue, offset: state.offset, limit: state.limit});
-      MF.params(query, 'stage', MF.get($('#wf-stage')));
+      const query = listQuery();
       if (state.view === 'board') {
         const data = await board.load(query, state.reference);
         if (seq !== state.request || !data) return;
@@ -592,7 +596,7 @@
   new ResizeObserver(renderCardSplit).observe(cardWorkspace);
   cardSplitMobile.addEventListener('change', renderCardSplit);
   window.addEventListener('beforeunload',event => {if (state.dirty || state.busy || board.busy()) {event.preventDefault();event.returnValue = '';}});
-  window.workforceScreen = {load,activate,routeView:route => workforceRoute(route) ? 'workforce' : null,
+  window.workforceScreen = {load,activate,listQuery,routeView:route => workforceRoute(route) ? 'workforce' : null,
     deactivate:() => closeCard(false),invalidate:() => {state.reference=null;},canLeave:() => board.canLeave() && ($('#wf-card').hidden || canDiscard())};
   const paths = {workforce:'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M16 3a4 4 0 0 1 0 8 M22 21v-2a4 4 0 0 0-3-3.87 M13 7a4 4 0 1 1-8 0a4 4 0 0 1 8 0',
     'workforce/rotation':'M20 7h-9 M16 3l4 4-4 4 M4 17h9 M8 13l-4 4 4 4',

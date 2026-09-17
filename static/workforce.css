@@ -1,4 +1,12 @@
 .workforce-layout { --wf-rail: 56px; --wf-green: #176d50; --wf-line: #dce5df; }
+dialog.wf-card.wf-export-dialog { box-sizing: border-box; width: min(440px, calc(100vw - 24px)); padding: 20px; }
+.wf-export-dialog h2 { margin: 0 0 12px; font-size: 18px; }
+.wf-export-dialog p { font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.wf-export-form label { display: grid; gap: 6px; font-size: 12px; }
+.wf-export-form input { box-sizing: border-box; width: 100%; min-width: 0; }
+.wf-export-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.wf-export-actions button { flex: 1 1 auto; }
+#wf-export { flex-shrink: 0; }
 html:has(body.workforce-layout) { scroll-padding-top: 56px; }
 .workforce-layout.sidebar-expanded { --wf-rail: 196px; }
 .workforce-layout .topbar { position: sticky; top: 0; z-index: 50; height: 56px; min-height: 56px !important; padding: 8px 16px !important; gap: 12px; }
