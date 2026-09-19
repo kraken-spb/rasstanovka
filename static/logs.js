@@ -5,7 +5,8 @@
   if (!$('view-logs')) return;
   MF.enable($('logs-actor')); MF.enable($('logs-form').querySelector('select[name=action]'));
   const actions = {assign: 'Назначение', move: 'Перенос', clear: 'Снятие', update: 'Обновление', employee_delete: 'Удаление сотрудника', employee_restore: 'Восстановление сотрудника'};
-  let page = 1, pages = 1, request = 0, busy = false;
+  const pageSize = 50;
+  let page = 1, request = 0, busy = false;
   const node = (tag, text, className) => {
     const element = document.createElement(tag);
     if (text != null) element.textContent = text;
@@ -13,6 +14,10 @@
     return element;
   };
   const date = value => value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value.split('-').reverse().join('.') : value || '—';
+  const pager = window.TablePagination.mount($('logs-list'), 'Журнал', async nextPage => {
+    if (busy) return false;
+    await load(nextPage + 1);
+  }, {top: false, sizes: false, container: document.querySelector('.logs-pagination')});
   function changedAt(value) {
     const parsed = new Date(value);
     return Number.isNaN(parsed.getTime()) ? 'Время не сохранено' : parsed.toLocaleString('ru-RU', {timeZone: 'Europe/Moscow'});
@@ -49,7 +54,7 @@
   async function load(nextPage = 1) {
     const current = ++request;
     busy = true; $('logs-form').inert = true;
-    $('logs-prev').disabled = true; $('logs-next').disabled = true;
+    pager.setBusy(true);
     $('logs-status').classList.remove('error-text'); $('logs-status').textContent = 'Загрузка журнала…';
     const query = new URLSearchParams(new FormData($('logs-form')));
     query.set('page', nextPage);
@@ -61,17 +66,17 @@
       const select = $('logs-actor'), selected = MF.get(select);
       select.replaceChildren(new Option('Все пользователи', ''), ...data.actors.map(actor => new Option(actor.full_name + ' · ' + actor.username, String(actor.id))));
       MF.set(select, selected);
-      page = data.page; pages = data.pages; render(data.rows);
+      page = data.page; render(data.rows);
       $('logs-status').textContent = 'Найдено событий: ' + data.total.toLocaleString('ru-RU');
-      $('logs-page').textContent = 'Страница ' + page + ' из ' + pages;
+      pager.update(data.total, page - 1, pageSize);
     } catch (error) {
       if (current !== request) return;
-      page = pages = 1; $('logs-list').replaceChildren(); $('logs-page').textContent = '';
+      page = 1; $('logs-list').replaceChildren(); pager.update(0, 0, pageSize);
       $('logs-status').textContent = error.message; $('logs-status').classList.add('error-text');
     } finally {
       if (current === request) {
         busy = false; $('logs-form').inert = false;
-        $('logs-prev').disabled = page <= 1; $('logs-next').disabled = page >= pages;
+        pager.setBusy(false);
       }
     }
   }
@@ -82,7 +87,5 @@
     MF.set($('logs-actor'), ''); MF.set($('logs-form').querySelector('select[name=action]'), '');
     load();
   });
-  $('logs-prev').addEventListener('click', () => { if (!busy && page > 1) load(page - 1); });
-  $('logs-next').addEventListener('click', () => { if (!busy && page < pages) load(page + 1); });
   window.logsScreen = {load};
 })();

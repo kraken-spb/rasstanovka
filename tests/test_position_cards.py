@@ -26,7 +26,7 @@ class PositionCardsTest(unittest.TestCase):
             db.execute('UPDATE smu_catalog SET site_chief_user_id=? WHERE name=?',
                        (self.fixture.foreman_id, 'СМУ А'))
             db.execute("UPDATE users SET full_name='Ответственный А' WHERE id=?", (self.fixture.foreman_id,))
-            db.execute('INSERT INTO staffing_performed_work VALUES (?,?,?,?,?,?,?)',
+            db.execute('INSERT INTO staffing_performed_work(work_date,worker_id,shift,description,edit_token,updated_by,updated_at) VALUES (?,?,?,?,?,?,?)',
                        ('2026-09-13', self.fixture.visible_worker, '1 смена',
                         'Сварка <труб> & контроль\nВыполнено 10 стыков.', 'work', self.fixture.admin_id, 'now'))
             db.commit()

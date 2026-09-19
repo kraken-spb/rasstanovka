@@ -21,11 +21,14 @@ def performed_work_states(db, day, ids, records=None):
         return {}
     from query_helpers import dated_records
     rows = records['staffing_performed_work'] if records is not None else dated_records(db, 'staffing_performed_work', day, ids)
-    return {(r['worker_id'], r['shift']): {'performed_work': r['description'], 'performed_work_token': r['edit_token']} for r in rows}
+    names={r['id']:r['name'] for r in db.execute('SELECT id,name FROM work_types')}
+    return {(r['worker_id'], r['shift']): {'performed_work': r['description'], 'performed_work_token': r['edit_token'],
+            'work_type_id':r['work_type_id'],'work_type':names.get(r['work_type_id'],'')} for r in rows}
 
 
 def register_performed_work_routes(app, get_db, roles_required, utc_now):
     @app.put('/api/staffing/performed-work')
+    @app.put('/api/staffing/work-type', endpoint='save_work_type')
     @roles_required('admin', 'foreman')
     def save_performed_work():
         data = request.get_json(silent=True)
@@ -35,7 +38,8 @@ def register_performed_work_routes(app, get_db, roles_required, utc_now):
             day = date.fromisoformat(str(data.get('date', ''))).isoformat()
         except ValueError:
             abort(400, description='Укажите дату выполнения работ.')
-        description = data.get('description')
+        work_type_change=request.endpoint=='save_work_type'
+        description = '' if work_type_change else data.get('description')
         if not isinstance(description, str) or len(description) > 2000 or any(
                 unicodedata.category(c).startswith('C') and c not in '\n\r\t' for c in description):
             abort(400, description='Введите работы текстом до 2000 символов.')
@@ -60,6 +64,16 @@ def register_performed_work_routes(app, get_db, roles_required, utc_now):
                 abort(409, description='Список сотрудников изменился. Обновите расстановку.')
             if set(ids) - allowed_workers(db, ids):
                 abort(403, description='Можно менять работы только сотрудников своих бригад.')
+            work_type=None
+            if work_type_change:
+                from gdlr_api import require_staffing_workers
+                require_staffing_workers(db,ids)
+                if 'work_type_id' not in data or (data['work_type_id'] is not None and type(data['work_type_id']) is not int):
+                    abort(400,description='Выберите вид работ из справочника.')
+                if data['work_type_id'] is not None:
+                    work_type=db.execute('SELECT * FROM work_types WHERE id=?',(data['work_type_id'],)).fetchone()
+                    if not work_type or not work_type['active']:abort(400,description='Выберите действующий вид работ.')
+                    if data.get('work_type_token')!=work_type['edit_token']:abort(409,description='Справочник видов работ изменился. Обновите таблицу.')
             validate_group_snapshot(db, ids, data)
             daily = day_states(db, day, ids)
             if any(daily[i]['employee_shift'] not in ('1 смена', '2 смена') or
@@ -72,7 +86,14 @@ def register_performed_work_routes(app, get_db, roles_required, utc_now):
             for i in ids:
                 shift, token = daily[i]['employee_shift'], secrets.token_hex(16)
                 # Keep an empty record's token so stale editors cannot recreate a cleared value.
-                db.execute('''INSERT INTO staffing_performed_work VALUES (?,?,?,?,?,?,?)
+                if work_type_change:
+                    db.execute('''INSERT INTO staffing_performed_work(work_date,worker_id,shift,description,edit_token,updated_by,updated_at,work_type_id)
+                        VALUES (?,?,?,'',?,?,?,?) ON CONFLICT(work_date,worker_id,shift) DO UPDATE SET
+                        work_type_id=excluded.work_type_id,edit_token=excluded.edit_token,updated_by=excluded.updated_by,updated_at=excluded.updated_at''',
+                        (day,i,shift,token,g.user['id'],now,work_type['id'] if work_type else None))
+                    result.append({'id':i,'work_type_id':work_type['id'] if work_type else None,'work_type':work_type['name'] if work_type else '', 'performed_work_token':token})
+                    continue
+                db.execute('''INSERT INTO staffing_performed_work(work_date,worker_id,shift,description,edit_token,updated_by,updated_at) VALUES (?,?,?,?,?,?,?)
                     ON CONFLICT(work_date,worker_id,shift) DO UPDATE SET description=excluded.description,
                     edit_token=excluded.edit_token,updated_by=excluded.updated_by,updated_at=excluded.updated_at''',
                     (day, i, shift, description, token, g.user['id'], now))

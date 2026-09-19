@@ -1,6 +1,6 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const {windowFor} = require('../static/table-pagination.js');
+const {windowFor, groupWindow} = require('../static/table-pagination.js');
 const hierarchy = require('../static/staffing-hierarchy.js');
 test('empty results, exact boundary, last page and shrinking filters', () => {
   assert.deepEqual(windowFor(0, 8), {page:0, pages:1, start:0, end:0, numbers:[0]});
@@ -31,4 +31,34 @@ test('all employees occur once across pages for each supported size and hierarch
 test('page navigation stays bounded on large lists and exposes both ends', () => {
   const info = windowFor(50000, 451, 25);
   assert.deepEqual(info.numbers, [0,450,451,452,1999]);
+});
+
+test('group pages never split a large crew and include crewless people', () => {
+  const rows = Array.from({length:180}, (_,id) => ({id,crew_id:id < 120 ? 1 : id < 179 ? 2 : null}));
+  const first = groupWindow(rows, [1,2,null], r => r.crew_id, 0, 1);
+  assert.equal(first.total, 3);
+  assert.equal(first.rows.length, 120);
+  const second = groupWindow(rows, [1,2,null], r => r.crew_id, 1, 1);
+  assert.equal(second.rows.length, 59);
+  const last = groupWindow(rows, [1,2,null], r => r.crew_id, 9, 1);
+  assert.equal(last.page, 2);
+  assert.deepEqual(last.rows.map(r => r.id), [179]);
+  assert.equal(groupWindow([], [1,2,null], r => r.crew_id, 9, 50).total, 0);
+});
+
+test('hierarchy pages keep every descendant under its top-level group', () => {
+  const rows = Array.from({length:220}, (_,id) => ({id,crew_id:id % 7,itr_group_key:'itr'+(id % 3),itr_group_label:'ИТР '+(id % 3)}));
+  for (const levels of [['itr','crew'], ['crew','itr']]) {
+    const tree = hierarchy.build(rows, levels);
+    const roots = tree.roots.map(g => g.id), key = row => tree.paths.get(row.id)[0];
+    const seen = [];
+    for (let page=0;page<roots.length;page++) {
+      const result = groupWindow(rows, roots, key, page, 1);
+      assert.equal(new Set(result.rows.map(key)).size, 1);
+      assert.equal(result.rows.length, tree.byId.get(roots[page]).rows.length);
+      seen.push(...result.rows.map(r => r.id));
+    }
+    assert.equal(new Set(seen).size, rows.length);
+    assert.equal(seen.length, rows.length);
+  }
 });

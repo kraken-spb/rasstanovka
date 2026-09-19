@@ -9,14 +9,11 @@ function createEmployeeScreen(prefix) {
   const state = {rows: [], crews: [], categories: [], categoryDrafts: new Map(), filtered: [], page: 0, busy: false, drafts: new Map(), request: 0, worker: null, summary: null, reportDate: $('employees-date').value};
   ['employees-crew-filter','employees-category','employees-active'].forEach(id => MF.enable($(id)));
   let size = 50;
-  const pager = window.TablePagination.mount($('employees-list'), isOutstaff ? 'Аутстафф' : 'Сотрудники', (page, count) => {
+  const pager = window.TablePagination.mount($('employees-list'), isOutstaff ? 'Аутстафф' : 'Сотрудники', async (page, count) => {
     if (!canLeave()) return false;
-    state.page = page; size = count; render();
+    state.page = page; size = count; await load();
     $('employees-list').scrollTop = 0;
-  });
-  const fields = ['full_name', 'personnel_no', 'crew_name', 'category', 'profession', 'gsp_profession', 'pps',
-    'department', 'employer', 'contractor', 'owner_name', 'linear_itr_name', 'brigadier_name', 'outstaff_search'];
-  const normalize = value => String(value || '').toLocaleLowerCase('ru').replace(/ё/g, 'е');
+  }, {top: false});
   const el = (tag, props = {}, ...children) => {
     const node = document.createElement(tag);
     Object.entries(props).forEach(([key, value]) => {
@@ -46,27 +43,47 @@ function createEmployeeScreen(prefix) {
     }
     return true;
   }
+  let searchTimer;
   async function load() {
     if (!canLeave()) return;
-    state.request++; state.worker?.terminate(); state.worker = null;
-    state.summary = null; renderStats();
-    state.busy = true; $('view-employees').inert = true; status('Загрузка сотрудников…');
+    clearTimeout(searchTimer);
+    const request = ++state.request;
+    state.controller?.abort();
+    const controller = state.controller = new AbortController();
+    $('employees-list').inert = true; status('Загрузка сотрудников…'); error();
     try {
-      const [employees, crews, categories] = await Promise.all([api(employeesUrl()), api('/api/crews'), api('/api/gdlr-categories')]);
+      const [employees, crews, categories] = await Promise.all([
+        api(employeesUrl(), {signal: controller.signal}), api('/api/crews', {signal: controller.signal}),
+        api('/api/gdlr-categories', {signal: controller.signal})]);
+      if (request !== state.request) return;
       acceptEmployees(employees); state.crews = crews.rows; state.categories = categories.rows; state.needsRefresh = false;
-      updateFilters();
-      status(''); filter();
-    } catch (failure) { state.rows = []; state.filtered = []; render(); error(failure.message); }
-    finally { state.busy = false; $('view-employees').inert = false; }
+      updateFilters(); render(); status('');
+    } catch (failure) {
+      if (request !== state.request || failure.name === 'AbortError') return;
+      state.rows = []; state.filtered = []; state.summary = null; state.filteredSummary = null; state.total = 0;
+      render(); status(''); error(failure.message);
+    } finally { if (request === state.request) $('employees-list').inert = false; }
   }
-  function employeesUrl() { return '/api/employees?date=' + encodeURIComponent($('employees-date').value) + (isOutstaff ? '&scope=outstaff' : ''); }
-  function acceptEmployees(data) { state.rows = data.rows.map(row => ({...row, source_category: isOutstaff ? row.outstaff.source_category : row.source_category, outstaff_search: row.outstaff ? Object.values(row.outstaff).join(' ') : ''})); state.summary = data.summary; state.reportDate = data.date; state.departments = data.departments || []; if (isOutstaff) state.summary.workers = state.rows.filter(row => row.category_id).length; }
+  function employeesUrl() {
+    const query = new URLSearchParams({date: $('employees-date').value, page: state.page, page_size: size,
+      q: $('employees-search').value.trim(), regex: $('employees-regex').checked ? '1' : '0'});
+    if (isOutstaff) query.set('scope', 'outstaff');
+    for (const [key, id] of [['crew', 'employees-crew-filter'], ['category', 'employees-category'], ['active', 'employees-active']]) {
+      MF.params(query, key, MF.get($(id)));
+    }
+    return '/api/employees?' + query;
+  }
+  function acceptEmployees(data) {
+    state.rows = data.rows.map(row => ({...row, source_category: isOutstaff ? row.outstaff.source_category : row.source_category}));
+    state.filtered = state.rows; state.summary = data.summary; state.filteredSummary = data.filtered_summary;
+    state.total = data.pagination.total; state.page = data.pagination.page;
+    state.filterCrews = data.filters.crews; state.reportDate = data.date; state.departments = data.departments || [];
+  }
   function renderStats() {
-    const filtered = {total: state.filtered.length, workers: state.filtered.filter(row => isOutstaff ? row.category_id : row.is_worker).length,
-      assigned: state.filtered.filter(row => row.assigned_on_date).length};
+    const filtered = state.filteredSummary || {total: 0, workers: 0, assigned: 0};
     for (const key of ['total', 'workers', 'assigned']) {
       $('employees-count-' + key).textContent = state.summary ? state.summary[key].toLocaleString('ru-RU') : '—';
-      $('employees-filtered-' + key).textContent = state.summary && state.filtered.length !== state.rows.length
+      $('employees-filtered-' + key).textContent = state.summary && filtered.total !== state.summary.total
         ? 'По фильтрам: ' + filtered[key].toLocaleString('ru-RU') : '';
     }
     $('employees-stats-note').textContent = 'Состав сотрудников — текущий. Расставленные учитываются один раз за обе смены отчётной даты. Рабочие — по квалификации из файла или ручного добавления.'
@@ -75,7 +92,7 @@ function createEmployeeScreen(prefix) {
   }
   function updateFilters() {
       const selected = MF.get($('employees-crew-filter'));
-      const names = new Map(state.rows.filter(row => row.crew_id).map(row => [row.crew_id, row.crew_name]));
+      const names = new Map((state.filterCrews || []).map(row => [row.id, row.name]));
       $('employees-crew-filter').replaceChildren(option('', 'Все бригады'), option('none', 'Без бригады'),
         ...[...names].sort((a, b) => a[1].localeCompare(b[1], 'ru', {numeric: true})).map(([id, name]) => option(id, name)));
       MF.set($('employees-crew-filter'), selected);
@@ -85,31 +102,8 @@ function createEmployeeScreen(prefix) {
       MF.set($('employees-category'), category);
   }
   function filter(resetPage = true) {
-    const previousPage = resetPage ? 0 : state.page;
-    const request = ++state.request;
-    state.worker?.terminate(); state.worker = null;
-    error(); status(''); state.page = previousPage;
-    const crew = MF.get($('employees-crew-filter')), category = MF.get($('employees-category')), active = MF.get($('employees-active'));
-    const rows = state.rows.filter(row => MF.matches(crew, row.crew_id || 'none')
-      && MF.matches(category, row.category_id === null ? 'none' : row.category_id) && MF.matches(active, row.active));
-    const query = $('employees-search').value.trim();
-    if (!$('employees-regex').checked || !query) {
-      const words = normalize(query).split(/\s+/).filter(Boolean);
-      state.filtered = rows.filter(row => { const text = normalize(fields.map(key => row[key]).join(' ')); return words.every(word => text.includes(word)); });
-      render(); return;
-    }
-    state.filtered = []; render(); status('Поиск Regex…');
-    const worker = new Worker('/static/employee-search.js'); state.worker = worker;
-    const finish = (message, ids = []) => {
-      clearTimeout(timer); worker.terminate();
-      if (request !== state.request) return;
-      state.worker = null; status(''); error(message);
-      const matches = new Set(ids); state.filtered = rows.filter(row => matches.has(row.id)); state.page = previousPage; render();
-    };
-    const timer = setTimeout(() => finish('Regex выполняется слишком долго. Упростите выражение.'), 1000);
-    worker.onmessage = ({data}) => finish(data.error || '', data.ids);
-    worker.onerror = () => finish('Не удалось выполнить Regex-поиск. Повторите запрос.');
-    worker.postMessage({query: SearchRegex.source(query), rows: rows.map(row => ({id: row.id, fields: fields.map(key => String(row[key] || ''))}))});
+    if (resetPage) state.page = 0;
+    return load();
   }
   function cell(label, content) { return el('td', {'data-label': label}, content || '—'); }
   function details(...values) { return el('div', {}, ...values.map(([label, value]) => el('div', {className: 'employee-detail'}, el('small', {}, label), el('span', {}, value || '—')))); }
@@ -144,7 +138,7 @@ function createEmployeeScreen(prefix) {
       state.categoryDrafts.delete(row.id);
       const [employees, categories] = await Promise.all([api(employeesUrl()), api('/api/gdlr-categories')]);
       acceptEmployees(employees); state.categories = categories.rows;
-      updateFilters(); filter(); status('Категория сохранена: ' + row.full_name);
+      updateFilters(); render(); status('Категория сохранена: ' + row.full_name);
     } catch (failure) { error(failure.message + ' Отмените выбор и обновите список для проверки сохранения.'); }
     finally { state.busy = false; $('view-employees').inert = false; }
   }
@@ -192,7 +186,8 @@ function createEmployeeScreen(prefix) {
       if (Array.isArray(saved)) visibleColumns = new Set(['full_name', ...saved.filter(key => employeeColumns.some(column => column[0] === key))]);
     } catch (_) { /* Column preferences are optional when browser storage is unavailable. */ }
     const checks = el('div', {className: 'employee-columns-options'});
-    const menu = el('details', {className: 'employee-columns-menu'}, el('summary', {}, 'Столбцы'), checks);
+    const menuButton = el('button', {type: 'button', className: 'employee-columns-menu table-pagination-columns', title: 'Настроить столбцы'}, 'Столбцы');
+    const menuPanel = el('div', {className: 'employee-columns-panel'}, checks);
     const paintChecks = () => checks.replaceChildren(...employeeColumns.map(([key, label]) => {
       const check = el('input', {type: 'checkbox', checked: visibleColumns.has(key), disabled: key === 'full_name'});
       check.addEventListener('change', () => {
@@ -201,7 +196,7 @@ function createEmployeeScreen(prefix) {
         try { localStorage.setItem(columnsKey, JSON.stringify([...visibleColumns])); } catch (_) { /* Keep preferences for this session. */ }
         render();
       });
-      return el('label', {className: 'check-label'}, check, label);
+      return el('label', {className: 'check-label column-menu-item'}, check, label);
     }), el('button', {type: 'button', className: 'text-button', onclick: () => {
       if (!canLeave()) return;
       visibleColumns = new Set(defaultColumns);
@@ -209,7 +204,13 @@ function createEmployeeScreen(prefix) {
       paintChecks(); render();
     }}, 'Вернуть исходный вид'));
     paintChecks();
-    $('employees-search').closest('.employees-toolbar').append(menu);
+    pager.setActions(menuButton);
+    window.ColumnMenu.attach({
+      button: menuButton,
+      panel: menuPanel,
+      label: 'Настройка столбцов',
+      owner: $('view-employees')
+    });
   }
   function gridColumns() { return employeeColumns.filter(column => visibleColumns.has(column[0])); }
   function employeeSelect(row, kind) {
@@ -255,7 +256,7 @@ function createEmployeeScreen(prefix) {
   }
   function renderEmployeeRow(row) {
     const values = {...row, pps: employeePpsSelect(row), crew_name: employeeSelect(row, 'crew'), category: employeeSelect(row, 'category'),
-      full_name: el('strong', {}, row.full_name), active: row.active ? 'Действующий' : 'Отключён',
+      full_name: document.getElementById('view-workforce') ? el('button', {type:'button',className:'wf-person-link',onclick:()=>window.openWorkforcePerson(row.id,state.reportDate)}, row.full_name) : el('strong', {}, row.full_name), active: row.active ? 'Действующий' : 'Отключён',
       removal_date: row.removal?.effective_date?.split('-').reverse().join('.'), removal_reason: row.removal?.reason,
       actions: !readOnly && row.can_remove ? el('button', {type: 'button', className: 'text-button employee-grid-remove',
         disabled: !!state.needsRefresh, 'aria-label': 'Удалить сотрудника: ' + row.full_name, onclick: () => openRemoval(row)}, 'Удалить')
@@ -279,7 +280,7 @@ function createEmployeeScreen(prefix) {
     try {
       const [employees, crews, categories] = await Promise.all([api(employeesUrl()), api('/api/crews'), api('/api/gdlr-categories')]);
       acceptEmployees(employees); state.crews = crews.rows; state.categories = categories.rows; state.needsRefresh = false;
-      updateFilters(); filter(false);
+      updateFilters(); render();
       viewport.scrollTop = position.top; viewport.scrollLeft = position.left;
       if (failureMessage) { error(failureMessage); status('Показаны актуальные данные с сервера.'); }
       else status(({crew: 'Бригада сохранена: ', category: 'Категория сохранена: ', pps: 'ППС сохранена: ', department: 'Участок сохранён: '}[kind]) + row.full_name);
@@ -291,16 +292,16 @@ function createEmployeeScreen(prefix) {
   }
 
   function render() {
-    state.page = Math.min(state.page, Math.max(0, Math.ceil(state.filtered.length / size) - 1));
+    state.page = Math.min(state.page, Math.max(0, Math.ceil((state.total || 0) / size) - 1));
     renderStats();
     const columns = gridColumns();
-    const body = el('tbody', {}, ...state.filtered.slice(state.page * size, (state.page + 1) * size).map(renderEmployeeRow));
+    const body = el('tbody', {}, ...state.filtered.map(renderEmployeeRow));
     const totalWidth = columns.reduce((sum, column) => sum + column[2], 0);
     $('employees-list').replaceChildren(state.filtered.length ? el('table', {className: 'employees-table employees-grid'},
       el('colgroup', {}, ...columns.map(column => el('col', {style: 'width:' + column[2] / totalWidth * 100 + '%'}))),
       el('thead', {}, el('tr', {}, ...columns.map(column => el('th', {scope: 'col'}, column[1])))), body)
       : el('div', {className: 'empty-state'}, 'Сотрудники не найдены.'));
-    pager.update(state.filtered.length, state.page, size);
+    pager.update(state.total || 0, state.page, size);
   }
   async function saveCrew(row) {
     if (state.busy || !state.drafts.has(row.id)) return;
@@ -308,7 +309,7 @@ function createEmployeeScreen(prefix) {
     try {
       await api('/api/employees/' + row.id + '/crew', {method: 'PUT', body: JSON.stringify({crew_id: state.drafts.get(row.id), expected_token: row.membership_token})});
       const data = await api(employeesUrl()); acceptEmployees(data);
-      state.drafts.delete(row.id); updateFilters(); filter(); status('Сохранено: ' + row.full_name);
+      state.drafts.delete(row.id); updateFilters(); render(); status('Сохранено: ' + row.full_name);
     } catch (failure) { error(failure.message + ' Если связь прервалась, отмените выбор и обновите список для проверки сохранения.'); }
     finally { state.busy = false; $('view-employees').inert = false; }
   }
@@ -398,17 +399,21 @@ function createEmployeeScreen(prefix) {
     const node = $(id); let previous = node.type === 'checkbox' ? node.checked : node.value;
     node.addEventListener(id === 'employees-search' ? 'input' : 'change', () => {
       if (!canLeave()) { if (node.type === 'checkbox') node.checked = previous; else node.value = previous; return; }
-      previous = node.type === 'checkbox' ? node.checked : node.value; filter();
+      previous = node.type === 'checkbox' ? node.checked : node.value;
+      clearTimeout(searchTimer);
+      // Invalidate in-flight results as soon as the query changes, before debounce.
+      state.request++; state.controller?.abort(); $('employees-list').inert = true;
+      if (id === 'employees-search') searchTimer = setTimeout(() => filter(), 300);
+      else filter();
     });
   }
   if (!isOutstaff && $('employees-create')) $('employees-create').addEventListener('click', () => {
     if (!canLeave()) return;
     state.creating = true;
     window.employeeCreator.open({onClosed: () => { state.creating = false; }, onSaved: async result => {
-      await load();
-      MF.set($('employees-crew-filter'), selected); MF.set($('employees-category'), category); MF.set($('employees-active'), '1');
+      MF.set($('employees-crew-filter'), ''); MF.set($('employees-category'), ''); MF.set($('employees-active'), '1');
       $('employees-regex').checked = false; $('employees-search').value = result.personnel_no;
-      filter();
+      await filter();
       status('Сотрудник добавлен: ' + result.full_name + ' · ' + result.personnel_no + '.');
     }});
   });

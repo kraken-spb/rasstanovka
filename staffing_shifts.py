@@ -110,7 +110,7 @@ def validate_group_snapshot(db, ids, payload):
         abort(409, description='Состав группы или ответственные изменились. Обновите таблицу.')
 
 
-def day_states(db, day, ids, records=None):
+def day_states(db, day, ids, records=None, *, summary=False):
     if not ids:
         return {}
     from query_helpers import dated_records
@@ -129,9 +129,9 @@ def day_states(db, day, ids, records=None):
             shift = schedule['shift'] if schedule else '1 смена'
         else:
             shift = None
-        token = hashlib.sha256(json.dumps([schedule, records], sort_keys=True).encode()).hexdigest()
-        result[worker_id] = {'employee_shift': shift, 'day_token': token, 'shift_conflict': len(records) > 1,
-                             'assignments': records}
+        result[worker_id] = {'employee_shift': shift, 'shift_conflict': len(records) > 1, 'assignments': records}
+        if not summary:
+            result[worker_id]['day_token'] = hashlib.sha256(json.dumps([schedule, records], sort_keys=True).encode()).hexdigest()
     return result
 
 

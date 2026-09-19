@@ -91,11 +91,11 @@ class StaffingExportTest(unittest.TestCase):
         self.assertEqual(response.headers['X-Export-Count'], '4')
         book = self.workbook(response)
         self.assertEqual(book.sheetnames, ['Список сотрудников', 'Сводная таблица'])
-        expected = ['№\nп/п','Группа подобъектов','Подобъект','Компания подрядчик','Организация-работодатель','ФИО работника','Таб. № с префиксом','Должность по штатному расписанию','Профессия ГСП','Категория ГДЛР','ФИО линейного ИТР','ФИО бригадира','Смена','СМУ','Выполняемые операции']
+        expected = ['№\nп/п','Группа подобъектов','Подобъект','Компания подрядчик','Организация-работодатель','ФИО работника','Таб. № с префиксом','Должность по штатному расписанию','Профессия ГСП','Категория ГДЛР','ФИО линейного ИТР','ФИО бригадира','Смена','СМУ','Выполняемые операции','Вид работ']
         self.assertEqual([cell.value for cell in book['Список сотрудников'][1]], expected)
         rows = list(book['Список сотрудников'].iter_rows(min_row=2, values_only=False))
         visible = next(row for row in rows if row[5].value == '=Формула')
-        self.assertEqual([cell.value for cell in visible], [1, 'Группа А', 'Подобъект 1', 'Подрядчик', '=Работодатель', '=Формула', '000123', 'Должность', 'ГСП', 'Ручная ГДЛР', 'ИТР вручную', 'Бригадир вручную', 'День', None, None])
+        self.assertEqual([cell.value for cell in visible], [1, 'Группа А', 'Подобъект 1', 'Подрядчик', '=Работодатель', '=Формула', '000123', 'Должность', 'ГСП', 'Ручная ГДЛР', 'ИТР вручную', 'Бригадир вручную', 'День', None, None, None])
         self.assertEqual(visible[5].data_type, 's')
         self.assertEqual(visible[4].data_type, 's')
         self.assertEqual(visible[6].number_format, '@')
@@ -104,7 +104,7 @@ class StaffingExportTest(unittest.TestCase):
         night = next(row for row in rows if row[5].value == 'Ночной сотрудник')
         self.assertEqual(night[12].value, 'Ночь')
         self.assertEqual(book['Список сотрудников'].freeze_panes, 'A2')
-        self.assertEqual(book['Список сотрудников'].tables['StaffingSource'].autoFilter.ref, 'A1:O5')
+        self.assertEqual(book['Список сотрудников'].tables['StaffingSource'].autoFilter.ref, 'A1:P5')
 
     def test_department_and_operations_follow_assignment_date_and_shift(self):
         department = 'Строительно-монтажный участок № 15.2'
@@ -119,7 +119,7 @@ class StaffingExportTest(unittest.TestCase):
                 (self.visible_worker, '2026-09-12', '1 смена', 'Вчерашние операции'),
                 (self.legacy_worker, '2026-09-13', '2 смена', 'Ночные операции'),
             ]:
-                db.execute('INSERT INTO staffing_performed_work VALUES (?,?,?,?,?,?,?)',
+                db.execute('INSERT INTO staffing_performed_work(work_date,worker_id,shift,description,edit_token,updated_by,updated_at) VALUES (?,?,?,?,?,?,?)',
                            (day, worker, shift, description, 'work-token', self.admin_id, 'now'))
             db.commit()
         response = self.export(self.admin)
@@ -127,7 +127,7 @@ class StaffingExportTest(unittest.TestCase):
         sheet = self.workbook(response)['Список сотрудников']
         rows = {(r[6].value, r[12].value): r for r in sheet.iter_rows(min_row=2)}
         day = rows[('000123', 'День')]
-        self.assertEqual([c.value for c in day[13:]], [department, operations])
+        self.assertEqual([c.value for c in day[13:15]], [department, operations])
         self.assertEqual(day[14].data_type, 's')
         self.assertTrue(day[14].alignment.wrap_text)
         self.assertGreaterEqual(sheet.row_dimensions[day[0].row].height, 48)

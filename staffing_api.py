@@ -94,6 +94,19 @@ def register_staffing_routes(app, get_db, roles_required, utc_now):
         shift = request.args.get("shift")
         if shift not in {"1 смена", "2 смена", "all"}:
             abort(400, description="Выберите смену.")
+        worker_ids = None
+        if 'worker_ids' in request.args:
+            values = request.args['worker_ids'].split(',')
+            if (not values or len(values) > 100 or any(not value.isascii() or not value.isdecimal()
+                    or len(value) > 19 or (len(value) == 19 and value > '9223372036854775807')
+                    for value in values)):
+                abort(400, description='Укажите до 100 уникальных номеров сотрудников.')
+            worker_ids = [int(value) for value in values]
+            if not worker_ids or min(worker_ids) <= 0 or len(set(worker_ids)) != len(worker_ids):
+                abort(400, description='Укажите до 100 уникальных номеров сотрудников.')
+        if worker_ids is not None and request.args.get('view') == 'summary':
+            abort(400, description='Выбор сотрудников доступен только для полной таблицы.')
+        summary_view = request.args.get('view') == 'summary'
         db = get_db()
         if getattr(db, 'dialect', None) == 'postgres' and not db.in_transaction:
             db.execute('BEGIN')
@@ -140,7 +153,7 @@ def register_staffing_routes(app, get_db, roles_required, utc_now):
               AND NOT EXISTS (SELECT 1 FROM manual_employees me WHERE me.worker_id=er.worker_id)) sm JOIN workers w ON w.id=sm.worker_id'''
         if getattr(db, 'dialect', None) == 'postgres':
             from staffing_import import postgres_member_source_sql
-            source = postgres_member_source_sql()
+            source = postgres_member_source_sql(whole=worker_ids is None)
         assignment_join = """a.worker_id=w.id AND a.work_date=?
             AND ((?='all' AND a.id=(SELECT MIN(aa.id) FROM assignments aa WHERE aa.worker_id=w.id AND aa.work_date=a.work_date))
                 OR (CASE WHEN a.shift='Ночная смена' THEN '2 смена' ELSE a.shift END)=?)"""
@@ -177,6 +190,9 @@ def register_staffing_routes(app, get_db, roles_required, utc_now):
             ids = list(change['workers'])
             where = 'w.id IN (' + ','.join('?' for _ in ids) + ')' if ids else '0'
             params = [batch['id'] if batch else None, day, shift, shift, *ids]
+        if worker_ids is not None:
+            where += ' AND w.id IN (' + ','.join('?' for _ in worker_ids) + ')'
+            params.extend(worker_ids)
         access_clause, access_params = ('1', []) if change is not None else worker_clause(db)
         clause = ' AND (' + access_clause + ')'
         params.extend(access_params)
@@ -221,7 +237,7 @@ def register_staffing_routes(app, get_db, roles_required, utc_now):
         ids = sorted({row['id'] for row in rows})
         records = {table: dated_records(db, table, day, ids) for table in
                    ('assignments', 'staffing_shifts', 'staffing_attendance', 'staffing_performed_work')}
-        daily = day_states(db, day, ids, records) if shift == 'all' else {}
+        daily = day_states(db, day, ids, records, summary=summary_view) if shift == 'all' else {}
         authors = assignment_authors(db, day, rows)
         attendance = attendance_states(db, day, ids, records)
         freshness = freshness_states(db, day, ids, records)
@@ -244,15 +260,19 @@ def register_staffing_routes(app, get_db, roles_required, utc_now):
         editable_crews = allowed_crews(db, {row['crew_id'] for row in rows}, whole=True)
         actor_legacy_foreman = legacy_foreman(db)
         from workforce_core import departure_warnings
-        travel_warnings = departure_warnings(db, day, ids)
+        travel_warnings = {} if summary_view else departure_warnings(db, day, ids)
         result, crews = [], {}
+        summary_fields = ('id', 'crew_id', 'department', 'employer', 'contractor', 'category', 'pps',
+                          'assignment_id', 'full_name', 'personnel_no', 'profession', 'crew_name',
+                          'object_name', 'subobject_name')
         for row in rows:
-            item = dict(row)
-            item['departure_warning'] = travel_warnings.get(row['id'])
-            for field in ('linear_itr', 'brigadier', 'crew_linear_itr', 'crew_brigadier'):
-                item[field + '_person_id'] = responsible_ref(row, field)
-            from employer_api import employer_token
-            item['employer_token'] = employer_token(item['employer'], item.pop('employer_edit_token'))
+            item = {key: row[key] for key in summary_fields} if summary_view else dict(row)
+            if not summary_view:
+                item['departure_warning'] = travel_warnings.get(row['id'])
+                for field in ('linear_itr', 'brigadier', 'crew_linear_itr', 'crew_brigadier'):
+                    item[field + '_person_id'] = responsible_ref(row, field)
+                from employer_api import employer_token
+                item['employer_token'] = employer_token(item['employer'], item.pop('employer_edit_token'))
             item.update(attendance[row['id']])
             item['freshness'] = freshness[row['id']]
             item.update(groups[row['id']])
@@ -268,7 +288,7 @@ def register_staffing_routes(app, get_db, roles_required, utc_now):
                 item['report_change'] = change['workers'][row['id']]
                 item['locked'] = item['locked'] or row['id'] not in change_editable
             item.update(works.get((row['id'], item.get('employee_shift') if shift == 'all' else canonical_shift(shift)),
-                                  {'performed_work': '', 'performed_work_token': None}))
+                                  {'performed_work': '', 'performed_work_token': None, 'work_type_id':None, 'work_type':''}))
             item["brigadier_name"] = row["brigadier_override"] if row["brigadier_override"] is not None else row["brigadier"] or ""
             item["linear_itr_name"] = row["linear_itr_override"] if row["linear_itr_override"] is not None else row["linear_itr"] or ""
             result.append(item)
@@ -276,7 +296,7 @@ def register_staffing_routes(app, get_db, roles_required, utc_now):
             if key not in crews:
                 crews[key] = {"id": key, "name": row["crew_name"] or "Вне состава бригады", "count": 0,
                               "linear_itr": row["linear_itr"] or "", "brigadier": row["brigadier"] or "",
-                              "linear_itr_person_id": item['crew_linear_itr_person_id'], "brigadier_person_id": item['crew_brigadier_person_id'],
+                              "linear_itr_person_id": responsible_ref(row, 'crew_linear_itr'), "brigadier_person_id": responsible_ref(row, 'crew_brigadier'),
                               "details_token": row["details_token"], "assigned": 0,
                               "can_edit_whole": bool(g.user['role'] not in ('hr_viewer', 'rotation', 'recruitment') and key and key in editable_crews)}
             crews[key]["count"] += 1
@@ -303,12 +323,12 @@ def register_staffing_routes(app, get_db, roles_required, utc_now):
             info = {'id': None, 'filename': 'Единый учёт персонала', 'sheet': ''}
         if batch and g.user["role"] in ('admin', 'super_admin'):
             info["summary"] = json.loads(batch["summary_json"])
-        if request.args.get("view") == "summary":
+        if summary_view:
             # Keep global filtering available without loading editable worker details.
             fields = ("full_name", "personnel_no", "profession", "category", "department", "employer", "pps",
                       "crew_name", "object_name", "subobject_name", "linear_itr_name", "brigadier_name")
             index = [{**{key: row.get(key) for key in ("id", "crew_id", "number", "department", "employer", "contractor", "category", "pps",
-                       "assignment_id", "assignment_author", "attendance_status", "attendance_token", "employee_shift", "itr_group_key", "itr_group_label", "group_token", "freshness", "report_change", "locked")},
+                       "assignment_id", "assignment_author", "attendance_status", "attendance_token", "employee_shift", "itr_group_key", "itr_group_label", "group_token", "freshness", "report_change", "locked", "performed_work", "work_type_id", "work_type")},
                       "search_fields": [row.get(key) or "" for key in fields]} for row in result]
             return jsonify({"import": info, "crews": ordered, "rows": [], "index": index, **extra})
         return jsonify({"import": info, "crews": ordered, "rows": result, **extra})

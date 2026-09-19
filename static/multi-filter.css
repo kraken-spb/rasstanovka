@@ -1,12 +1,28 @@
 .multi-filter-native { display: none !important; }
 .multi-filter-button { width: 100%; min-width: 0; min-height: 28px; padding: .2rem .4rem; border: 1px solid var(--line); border-radius: 5px; background: white; font: inherit; text-align: left; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.multi-filter-button::after { content: ' ▾'; }
-.multi-filter-dialog { position: fixed; inset: auto; margin: 0; box-sizing: border-box; max-width: calc(100vw - 24px); padding: .65rem; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); background: white; box-shadow: 0 6px 24px #102c3b26; overflow: auto; }
-.multi-filter-dialog > input, .multi-filter-dialog > p { width: 100%; margin: 0 0 .5rem; }
-.multi-filter-dialog > p { font-size: .8rem; color: var(--muted); }
-.multi-filter-options { max-height: 280px; overflow: auto; }
-.multi-filter-options label { display: flex; align-items: center; gap: .6rem; min-height: 44px; padding: .3rem; overflow-wrap: anywhere; }
+.multi-filter-button { position: relative; padding-right: 24px; }
+.multi-filter-button::after { content: '▾'; position: absolute; right: 8px; color: var(--muted); }
+.multi-filter-button[aria-expanded="true"] { border-color: var(--accent, #176b55); background: #f3f8f5; }
+.multi-filter-dialog { position: fixed; inset: auto; margin: 0; box-sizing: border-box; max-width: calc(100vw - 24px); padding: 8px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); background: white; box-shadow: 0 8px 28px #102c3b26; overflow: auto; font-size: 12px; line-height: 1.35; }
+.multi-filter-dialog:popover-open { display: flex; flex-direction: column; }
+.multi-filter-dialog > input[type="search"] { flex: none; box-sizing: border-box; width: 100%; min-width: 0; min-height: 32px; height: 32px; margin: 0 0 6px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 5px; font: inherit; background: #f8faf9; }
+.multi-filter-dialog > input[type="search"]:focus { outline: 2px solid var(--accent, #176b55); outline-offset: -1px; box-shadow: none; }
+.multi-filter-dialog > p { flex: none; width: 100%; margin: 0 0 6px; font-size: 11px; color: var(--muted); }
+.multi-filter-options { flex: 0 1 auto; min-height: 32px; max-height: 280px; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.multi-filter-options label { display: flex; align-items: flex-start; gap: 8px; box-sizing: border-box; min-height: 32px; margin: 0; padding: 7px 6px; border-radius: 4px; font-size: 12px; font-weight: 400; line-height: 18px; cursor: pointer; overflow-wrap: anywhere; }
+.multi-filter-options label:hover { background: #f2f5f3; }
+.multi-filter-options label:has(:checked) { background: #eaf4ef; }
+.multi-filter-options label:has(input:focus-visible) { outline: 2px solid var(--accent, #176b55); outline-offset: -2px; }
+.multi-filter-options input[type="checkbox"] { flex: 0 0 16px; width: 16px; height: 16px; min-height: 0; margin: 1px 0 0; padding: 0; accent-color: var(--accent, #176b55); }
 .multi-filter-options label span { min-width: 0; }
-.multi-filter-actions { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .5rem; }
-.multi-filter-actions button { flex: 1 1 110px; white-space: normal; min-height: 36px; padding: .35rem .5rem; font-size: .8rem; }
-@media (max-width: 900px) { .multi-filter-button { min-height: 44px; } }
+.multi-filter-options > p { margin: 0; padding: 12px 6px; color: var(--muted); }
+.multi-filter-actions { flex: none; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
+.multi-filter-actions button { justify-content: center; box-sizing: border-box; width: 100%; min-width: 0; min-height: 32px; margin: 0; padding: 5px 6px; border-radius: 5px; font-size: 11px; line-height: 16px; white-space: normal; }
+.multi-filter-actions button.ui-action::before { width: 13px; height: 13px; flex: 0 0 13px; }
+.multi-filter-actions > :first-child:nth-last-child(5) { grid-column: 1 / -1; }
+@media (max-width: 900px), (pointer: coarse) {
+  .multi-filter-button { min-height: 44px; }
+  .multi-filter-dialog > input[type="search"] { min-height: 40px; height: 40px; font-size: 14px; }
+  .multi-filter-options label { min-height: 40px; padding-top: 11px; padding-bottom: 11px; }
+  .multi-filter-actions button { min-height: 40px; }
+}

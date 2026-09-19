@@ -27,7 +27,7 @@
     if (!response.ok) throw new Error(result.error || 'Не удалось сохранить профиль.');
     return result;
   }
-  function close() { if (!saving) dialog?.close(); }
+  function close() { if (!saving && !window.appTheme.busy()) dialog?.close(); }
   async function openProfile() {
     if (dialog) { dialog.focus(); return; }
     const content = el('div', {className: 'profile-content'}, el('p', {}, 'Загрузка профиля…'));
@@ -35,7 +35,7 @@
       el('header', {className: 'profile-heading'}, el('h2', {id: 'profile-title'}, 'Мой профиль'),
         el('button', {type: 'button', className: 'secondary-button', onclick: close}, 'Закрыть')), content);
     const opened = dialog;
-    dialog.addEventListener('cancel', event => { if (saving) event.preventDefault(); });
+    dialog.addEventListener('cancel', event => { if (saving || window.appTheme.busy()) event.preventDefault(); });
     dialog.addEventListener('close', () => { opened.remove(); if (dialog === opened) dialog = null; trigger.focus(); });
     document.body.append(dialog); dialog.showModal();
     try {
@@ -108,7 +108,7 @@
       } catch (error) { message.textContent = error.message; }
       finally { saving = false; form.inert = false; }
     });
-    content.replaceChildren(form);
+    content.replaceChildren(window.appTheme.createControl(), form);
   }
   function run(action) {
     if (readOnly && blockedActions.has(action)) return false;

@@ -9,7 +9,7 @@
   const content = document.createElement('div');
   content.className = 'staffing-toolbar-actions-content';
   menu.append(summary, content);
-  for (const id of ['collapse', 'expand', 'undo', 'redo', 'transfer-selected', 'transfer-tomorrow', 'category-selected', 'employer-selected', 'work-selected', 'clear-selected', 'columns-toggle']) {
+  for (const id of ['collapse', 'expand', 'undo', 'redo', 'transfer-selected', 'transfer-tomorrow', 'category-selected', 'employer-selected', 'work-selected', 'clear-selected']) {
     const button = document.getElementById('staffing-' + id);
     if (button) content.append(button);
   }

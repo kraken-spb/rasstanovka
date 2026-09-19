@@ -127,6 +127,14 @@ class EmployerTest(unittest.TestCase):
             db.commit()
         self.assertEqual(self.replay('redo').status_code, 409)
 
+    def test_employer_options_are_authenticated_and_never_cached_publicly(self):
+        response = self.client.get('/api/staffing/employers')
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('no-store', response.headers['Cache-Control'])
+        self.assertTrue(all(set(row) == {'name'} and row['name'].strip() for row in response.json['rows']))
+        self.assertEqual(len(response.json['rows']), len({row['name'] for row in response.json['rows']}))
+        self.assertIn(self.module.app.test_client().get('/api/staffing/employers').status_code, (302, 401))
+
     def test_foreman_own_crew_and_inactive_worker(self):
         row = next(r for r in self.rows() if r['personnel_no'] == '70001')
         with self.module.app.app_context():

@@ -3,7 +3,21 @@
   const root = document.querySelector('.app-shell'), $ = s => document.querySelector(s);
   if (!root || !$('#view-workforce')) return;
   const MF = window.MultiFilter;
-  const state = {reference: null, offset: 0, limit: 50, total: 0, request: 0, cardRequest: 0, card: null, tab: 'profile', busy: false, dirty: false, section:'', queue:'', view:'board', listLoaded: false, returnScroll: 0, returnFocus: null};
+  const state = {pps: '', reference: null, offset: 0, limit: 50, total: 0, request: 0, cardRequest: 0, card: null, tab: 'profile', busy: false, dirty: false, section:'', queue:'', view:'table', listLoaded: false, selected: new Map(), tableRows: [], tableQuery: null, returnScroll: 0, returnFocus: null};
+  const columnsButton = $('#wf-columns-toggle');
+  const pager = window.TablePagination.mount($('#wf-table-region'), 'Учёт персонала', async (page, size) => {
+    if (state.busy) return false;
+    state.limit = size; state.offset = page * size;
+    await load(); $('#wf-table-region').scrollTop = 0;
+  }, {top: false, container: $('#wf-table-pagination')});
+  const sorting=window.TableSort.mount({key:()=> (state.section || 'workforce')+'Sort',
+    fields:()=>Object.fromEntries([...document.querySelectorAll('#wf-table-region thead tr:first-child [data-column]')]
+      .filter(h=>h.dataset.column!=='number' && (!['foreman','viewer'].includes(root.dataset.role)||!['phone','email','origin_city'].includes(h.dataset.column)))
+      .map(h=>[h.dataset.column,h.textContent.trim()])),
+    canApply:()=>!state.busy && window.workforceScreen.canLeave(),
+    apply:async()=>{state.offset=0;await load();$('#wf-table-region').scrollTop=0;}});
+  pager.setActions(sorting.button,columnsButton);
+  pager.update(0, 0, state.limit);
   const E = (tag, attrs = {}, ...children) => {
     const node = document.createElement(tag);
     for (const [key, value] of Object.entries(attrs)) {
@@ -16,14 +30,128 @@
     return node;
   };
   async function api(path, options = {}) {
-    const response = await fetch('/api/workforce/' + path, {...options, cache: 'no-store',
+    const response = await fetch('/api/workforce/' + path, {...options, cache: path === 'reference' ? 'no-cache' : 'no-store',
       headers: {'Content-Type': 'application/json', 'X-CSRF-Token': root.dataset.csrf}});
     return window.readApiResponse(response, 'Не удалось выполнить запрос.');
   }
   const displayDate = value => value ? new Date(value + 'T12:00:00').toLocaleDateString('ru-RU') : '—';
+  function categoryAssignment(row) {
+    const assignment = row.category_assignment;
+    if (!assignment) return null;
+    const value = String(assignment.assigned_at || '').trim();
+    let label = 'Дата не указана';
+    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) label = displayDate(value);
+    else if (/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(value)) {
+      let iso = value.replace(' ', 'T').replace(/([+-]\d{2})$/, '$1:00');
+      if (!/(Z|[+-]\d{2}:\d{2})$/i.test(iso)) iso += 'Z';
+      const date = new Date(iso);
+      if (!Number.isNaN(date.getTime())) label = date.toLocaleDateString('ru-RU', {timeZone:'Europe/Moscow'});
+    }
+    return E('small', {className:'wf-category-assignment'},
+      E('span', {title:'Ответственный за назначение категории'}, assignment.assigned_by || 'ФИО не указано'),
+      E('span', {className:'wf-category-assignment-date',title:'Дата назначения категории (Москва)'}, label));
+  }
   const label = value => state.reference?.catalog.find(row => row.code === value)?.label || value || '—';
-  const board = window.createWorkforceBoard({container: $('#wf-board-region'), api, E, displayDate, openCard, reload: load});
-  MF.enable($('#wf-stage'));
+  const bulkNotice = E('p', {className: 'wf-bulk-result', role: 'status', hidden: true});
+  $('#wf-error').after(bulkNotice);
+  const bulk = window.createWorkforceBulk({api, E, reload: load, announce: message => {bulkNotice.textContent = message;bulkNotice.hidden = false;}});
+  const accommodationRequest = window.createAccommodationRequest({api, E});
+  const board = window.createWorkforceBoard({container: $('#wf-board-region'), api, E, displayDate, openCard, reload: load, bulkEdit: rows => bulk.open(rows)});
+  const tableEdit = window.createWorkforceTableEdit({api, E, board, reload: load, canEdit: () => !state.busy && !bulk.busy(),
+    announce: message => {bulkNotice.textContent = message;bulkNotice.hidden = false;}});
+  const operations = window.createWorkforceOperations({container: $('#wf-operations'), api, E, displayDate, openCard});
+  const createPerson = window.createWorkforcePerson({api, E, onCreated: async person => {state.reference=null;state.listLoaded=false;await openCard(person.id);}});
+  $('#wf-create-open').addEventListener('click', () => {if(board.canLeave()) createPerson.open();});
+  const dateFields = [['stage_date','Начало статуса'],['arrival_date','Дата заезда'],
+    ['forecast_departure_date','Прогноз окончания вахты'],['planned_date','Плановая дата поездки'],
+    ['leave_start_date','Начало МО'],['leave_end_date','Окончание МО'],['next_arrival_date','Следующий заезд']];
+  const dateFilters = window.DateFilter.group({fields:dateFields,canApply:()=>board.canLeave(),
+    onChange:()=>{state.offset=0;filterLabel();load();}});
+  $('#wf-date-filters').append(dateFilters.element);
+  // Keep hidden cells as lightweight table slots; build their contents on demand.
+  const tableCells = new WeakMap();
+  function syncTableCell(cell) {
+    const entry = tableCells.get(cell);
+    if (!entry) return;
+    if (window.workforceColumns.isHidden(cell.dataset.column)) {
+      // Preserve a draft in an open editor when its column is temporarily hidden.
+      if (entry.rendered && !tableEdit.editing(cell)) {cell.replaceChildren();entry.rendered=false;}
+    } else if (!entry.rendered) {
+      cell.append(...entry.content());
+      tableEdit.decorate(cell, entry.row, entry.header, entry.query, entry.reference);
+      entry.rendered=true;
+    }
+  }
+  window.addEventListener('workforce:columnschange',()=>{
+    document.querySelectorAll('#wf-rows td[data-column]').forEach(syncTableCell);
+  });
+  const identityFilters = ['full_name', 'personnel_no'];
+  const identityOptions = new Map(identityFilters.map(key => [key, []]));
+  const employmentQuickFilters = {outstaff:['employment.external', 'employment.internal'], rental:['employment.rental'], rso:['employment.rso']};
+  const employmentQuickCodes = Object.values(employmentQuickFilters).flat();
+  const multiFilters = [...identityFilters, 'department', 'division', 'stage', 'employment', 'accommodation', 'employer', 'category'];
+  multiFilters.forEach(id => MF.enable($('#wf-' + id), '', identityFilters.includes(id) ? {
+    renderLimit: 200, placeholder: id === 'full_name' ? 'Найти ФИО' : 'Найти табельный номер',
+    beforeOpen: () => loadIdentityOptions(id),
+    options: () => identityOptions.get(id),
+  } : {}));
+  async function loadIdentityOptions(key) {
+    const query = listQuery(); query.delete(key); query.delete('offset'); query.delete('limit');
+    query.set('identity_options', key);
+    const generation = state.request;
+    try {
+      const data = await api('people?' + query);
+      if (generation !== state.request) return false;
+      const select = $('#wf-' + key), chosen = MF.values(MF.get(select));
+      const values = [...new Set([...(data.options || []), ...chosen])];
+      identityOptions.set(key, values.map(value => ({value, textContent: key === 'personnel_no' && value === '__none__' ? 'Без табельного номера' : value})));
+      MF.set(select, chosen);
+      return true;
+    } catch (err) { if (generation === state.request) error(err.message); return false; }
+  }
+  const selectable = row => !!row.active && (!!state.reference?.permissions?.profile || !!state.reference?.permissions?.accommodation_request || (!!state.reference?.permissions?.transition && !!row.stage_token && !!row.transition_targets?.length));
+  function syncTableSelection() {
+    const available = state.tableRows.filter(selectable);
+    const selected = [...state.selected.values()];
+    const all = available.length > 0 && available.every(row => state.selected.has(row.id));
+    for (const box of document.querySelectorAll('[data-wf-table-select-all]')) {
+      box.checked = all; box.indeterminate = selected.length > 0 && !all; box.disabled = !available.length;
+    }
+    for (const box of $('#wf-rows').querySelectorAll('[data-wf-table-select]')) {
+      const id = Number(box.dataset.wfTableSelect);
+      box.checked = state.selected.has(id);
+      box.disabled = !state.tableRows.some(row => row.id === id && selectable(row));
+      box.closest('tr').classList.toggle('wf-table-selected', box.checked);
+    }
+    $('#wf-table-selection').hidden = !selected.length || state.view !== 'table' || state.queue === 'operations' ||
+      !(state.reference?.permissions?.profile || state.reference?.permissions?.transition || state.reference?.permissions?.accommodation_request);
+    const accommodationOnly = !!state.reference?.permissions?.accommodation_request && !state.reference?.permissions?.profile && !state.reference?.permissions?.transition;
+    $('#wf-selected-count').textContent = selected.length ? accommodationOnly ? `Выбрано: ${selected.length}. Можно сформировать заявку на проживание.` : `Выбрано: ${selected.length}. Выберите новое значение под заголовком столбца` :
+      accommodationOnly ? 'Отметьте сотрудников для заявки на проживание' : 'Отметьте сотрудников, затем выберите новое значение под заголовком столбца';
+    $('#wf-selection-clear').disabled = !selected.length;
+    $('#wf-selection-clear').hidden = !selected.length;
+    const request = $('#wf-accommodation-request');
+    request.hidden = !state.reference?.permissions?.accommodation_request || state.view !== 'table' || state.queue === 'operations';
+    request.disabled = !selected.length;
+    request.title = selected.length ? `Заявка на хостел · Выбрано: ${selected.length}` : 'Заявка на хостел — выберите сотрудников';
+    tableEdit.sync(selected, state.tableQuery, state.reference, state.view === 'table' && state.queue !== 'operations');
+  }
+  function toggleTableRow(row, checked) {
+    if (!state.tableRows.some(item => item.id === row.id) || !selectable(row)) return;
+    if (checked && state.selected.size >= 100 && !state.selected.has(row.id)) {
+      error('За одно действие можно выбрать до 100 сотрудников.');
+    } else if (checked) state.selected.set(row.id, row);
+    else state.selected.delete(row.id);
+    syncTableSelection();
+  }
+  function tableSelectAll(event) {
+    state.selected.clear();
+    if (event.target.checked) state.tableRows.filter(selectable).slice(0, 100).forEach(row => state.selected.set(row.id, row));
+    syncTableSelection();
+  }
+  for (const box of document.querySelectorAll('[data-wf-table-select-all]')) box.addEventListener('change', tableSelectAll);
+  $('#wf-selection-clear').addEventListener('click', () => {state.selected.clear();syncTableSelection();});
+  $('#wf-accommodation-request').addEventListener('click', () => accommodationRequest.open([...state.selected.keys()], $('#wf-date').value));
   function error(message, card = false) {
     const node = $(card ? '#wf-card-error' : '#wf-error'); node.textContent = message || ''; node.hidden = !message;
   }
@@ -35,73 +163,137 @@
   async function reference() {
     if (state.reference) return;
     state.reference = await api('reference');
+    renderPpsFilters();
     selectOptions($('#wf-department'), state.reference.departments, 'name', 'name');
+    selectOptions($('#wf-division'), [{id:'__none__', label:'Не указано'}, ...(state.reference.divisions || []).map(d => ({...d,label:d.name+' · '+(d.pps_name || 'ППС не указан')}))], 'id', 'label');
     selectOptions($('#wf-stage'), [...state.reference.catalog.filter(r => r.kind === 'stage'),
       {code:'unconfirmed',label:'Без подтверждённого состояния',active:true}], 'code', 'label');
+    selectOptions($('#wf-employment'), [...state.reference.catalog.filter(r => r.kind === 'employment').map(row =>
+      employmentQuickCodes.includes(row.code) && (row.active === false || row.active === 0) ? {...row, active:true, label:row.label + ' · архив'} : row),
+      {code:'__none__',label:'Не уточнён',active:true}], 'code', 'label');
+    selectOptions($('#wf-accommodation'), [...state.reference.catalog.filter(r => r.kind === 'accommodation'),
+      {code:'__none__',label:'Не указано',active:true}], 'code', 'label');
     selectOptions($('#wf-employer'), state.reference.organizations, 'id', 'name');
     selectOptions($('#wf-category'), state.reference.categories, 'id', 'name');
   }
   function listQuery() {
-    const query = new URLSearchParams({date: $('#wf-date').value, q: $('#wf-search').value,
-      regex: $('#wf-regex').checked ? '1' : '0', department: $('#wf-department').value,
-      employer: $('#wf-employer').value, category: $('#wf-category').value,
-      conflicts: $('#wf-conflicts').checked ? '1' : '0', section:state.section, queue:state.queue === 'lifecycle' ? '' : state.queue, offset: state.offset, limit: state.limit});
-    MF.params(query, 'stage', MF.get($('#wf-stage')));
+    const query = new URLSearchParams({date: $('#wf-date').value, conflicts: $('#wf-conflicts').checked ? '1' : '0',
+      section:state.section, queue:state.queue === 'lifecycle' ? '' : state.queue, offset: state.offset, limit: state.limit});
+    if (state.summary) query.set('rotation_summary', state.summary);
+    if (state.pps) query.set('pps', state.pps);
+    multiFilters.forEach(id => MF.params(query, id, MF.get($('#wf-' + id))));
+    dateFilters.write(query);
+    query.set('sort',JSON.stringify(sorting.get()));
     return query;
   }
+  function syncDateOptions(data) {
+    dateFilters.controls.forEach((control,key)=>control.setOptions(data.date_options?.[key] || []));
+  }
   async function load() {
-    clearTimeout(timer);
+    if (tableEdit.busy()) return;
+    tableEdit.closeRow();
+    sorting.refresh();
     const seq = ++state.request;
+    bulkNotice.hidden = true;
+    state.selected.clear(); state.tableRows = []; syncTableSelection(); $('#wf-selection-notice').textContent = '';
     renderView();
-    error(''); $('#wf-count').textContent = 'Загрузка…';
+    error(''); $('#wf-count').textContent = 'Загрузка…'; $('#wf-list-status').hidden = false;
+    pager.setBusy(true);
     try {
-      await reference();
-      if (seq !== state.request) return;
       const query = listQuery();
+      query.set('date_options', '1');
+      if (state.view === 'board') query.delete('queue');
+      const endpoint = state.view === 'board' ? 'board?' : 'people?';
+      const [, initial] = await Promise.all([reference(), state.queue === 'operations' ? Promise.resolve(null) : api(endpoint + query)]);
+      if (seq !== state.request) return;
+      syncQuickFilters();
+      $('#wf-create-open').hidden = state.section !== 'recruitment' || !state.reference?.permissions?.create;
+      if (state.queue === 'operations') {
+        $('#wf-list-status').hidden = true;
+        await operations.load($('#wf-date').value, state.reference);
+        state.listLoaded = true;
+        return;
+      }
       if (state.view === 'board') {
-        const data = await board.load(query, state.reference);
+        const data = await board.load(query, state.reference, initial);
         if (seq !== state.request || !data) return;
+        syncDateOptions(data);
         state.total = data.totals.total;renderStats(data.totals);
         state.listLoaded = true;
         $('#wf-count').textContent = `${state.total} сотрудников по фильтру · в каждом этапе первые 20`;
         return;
       }
-      const data = await api('people?' + query);
+      const data = initial;
       if (seq !== state.request) return;
+      syncDateOptions(data);
       state.total = data.totals.total;
+      const pageInfo = window.TablePagination.windowFor(state.total, Math.floor(state.offset / state.limit), state.limit);
+      if (state.offset !== pageInfo.start) {state.offset = pageInfo.start; return load();}
       state.listLoaded = true;
       renderStats(data.totals);
       $('#wf-count').textContent = data.rows.length ? `${state.offset + 1}–${state.offset + data.rows.length} из ${state.total}` : 'Сотрудники не найдены';
-      $('#wf-prev').disabled = !state.offset; $('#wf-next').disabled = state.offset + state.limit >= state.total;
-      $('#wf-rows').replaceChildren(...data.rows.map(row => {
-        const cell = (name, ...children) => E('td', {'data-label': name}, ...children);
-        return E('tr', {}, cell('Сотрудник', E('button', {type: 'button', className: 'wf-person-link', onclick: () => openCard(row.id)}, row.full_name),
-          E('small', {}, row.personnel_no || 'Табельный номер не указан'), row.conflicts ? E('small', {}, `⚠ Замечаний: ${row.conflicts}`) : null),
-        cell('Проект / СМУ', row.project || 'Проект не уточнён', E('small', {}, row.department || '—')),
-        cell('Работодатель', row.employer || '—'), cell('Должность', row.profession || '—'), cell('Категория ГДЛР', row.category || 'ГДЛР не указан'),
-        cell('Статус сотрудника', row.employment || 'Не уточнён'), cell('Состояние', E('span', {className: 'wf-tag ' + (row.stage_code || '').split('.')[1]}, row.stage || 'Не подтверждено'),
-          row.effective_date ? E('small', {}, 'с ' + displayDate(row.effective_date)) : null),
-        cell('Заезд / прогноз выезда', displayDate(row.arrival_date), E('small', {}, displayDate(row.forecast_departure_date)),
-          row.movement ? E('small',{},`${row.movement.direction==='arrival'?'Заезд':'Выезд'}: ${displayDate(row.movement.planned_date)} · ${row.movement.basis||'основание не уточнено'}`) : null,
-          row.rotation ? E('small',{},`${row.rotation.schedule} · МО до ${displayDate(row.rotation.leave_end_date)} · следующий заезд ${displayDate(row.rotation.next_arrival_date)}`) : null));
+      pager.update(state.total, pageInfo.page, state.limit);
+      $('#wf-list-status').hidden = true;
+      state.tableRows = data.rows; state.tableQuery = query;
+      const tableHeaders = [...document.querySelectorAll('#wf-table-region thead tr:first-child [data-column]')];
+      $('#wf-rows').replaceChildren(...data.rows.map((row, index) => {
+        const number = state.offset + index + 1;
+        const content = {
+          number:()=>[String(number)],
+          name:()=>[E('button',{type:'button',className:'wf-person-link',onclick:()=>openCard(row.id)},row.full_name),
+            ...(row.conflicts ? [E('small',{},`⚠ Замечаний: ${row.conflicts}`)] : [])],
+          personnel:()=>[row.personnel_no || '—'], phone:()=>[row.phone || '—'], email:()=>[row.email || '—'],
+          citizenship:()=>[row.citizenship || '—'], origin_city:()=>[row.origin_city || '—'],
+          project:()=>[row.project || 'Проект не уточнён'], department:()=>[row.department || '—'],
+          division:()=>[E('span',{title:row.division_pps || 'ППС не указан'},row.division || '—')],
+          employer:()=>[row.employer || '—'], profession:()=>[row.profession || '—'],
+          category:()=>[row.category || 'ГДЛР не указан',...([categoryAssignment(row)].filter(Boolean))],
+          employment:()=>[row.employment || 'Не уточнён'],
+          stage:()=>[E('span',{className:'wf-tag '+(row.stage_code || '').split('.')[1]},row.stage || 'Не подтверждено')],
+          stage_date:()=>[displayDate(row.effective_date)], arrival_date:()=>[displayDate(row.arrival_date)],
+          forecast_departure_date:()=>[displayDate(row.forecast_departure_date)],
+          movement_direction:()=>[({arrival:'Заезд',departure:'Выезд'})[row.movement?.direction] || '—'],
+          planned_date:()=>[displayDate(row.movement?.planned_date)], movement_basis:()=>[row.movement?.basis || '—'],
+          rotation_schedule:()=>[row.rotation?.schedule || '—'], leave_start_date:()=>[displayDate(row.leave_start_date)],
+          leave_end_date:()=>[displayDate(row.rotation?.leave_end_date)], next_arrival_date:()=>[displayDate(row.rotation?.next_arrival_date)],
+          accommodation:()=>[row.accommodation || '—'],
+        };
+        const tr = E('tr',{},E('td',{className:'wf-select-cell','data-label':'Выбор'},E('input',{
+          type:'checkbox','data-wf-table-select':String(row.id),'aria-label':'Выбрать '+row.full_name,
+          disabled:!selectable(row),title:selectable(row)?'Выбрать сотрудника':'Нет доступа к редактированию',
+          onchange:event=>toggleTableRow(row,event.target.checked),
+        })));
+        for (const header of tableHeaders) {
+          const key=header.dataset.column;
+          const cell=E('td',{'data-column':key,'data-label':header.textContent.trim()});
+          tableCells.set(cell,{content:content[key],row,header,query,reference:state.reference,rendered:false});
+          syncTableCell(cell);tr.append(cell);
+        }
+        return tr;
       }));
-    } catch (err) { if (seq === state.request) { error(err.message); $('#wf-count').textContent = 'Не удалось загрузить список'; } }
+      syncTableSelection();
+    } catch (err) { if (seq === state.request) { error(err.message); $('#wf-count').textContent = 'Не удалось загрузить список'; $('#wf-list-status').hidden = false; } }
+    finally {if (seq === state.request) pager.setBusy(false);}
   }
   function renderStats(totals) {
-    $('#wf-stats').replaceChildren(...[['total','Всего по фильтру'],['onsite','Явка'],['pvp','В ПВП'],['inbound','Заезд'],['on_leave','Неявка'],['unconfirmed','Без подтверждения']].map(([key, text]) =>
+    $('#wf-stats').replaceChildren(...[['total','Всего по фильтру'],['onsite','Явка'],['pvp','В ПВП'],['inbound','Заезд'],['outbound','Выезд'],['on_leave','Неявка'],['unconfirmed','Без подтверждения']].map(([key, text]) =>
       E('div', {className: 'wf-stat'}, E('span', {}, text), E('strong', {}, String(totals[key])))));
   }
   function renderView() {
+    const isOperations = state.queue === 'operations';
     const isBoard = state.view === 'board';
     $('#wf-board-region').hidden = !isBoard;$('#wf-table-region').hidden = isBoard;$('#wf-table-pagination').hidden = isBoard;
+    syncTableSelection();
     for (const [id, active] of [['board', isBoard], ['table', !isBoard]]) {
       $('#wf-view-' + id).setAttribute('aria-pressed', String(active));
       $('#wf-view-' + id).classList.toggle('active', active);
     }
-    for (const button of $('#wf-workspaces').children) {
-      const active = button.dataset.workspace === state.queue;
-      button.classList.toggle('active', active);button.setAttribute('aria-pressed', String(active));
-    }
+    syncQuickFilters();
+    $('#wf-create-open').hidden = state.section !== 'recruitment' || !state.reference?.permissions?.create;
+    $('#wf-operations').hidden = !isOperations;
+    for (const id of ['wf-filter-panel','wf-stats']) $('#' + id).hidden = isOperations;
+    $('.wf-view-switch').hidden = isOperations;
+    if (isOperations) for (const id of ['wf-board-region','wf-table-region','wf-table-pagination','wf-table-selection','wf-columns-panel']) $('#' + id).hidden = true;
   }
   const tabs = [['profile','Карточка'],['rotations','Вахты и графики'],['stages','Присутствие'],['movements','Поездки'],['pvp','ПВП'],['documents','Документы'],['checks','Оформление'],['history','История']];
   function canDiscard() { return !state.busy && (!state.dirty || window.confirm('В карточке есть несохранённые изменения. Закрыть их?')); }
@@ -146,26 +338,52 @@
     $('#wf-list-workspace').hidden = false; document.body.classList.remove('wf-card-open');
     if (restore) requestAnimationFrame(() => {
       if (!$('#view-workforce').classList.contains('active') || !$('#wf-card').hidden) return;
-      (state.returnFocus?.isConnected ? state.returnFocus : $('#wf-search')).focus({preventScroll:true});
+      (state.returnFocus?.isConnected ? state.returnFocus : $('#wf-full_name').nextElementSibling).focus({preventScroll:true});
       window.scrollTo(0, state.returnScroll);
     });
   }
   function workforceRoute(route) {
-    const match = /^workforce(?:\/(rotation|recruitment))?(?:\/people\/([1-9]\d*))?$/.exec(route);
-    return match && (!match[2] || Number.isSafeInteger(Number(match[2]))) ? {section:match[1] || '',personId:match[2] ? Number(match[2]) : null} : null;
+    const match = /^workforce(?:\/(rotation|recruitment))?(?:\/summary\/([^/]+))?(?:\/people\/([1-9]\d*))?$/.exec(route);
+    if (!match || (match[3] && !Number.isSafeInteger(Number(match[3])))) return null;
+    let summary = null;
+    try { summary = match[2] ? decodeURIComponent(match[2]) : null; } catch (_) { summary = 'invalid'; }
+    return {section:match[1] || '',summary,personId:match[3] ? Number(match[3]) : null};
   }
+  const summaryBanner = E('div',{className:'wf-summary-filter',hidden:true});
+  $('#wf-filter-panel').before(summaryBanner);
   async function activate(route) {
     const target = workforceRoute(route);
     if (!target) return;
-    if (state.section !== target.section) {
-      ++state.request; state.section = target.section; state.offset = 0;
+    createPerson.close();
+    const summaryChanged = (state.summary || null) !== target.summary;
+    if (state.section !== target.section || summaryChanged) {
+      ++state.request; state.section = target.section; state.offset = 0; state.view = 'table'; state.queue = '';
       state.listLoaded = false; state.returnScroll = 0; state.returnFocus = null;
       $('#wf-rows').replaceChildren(); $('#wf-board-region').replaceChildren(); $('#wf-stats').replaceChildren();
     }
+    if (summaryChanged) {
+      state.pps = ''; syncPpsFilters();
+      state.summary = target.summary;
+      multiFilters.forEach(id => MF.set($('#wf-' + id), ''));
+      dateFilters.reset(); $('#wf-conflicts').checked = false;
+      summaryBanner.replaceChildren(); summaryBanner.hidden = !state.summary;
+      $('#wf-date').disabled = !!state.summary;
+      $('#wf-date').title = state.summary ? 'Дата ячейки отчёта. Для изменения снимите фильтр свода.' : '';
+      if (state.summary) {
+        let selector;
+        try { selector = JSON.parse(state.summary); } catch (_) {}
+        if (typeof selector?.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(selector.date)) $('#wf-date').value = selector.date;
+        const clear = E('button',{type:'button'},'Снять фильтр свода');
+        clear.addEventListener('click',()=>window.openWorkforceReport('workforce/rotation'));
+        summaryBanner.append(E('span',{},'Из свода: ' + (selector?.label || 'выбранная ячейка на ' + displayDate($('#wf-date').value))),clear);
+      }
+      filterLabel();
+    }
     const sections = {rotation:['Перевахта','Состав из таблиц перевахтовки · общие карточки сотрудников'],
-      recruitment:['Комплектование','Состав из таблиц комплектации · общие карточки сотрудников']};
+      recruitment:['Комплектация','Состав из таблиц комплектации · общие карточки сотрудников']};
     const heading = sections[state.section] || ['Учёт персонала','Единая карточка сотрудника · история присутствия и движения'];
     $('#wf-title').textContent = heading[0]; $('#wf-description').textContent = heading[1];
+    window.dispatchEvent(new CustomEvent('workforce:sectionchange', {detail:{section:state.section}}));
     if (target.personId) return fetchCard(target.personId);
     const wasOpen = !$('#wf-card').hidden;
     closeCard(wasOpen);
@@ -194,8 +412,8 @@
   function field(key, title, type = 'text', options = {}) { return {key, title, type, ...options}; }
   const profileFields = [field('full_name','ФИО','text',{required:true}), field('profession_code','Должность / профессия','catalog',{kind:'profession',searchable:true,legacy:'profession'}),
     field('employer_id','Организация-работодатель','organization'),
-    field('citizenship_code','Гражданство','catalog',{kind:'citizenship'}), field('employment_code','Статус сотрудника','catalog',{kind:'employment'}),
-    field('birth_date','Дата рождения','date'), field('phone','Телефон'), field('messenger','Мессенджер'), field('origin_code','Город отправления','catalog',{kind:'travelpoint',searchable:true,legacy:'origin_city'}),
+    field('citizenship_code','Гражданство','catalog',{kind:'citizenship'}), field('employment_code','Статус сотрудника','catalog',{kind:'employment'}), field('accommodation_code','Проживание','catalog',{kind:'accommodation'}),
+    field('birth_date','Дата рождения','date'), field('phone','Телефон'), field('email','E-mail','email'), field('messenger','Мессенджер'), field('origin_code','Город отправления','catalog',{kind:'travelpoint',searchable:true,legacy:'origin_city'}),
     field('rotation_schedule_id','График вахты','schedule',{allowIncomplete:true}), field('arrival_date','Дата заезда','date'), field('forecast_departure_date','Прогноз окончания вахты','date'),
     field('leave_start_date','Начало межвахтового отпуска','date'), field('leave_end_date','Окончание межвахтового отпуска','date'), field('notes','Примечания','textarea')];
   const schemas = {
@@ -227,7 +445,9 @@
     try {
       const result = await api(path, {method, body: JSON.stringify(values)});
       if (kind === 'rotation_schedule') {state.reference = null;await reference();}
-      state.dirty = false; await fetchCard(id, true); await load();
+      // The hidden registry needs one fresh read when the user returns to it,
+      // not after every intermediate save inside the employee card.
+      state.dirty = false; state.listLoaded = false; await fetchCard(id, true);
       if (result.trip_plans_to_review?.length) error('Вахта продлена. Есть ранее оформленные поездки с другими датами — проверьте их на вкладке «Поездки».', true);
     } catch (err) { error(err.message, true); }
     finally { state.busy = false; $('#wf-card-content').inert = false; }
@@ -363,7 +583,7 @@
   function form(kind, fields, existing = null) {
     const formNode = E('form', {className:'wf-form'}), controls = {};
     let attempt = null;
-    for (const spec of [...fields, field('reason','Основание изменения','textarea',{required:true})]) {
+    for (const spec of [...fields, field('reason','Основание изменения (необязательно)','textarea',{placeholder:'Можно оставить пустым'})]) {
       let input, values;
       if (['catalog','select','place','schedule','organization'].includes(spec.type)) {
         values = referenceValues(spec);
@@ -371,7 +591,8 @@
           values.push([String(existing[spec.key]),referenceText(spec,existing[spec.key]) + ' · недоступно для новых назначений']);
         }
         input = E('select', {required:!!spec.required}, E('option',{value:''},'Выберите'), ...values.map(([value,text]) => E('option',{value},text)));
-      } else input = E(spec.type === 'textarea' ? 'textarea' : 'input', {type:spec.type === 'textarea' ? undefined : spec.type, required:!!spec.required});
+      } else input = E(spec.type === 'textarea' ? 'textarea' : 'input', {type:spec.type === 'textarea' ? undefined : spec.type, required:!!spec.required, placeholder:spec.placeholder});
+      if (spec.type === 'email') input.maxLength = 254;
       input.name = spec.key;
       if (spec.type === 'checkbox') input.checked = !!existing?.[spec.key];
       else input.value = existing?.[spec.key] ?? '';
@@ -383,6 +604,15 @@
       controls[spec.key] = control;
       formNode.append(spec.searchable ? searchableField(control,values,existing) : E('label',{className:spec.type === 'textarea' ? 'wf-wide' : ''}, spec.title, input));
     }
+    let tickets;
+    if (kind === 'stage' && !existing) {
+      tickets = window.createWorkforceTickets({E, rows: [state.card.profile], reference: state.reference,
+        prefix: 'wf-card-ticket', onChange: () => {state.dirty = true;}});
+      formNode.append(tickets.element);
+      const updateTickets = () => tickets.update(controls.stage_code.input.value);
+      controls.stage_code.input.addEventListener('change', updateTickets);
+      updateTickets();
+    }
     formNode.append(E('button',{type:'submit',className:'primary-button wf-wide'},existing ? 'Сохранить изменения' : 'Добавить запись'));
     formNode.addEventListener('submit', event => {
       event.preventDefault(); if (state.busy || !formNode.reportValidity()) return;
@@ -393,6 +623,10 @@
         if (patch && key !== 'reason' && current === initial && !forceClear) continue;
         if (spec.type === 'organization' && !input.value && !existing?.[key]) continue;
         values[key] = spec.type === 'checkbox' ? input.checked : spec.type === 'number' ? Number(input.value) : input.value;
+      }
+      if (tickets) {
+        if (!tickets.validate()) return;
+        if (!tickets.element.hidden) values.tickets = tickets.values();
       }
       const fingerprint = JSON.stringify(values);
       if (!attempt || attempt.fingerprint !== fingerprint) attempt = {fingerprint,key:crypto.randomUUID()};
@@ -427,7 +661,10 @@
     const content = $('#wf-card-content'); content.replaceChildren();
     const p = state.card.profile, perms = state.reference.permissions;
     if (state.tab === 'profile') {
-      content.append(E('dl',{className:'wf-facts'}, ...[['Проект',p.project],['СМУ',p.department],['Работодатель',p.employer],['Должность',p.profession],['Категория ГДЛР',p.category],['Табельный №',p.personnel_no]].map(([key,value]) => E('div',{},E('dt',{},key),E('dd',{},value || '—')))));
+      const readiness = E('section', {className:'wf-readiness', 'aria-label':'Готовность к расстановке'});
+      content.append(readiness);
+      operations.readiness(readiness, p.id, $('#wf-date').value);
+      content.append(E('dl',{className:'wf-facts'}, ...[['Проект',p.project],['СМУ',p.department],['Подразделение',p.division],['Работодатель',p.employer],['Должность',p.profession],['Категория ГДЛР',p.category],['Табельный №',p.personnel_no]].map(([key,value]) => E('div',{},E('dt',{},key),E('dd',{},value || '—')))));
       const editable = perms.profile && !(state.card.role === 'rotation' && p.employment_code !== 'employment.staff') && !(state.card.role === 'recruitment' && p.employment_code === 'employment.staff');
       const fields = state.card.role === 'recruitment' ? profileFields.filter(f => !['arrival_date','forecast_departure_date','leave_start_date','leave_end_date'].includes(f.key)) : profileFields;
       if (editable) content.append(form('profile',fields,p));
@@ -508,34 +745,90 @@
       content.append(block);
     }
   }
-  let timer;
-  for (const [value,title] of [['','Весь состав'],['lifecycle','Перемещения'],['plans','Плановые поездки'],['pvp','ПВП и оформление'],['rotations','Графики вахтования']]) {
-    $('#wf-workspaces').append(E('button',{type:'button','data-workspace':value,'aria-pressed':String(!value),className:!value?'active':'',onclick:()=>{
+  function syncPpsFilters() {
+    for (const button of $('#wf-pps').children) {
+      const active = button.dataset.pps === state.pps;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', String(active));
+    }
+  }
+  function renderPpsFilters() {
+    const rows = (state.reference.pps || []).map(row => [String(row.id), row.name]);
+    // Never silently broaden a previously selected, now unavailable PPS.
+    if (state.pps && !rows.some(([id]) => id === state.pps)) rows.push([state.pps, 'ППС недоступен']);
+    $('#wf-pps').replaceChildren(...[['', 'Все ППС'], ...rows].map(([id, title]) => E('button', {
+      type:'button', 'data-pps':id, 'aria-pressed':'false', onclick:()=>{
+        if (state.pps === id || !board.canLeave()) return;
+        state.pps=id;state.offset=0;filterLabel();load();
+      }
+    }, title)));
+    syncPpsFilters();
+  }
+  function employmentQuickSelected(codes) {
+    const values = MF.values(MF.get($('#wf-employment')));
+    return values.length === codes.length && codes.every(code => values.includes(code));
+  }
+  for (const [id, codes] of Object.entries(employmentQuickFilters)) {
+    $('#wf-' + id).addEventListener('click', () => {
+      if ($('#wf-' + id).disabled || !window.workforceScreen.canLeave()) return;
+      MF.set($('#wf-employment'), employmentQuickSelected(codes) ? [] : codes);
+      state.offset = 0; filterLabel(); load();
+    });
+  }
+  function syncQuickFilters() {
+    syncPpsFilters();
+    for (const [id, codes] of Object.entries(employmentQuickFilters)) {
+      const button = $('#wf-' + id), active = employmentQuickSelected(codes);
+      button.disabled = !state.reference || !codes.every(code => [...$('#wf-employment').options].some(option => option.value === code));
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', String(active));
+    }
+    const stages = MF.values(MF.get($('#wf-stage')));
+    for (const button of $('#wf-workspaces').children) {
+      const operations = button.dataset.workspace === 'operations';
+      const active = operations ? state.queue === 'operations' : state.queue !== 'operations' &&
+        (button.dataset.stage ? stages.length === 1 && stages[0] === button.dataset.stage : stages.length === 0);
+      button.disabled = !operations && !state.reference;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', String(active));
+    }
+  }
+  for (const [value,title] of [['','Все'],['stage.onsite','Явка'],['stage.inbound','Заезд'],['stage.pvp','ПВП'],['stage.leave','Неявка'],['stage.outbound','Выезд'],['unconfirmed','Без подтверждения']]) {
+    $('#wf-workspaces').append(E('button',{type:'button','data-stage':value,'aria-pressed':String(!value),className:!value?'active':'',disabled:true,onclick:()=>{
       if (!board.canLeave()) return;
-      state.queue=value;state.offset=0;
-      if (value === 'lifecycle') {state.view='board';MF.set($('#wf-stage'), '');filterLabel();}
-      else if (['plans','pvp','rotations'].includes(value)) state.view='table';
-      load();
+      state.queue='';state.offset=0;
+      MF.set($('#wf-stage'), value);filterLabel();load();
     }},title));
   }
+  $('#wf-workspaces').append(E('button',{type:'button','data-workspace':'operations','aria-pressed':'false',onclick:()=>{
+    if (!board.canLeave()) return;
+    state.queue='operations';state.offset=0;load();
+  }},'Мой день'));
   for (const view of ['board','table']) $('#wf-view-' + view).addEventListener('click', () => {
     if (!board.canLeave()) return;
     state.view=view;state.offset=0;
     if (view === 'board' && !['','lifecycle'].includes(state.queue)) state.queue='';
     load();
   });
-  $('#wf-filter-panel').open = !window.matchMedia('(max-width: 760px)').matches;
   function filterLabel() {
-    const count = ['search','department','employer','category'].filter(id => $('#wf-' + id).value).length + Number(!!MF.get($('#wf-stage'))) + Number($('#wf-conflicts').checked) + Number($('#wf-regex').checked);
+    syncQuickFilters();
+    const count = multiFilters.filter(id => MF.values(MF.get($('#wf-' + id))).length).length + dateFilters.count() + Number($('#wf-conflicts').checked) + Number(!!state.summary) + Number(!!state.pps);
+    $('#wf-filter-reset').disabled = !count;
     $('#wf-filter-summary').textContent = 'Фильтры' + (count ? ' · выбрано ' + count : '');
   }
+  $('#wf-filter-reset').addEventListener('click', () => {
+    if (!board.canLeave()) return;
+    if (state.summary) { window.openWorkforceReport('workforce/rotation'); return; }
+    multiFilters.forEach(id => MF.set($('#wf-' + id), ''));
+    dateFilters.reset();state.pps='';
+    $('#wf-conflicts').checked = false;
+    state.offset = 0; filterLabel(); load();
+  });
+  filterLabel();
   $('#wf-filter-panel').addEventListener('input',filterLabel);
   $('#wf-filter-panel').addEventListener('change',filterLabel);
-  $('#wf-search').addEventListener('input', () => {clearTimeout(timer);timer = setTimeout(() => {state.offset = 0;load();},250);});
-  for (const id of ['date','regex','department','stage','employer','category','conflicts']) $('#wf-' + id).addEventListener('change',() => {state.offset = 0;load();});
+  for (const id of ['date',...multiFilters,'conflicts']) $('#wf-' + id).addEventListener('change',() => {state.offset = 0;load();});
   $('#wf-refresh').addEventListener('click',() => {state.reference = null;load();});
-  $('#wf-prev').addEventListener('click',() => {state.offset = Math.max(0,state.offset-state.limit);load();});
-  $('#wf-next').addEventListener('click',() => {state.offset += state.limit;load();});
   $('#wf-card-close').addEventListener('click',() => window.closeWorkforcePerson());
   const cardWorkspace = $('.wf-card-workspace'), cardSplitter = $('#wf-card-splitter');
   const cardSplitKey = 'workforce-card-split:' + root.dataset.userId;
@@ -595,9 +888,9 @@
   cardSplitter.addEventListener('dblclick', () => {cardSplit = defaultCardSplit; renderCardSplit(); rememberCardSplit();});
   new ResizeObserver(renderCardSplit).observe(cardWorkspace);
   cardSplitMobile.addEventListener('change', renderCardSplit);
-  window.addEventListener('beforeunload',event => {if (state.dirty || state.busy || board.busy()) {event.preventDefault();event.returnValue = '';}});
-  window.workforceScreen = {load,activate,listQuery,routeView:route => workforceRoute(route) ? 'workforce' : null,
-    deactivate:() => closeCard(false),invalidate:() => {state.reference=null;},canLeave:() => board.canLeave() && ($('#wf-card').hidden || canDiscard())};
+  window.addEventListener('beforeunload',event => {if (state.dirty || state.busy || board.busy() || bulk.busy() || tableEdit.busy()) {event.preventDefault();event.returnValue = '';}});
+  window.workforceScreen = {load,activate,listQuery,dateFields,routeView:route => workforceRoute(route) ? 'workforce' : null,
+    deactivate:() => {tableEdit.closeRow();createPerson.close();closeCard(false);},invalidate:() => {state.reference=null;},canLeave:() => createPerson.canLeave() && !tableEdit.busy() && bulk.canLeave() && board.canLeave() && ($('#wf-card').hidden || canDiscard())};
   const paths = {workforce:'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M16 3a4 4 0 0 1 0 8 M22 21v-2a4 4 0 0 0-3-3.87 M13 7a4 4 0 1 1-8 0a4 4 0 0 1 8 0',
     'workforce/rotation':'M20 7h-9 M16 3l4 4-4 4 M4 17h9 M8 13l-4 4 4 4',
     'workforce/recruitment':'M15 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2 M12 7a4 4 0 1 1-8 0a4 4 0 0 1 8 0 M19 8v6 M16 11h6',

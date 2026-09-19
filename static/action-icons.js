@@ -55,7 +55,7 @@
     const label = currentAria && currentAria !== previous?.aria ? currentAria : text;
     const currentTitle = control.getAttribute('title');
     const title = currentTitle && currentTitle !== previous?.title ? currentTitle : label;
-    const retainLabel = Boolean(control.dataset.view || control.closest('dialog, #wf-card, .login-card, .multi-filter-dialog, .transfer-window, .staffing-toolbar-actions-content, .mobile-panel-content, .mobile-navigation-items, .mobile-disclosure') || control.matches('[data-summary-mode], [data-catalog], [data-display]'));
+    const retainLabel = Boolean(control.dataset.view || control.closest('dialog, #wf-card, #wf-inline-edit, .login-card, .multi-filter-dialog, .column-menu-popup, .transfer-window, .staffing-toolbar-actions-content, .mobile-panel-content, .mobile-navigation-items, .mobile-disclosure, .ticket-import-panel') || control.matches('[data-summary-mode], [data-catalog], [data-display]'));
     control.dataset.uiIcon = icon;
     control.classList.add('ui-action');
     control.classList.toggle('ui-icon-only', !retainLabel);

@@ -18,10 +18,10 @@ def register_personnel_dashboard(app, get_db, roles_required):
             start_text = request.args.get('start')
             start = date.fromisoformat(start_text) if start_text is not None else end - timedelta(days=13)
             count = (end - start).days + 1
-            if not 1 <= count <= 92:
+            if not 1 <= count <= 366:
                 raise ValueError
         except (ValueError, OverflowError):
-            abort(400, description='Выберите период от 1 до 92 дней. Начало не должно быть позже окончания.')
+            abort(400, description='Выберите период от 1 до 366 дней. Начало не должно быть позже окончания.')
         dates = [(start + timedelta(days=i)).isoformat() for i in range(count)]
         db = get_db()
         db.execute('BEGIN')

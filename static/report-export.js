@@ -4,11 +4,30 @@
   const panel = $('staffing-export'), form = $('staffing-export-form');
   if (!panel || !form) return;
   const MF = window.MultiFilter, message = $('staffing-export-status');
+  const referenceFields = [
+    ['work-type', 'Вид работ'], ['object', 'Группа подобъектов'], ['subobject', 'Подобъект'],
+    ['employer', 'Организация-работодатель'], ['profession', 'Должность по штатному расписанию'],
+    ['linear-itr', 'ФИО линейного ИТР'], ['brigadier', 'ФИО бригадира']
+  ];
   let loadedDate = '', pending = null, requestId = 0;
   const isUrp = () => $('staffing-export-kind')?.value === 'urp';
   for (const name of ['category', 'department', 'contractor', 'shift']) {
     MF.enable($('staffing-export-' + name), name === 'shift' ? 'all' : '');
   }
+  let referenceAnchor = $('staffing-export-contractor').closest('label');
+  for (const [name, caption] of referenceFields) {
+    const select = document.createElement('select');
+    select.id = 'staffing-export-' + name;
+    const label = document.createElement('label');
+    label.dataset.staffingExportReference = name;
+    label.append(caption, select);
+    referenceAnchor.after(label); referenceAnchor = label;
+    MF.enable(select, '');
+  }
+  const reset = document.createElement('button');
+  reset.type = 'button'; reset.id = 'staffing-export-reference-reset'; reset.className = 'secondary-button';
+  reset.textContent = 'Сбросить фильтры';
+  $('staffing-export-submit').before(reset);
   const status = (text, error = false) => {
     message.textContent = text; message.classList.toggle('error-text', error);
   };
@@ -36,16 +55,18 @@
     }
     throw new Error('Отчёт ещё формируется. Нажмите «Экспорт» повторно, чтобы проверить готовность.');
   }
-  function options(name, values, all, encode = value => value) {
+  function options(name, values, all, encode = value => value, preserve = true) {
     const select = $('staffing-export-' + name), selected = MF.values(MF.get(select));
-    const choices = values.map(value => [encode(value), value || 'Без категории']);
-    for (const value of selected) {
-      if (!choices.some(([key]) => key === value)) {
-        choices.push([value, [...select.options].find(option => option.value === value)?.textContent || value]);
+    const choices = values.map(value => typeof value === 'object' ? [value.value, value.label] : [encode(value), value || 'Без категории']);
+    if (preserve) {
+      for (const value of selected) {
+        if (!choices.some(([key]) => key === value)) {
+          choices.push([value, [...select.options].find(option => option.value === value)?.textContent || value]);
+        }
       }
     }
     select.replaceChildren(new Option(all, ''), ...choices.map(([value, label]) => new Option(label, value)));
-    MF.set(select, selected);
+    MF.set(select, preserve ? selected : selected.filter(value => choices.some(([key]) => key === value)));
   }
   async function ready(refresh = false) {
     const date = $('staffing-export-date').value;
@@ -64,6 +85,13 @@
         options('department', data.departments, 'Все СМУ');
         options('contractor', data.contractors, 'Все компании-подрядчики');
         options('category', data.categories, 'Все категории', value => value ? 'gdlr:' + value : 'none');
+        options('work-type', data.work_types, 'Все виды работ');
+        options('object', data.objects, 'Все группы подобъектов');
+        options('subobject', data.subobjects, 'Все подобъекты');
+        options('employer', data.employers, 'Все организации-работодатели');
+        options('profession', data.professions, 'Все должности');
+        options('linear-itr', data.linear_itrs, 'Все линейные ИТР');
+        options('brigadier', data.brigadiers, 'Все бригадиры');
         loadedDate = date; status(''); return true;
       } catch (error) {
         if (id === requestId) { loadedDate = ''; status(error.message, true); }
@@ -87,15 +115,29 @@
   });
   $('staffing-export-date').addEventListener('change', () => ready());
   $('staffing-export-kind')?.addEventListener('change', () => {
-    for (const name of ['category', 'department', 'contractor', 'shift', 'unassigned']) {
+    for (const name of ['category', 'department', 'contractor', 'shift', 'unassigned', ...referenceFields.map(([name]) => name)]) {
       const control = $('staffing-export-' + name);
       const label = control?.closest('label');
       if (label) label.hidden = isUrp();
     }
+    reset.hidden = isUrp();
+    if (isUrp()) {
+      for (const name of ['category', 'department', 'contractor', 'shift', ...referenceFields.map(([name]) => name)]) {
+        MF.set($('staffing-export-' + name), name === 'shift' ? 'all' : '');
+      }
+      $('staffing-export-unassigned').checked = false;
+    }
     $('staffing-export-help').textContent = isUrp() ?
       'Две вкладки: «Явка и аутстаффинг» и «Неявка, заезд и ПВП». Согласованные 18 категорий ГДЛР, доступные вам СМУ, примечания справа. Учитываются переносы и продления вахт.' :
-      'Один Excel-файл: «Список сотрудников» и «Сводная таблица» по этому списку. Дата, СМУ, смена и категория применяются к обеим вкладкам.';
+      'Один Excel-файл: «Список сотрудников» и «Сводная таблица» по этому списку. Все выбранные фильтры применяются к обеим вкладкам.';
     ready();
+  });
+  reset.addEventListener('click', () => {
+    for (const name of ['category', 'department', 'contractor', 'shift', ...referenceFields.map(([name]) => name)]) {
+      MF.set($('staffing-export-' + name), name === 'shift' ? 'all' : '');
+    }
+    $('staffing-export-unassigned').checked = false;
+    ready(true);
   });
   window.reportExport = {ready};
   form.addEventListener('submit', async event => {
@@ -114,6 +156,10 @@
       MF.params(params, 'shift', MF.get($('staffing-export-shift')) || 'all');
       for (const name of ['department', 'contractor']) MF.params(params, name, MF.get($('staffing-export-' + name)));
       MF.params(params, 'category', MF.get($('staffing-export-category')), value => value === 'none' ? '' : value.slice(5));
+      for (const [name] of referenceFields) {
+        const key = name === 'work-type' ? 'work_type_id' : name === 'object' ? 'object_id' : name === 'subobject' ? 'subobject_id' : name.replace('-', '_');
+        MF.params(params, key, MF.get($('staffing-export-' + name)));
+      }
       const includeUnassigned = $('staffing-export-unassigned').checked;
       if (includeUnassigned) params.set('include_unassigned', '1');
       const response = isUrp() ? await urpReport(date) : await fetch('/api/staffing/export?' + params, {cache: 'no-store'});

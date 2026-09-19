@@ -1,6 +1,6 @@
 (() => {
   'use strict';
-  const keys = ['number', 'object', 'subobject', 'contractor', 'employer', 'name', 'personnel', 'category', 'itr', 'brigadier', 'shift', 'attendance', 'performed_work', 'assignment_author'];
+  const keys = ['number', 'object', 'subobject', 'contractor', 'employer', 'name', 'personnel', 'category', 'itr', 'brigadier', 'shift', 'attendance', 'performed_work', 'assignment_author', 'crew_number', 'work_type'];
   const min = 64, max = 800;
   window.staffingColumns = {create({headers, canChange, status}) {
     const root = document.querySelector('.app-shell');
@@ -43,14 +43,15 @@
       account.set({columns: preferences});
     }
     function updateControls() {
-      controls.forEach(({checkbox, input, position}, index) => {
+      const focused = list.contains(document.activeElement) ? document.activeElement : null;
+      controls.forEach(({checkbox, position}, index) => {
         checkbox.checked = visible(index);
         checkbox.disabled = visible(index) && preferences.hidden.length === keys.length - 1;
-        input.disabled = !desktop.matches || !visible(index);
-        input.value = String(Math.round(width(index)));
         position.value = String(preferences.order.indexOf(keys[index]));
       });
-      preferences.order.forEach(id => list.append(controls[keys.indexOf(id)].row));
+      const orderedRows = preferences.order.map(id => controls[keys.indexOf(id)].row);
+      if (orderedRows.some((row, index) => list.children[index] !== row)) list.append(...orderedRows);
+      focused?.focus({preventScroll:true});
     }
     function applyWidths() {
       if (!table) return;
@@ -88,8 +89,6 @@
       const checkbox = document.createElement('input'); checkbox.type = 'checkbox';
       checkbox.setAttribute('aria-label', 'Показывать столбец: ' + label);
       checkLabel.append(checkbox, label);
-      const input = document.createElement('input'); input.type = 'number'; input.min = min; input.max = max; input.step = '1';
-      input.setAttribute('aria-label', 'Ширина столбца в пикселях: ' + label);
       const position = document.createElement('select'); position.className = 'staffing-column-position';
       position.setAttribute('aria-label', 'Позиция столбца: ' + label);
       position.title = 'Порядковый номер столбца';
@@ -109,17 +108,10 @@
         preferences.hidden = checkbox.checked ? preferences.hidden.filter(id => id !== keys[index]) : [...preferences.hidden, keys[index]];
         applyVisibility(); save();
       });
-      input.addEventListener('change', () => {
-        if (!canChange() || !input.checkValidity() || !Number.isFinite(input.valueAsNumber)) { updateControls(); return; }
-        setWidth(index, input.valueAsNumber); save();
-      });
-      row.append(position, checkLabel, input); list.append(row); controls.push({row, checkbox, input, position});
+      row.append(position, checkLabel); list.append(row); controls.push({row, checkbox, position});
     });
-    document.getElementById('staffing-columns-toggle').addEventListener('click', () => {
-      panel.hidden = !panel.hidden;
-      document.getElementById('staffing-columns-toggle').setAttribute('aria-expanded', String(!panel.hidden));
-      updateControls();
-    });
+    window.ColumnMenu.attach({button:document.getElementById('staffing-columns-toggle'), panel,
+      label:'Столбцы расстановки', onOpen:updateControls});
     document.getElementById('staffing-columns-reset').addEventListener('click', () => {
       if (!canChange()) return;
       preferences = {hidden: [], widths: {}, order: [...keys]};

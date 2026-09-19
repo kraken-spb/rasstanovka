@@ -239,9 +239,24 @@ def active_members_sql():
     return base
 
 
-def postgres_member_source_sql():
+def postgres_member_source_sql(*, whole=False):
     """Resolve only the requested workers, retaining the established source order."""
     active = active_import_ids_sql()
+    if whole:
+        # Resolve sources once for a full roster; keep indexed lateral reads for pages.
+        allowed = "NOT EXISTS(SELECT 1 FROM workforce_profiles wp WHERE wp.worker_id=candidate.worker_id AND wp.workforce_managed AND NOT wp.staffing_ready)"
+        return f'''(SELECT worker_id,source_row,source_crew FROM (
+            SELECT candidate.*,ROW_NUMBER() OVER (
+                PARTITION BY worker_id ORDER BY priority,source_order DESC) source_rank
+            FROM (
+                SELECT im.worker_id,im.source_row,im.source_crew,1 priority,im.import_id source_order
+                FROM staffing_import_members im WHERE im.import_id IN ({active})
+                UNION ALL SELECT wp.worker_id,0,'',2,0 FROM workforce_profiles wp WHERE wp.staffing_ready
+                UNION ALL SELECT om.worker_id,om.source_row,'',3,0 FROM outstaff_members om
+                UNION ALL SELECT me.worker_id,0,'',4,0 FROM manual_employees me
+                UNION ALL SELECT er.worker_id,0,'',5,0 FROM employee_restorations er
+            ) candidate WHERE candidate.priority IN (2,4) OR {allowed}
+        ) ranked WHERE source_rank=1) sm JOIN workers w ON w.id=sm.worker_id'''
     allowed = "NOT EXISTS(SELECT 1 FROM workforce_profiles wp WHERE wp.worker_id=w.id AND wp.workforce_managed AND NOT wp.staffing_ready)"
     return f'''workers w JOIN LATERAL (
         SELECT candidate.worker_id,candidate.source_row,candidate.source_crew FROM (

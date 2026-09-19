@@ -27,6 +27,81 @@ def report_author_argument(key='author'):
     return selection
 
 
+def render_report(rows, assignments, authors, pps=None, category=None, author=None):
+    """Reduce one already-authorized day without issuing database queries."""
+    options = {'pps': sorted({r['pps'] for r in rows}),
+               'categories': sorted({r['category'] for r in rows}, key=str.casefold)}
+    person_fields = ('id', 'full_name', 'personnel_no', 'profession', 'department', 'pps', 'category', 'contractor', 'attendance_status')
+    people = {r['id']: {**{key: r[key] for key in person_fields}, 'assignments': []} for r in rows
+              if filter_matches(pps, r['pps']) and filter_matches(category, r['category'])}
+    author_keys, author_labels = author_options(assignments, authors)
+    options.update(authors=author_keys, author_labels=author_labels)
+    for assignment in assignments:
+        actor = authors.get(assignment['assignment_id'])
+        if not filter_matches(author, str(actor['user_id']) if actor else 'unknown'):
+            continue
+        if assignment['worker_id'] in people:
+            people[assignment['worker_id']]['assignments'].append({
+                'shift': 'Ночь' if assignment['shift'] in ('2 смена', 'Ночная смена') else 'День',
+                'object_name': assignment['object_name'], 'subobject_name': assignment['subobject_name']})
+    if author is not None:
+        people = {key: person for key, person in people.items() if person['assignments']}
+    groups, totals = {}, {'total': len(people), 'assigned': 0, 'unassigned': 0, 'absent': 0}
+    for person in people.values():
+        person['assigned'] = bool(person['assignments'])
+        status = 'absent' if person['attendance_status'] != 'Явка' else 'assigned' if person['assigned'] else 'unassigned'
+        person['status'] = status; totals[status] += 1
+        group = groups.setdefault((person['pps'], person['category']), {'pps': person['pps'], 'category': person['category'],
+            'total': 0, 'assigned': 0, 'unassigned': 0, 'absent': 0, 'people': [], 'companies': {}})
+        group['total'] += 1; group[status] += 1; group['people'].append(person)
+        company = group['companies'].setdefault(person['contractor'], {'total': 0, 'assigned': 0, 'unassigned': 0, 'absent': 0})
+        company['total'] += 1; company[status] += 1
+    return {'date': rows[0]['work_date'] if rows and 'work_date' in rows[0] else None,
+            'filters': {'pps': pps, 'category': category, 'author': author}, 'options': options,
+            'contractors': sorted({p['contractor'] for p in people.values()}, key=str.casefold), 'totals': totals,
+            'groups': sorted(groups.values(), key=lambda r: (r['pps'], r['category'].casefold()))}
+
+
+def author_options(assignments, authors):
+    """Return the per-day author option labels used by both report reductions."""
+    labels = {}
+    for assignment in assignments:
+        actor = authors.get(assignment['assignment_id'])
+        key = str(actor['user_id']) if actor else 'unknown'
+        labels[key] = (actor['full_name'] or 'Пользователь №' + key) if actor else 'Автор не определён'
+    duplicate_names = {name for name in labels.values() if list(labels.values()).count(name) > 1}
+    labels = {key: name + (' · №' + key if name in duplicate_names else '') for key, name in labels.items()}
+    return sorted(labels, key=lambda key: labels[key].casefold()), labels
+
+
+def aggregate_report_day(rows_by_id, assignments, authors, day, pps=None, category=None, author=None):
+    """Reduce an intermediate period day without materializing people or companies."""
+    author_keys, author_labels = author_options(assignments, authors)
+    assigned = set()
+    for assignment in assignments:
+        actor = authors.get(assignment['assignment_id'])
+        key = str(actor['user_id']) if actor else 'unknown'
+        if filter_matches(author, key):
+            assigned.add(assignment['worker_id'])
+    totals = {'total': 0, 'assigned': 0, 'unassigned': 0, 'absent': 0}
+    groups = {}
+    for worker_id, row in rows_by_id.items():
+        if (not filter_matches(pps, row['pps']) or not filter_matches(category, row['category'])
+                or (author is not None and worker_id not in assigned)):
+            continue
+        status = 'absent' if row.get('attendance_status', 'Явка') != 'Явка' else ('assigned' if worker_id in assigned else 'unassigned')
+        totals['total'] += 1
+        totals[status] += 1
+        group = groups.setdefault((row['pps'], row['category']), {'pps': row['pps'], 'category': row['category'],
+                                                                  'total': 0, 'assigned': 0, 'unassigned': 0, 'absent': 0})
+        group['total'] += 1
+        group[status] += 1
+    return {'options': {'pps': sorted({row['pps'] for row in rows_by_id.values()}),
+                        'categories': sorted({row['category'] for row in rows_by_id.values()}, key=str.casefold),
+                        'authors': author_keys, 'author_labels': author_labels},
+            'totals': totals, 'groups': groups.values()}
+
+
 def report_data(db, day, pps=None, category=None, author=None):
     access, params = ('1', []) if g.user['role'] == 'viewer' else worker_clause(db)
     if legacy_foreman(db):
@@ -57,10 +132,6 @@ def report_data(db, day, pps=None, category=None, author=None):
         LEFT JOIN staffing_attendance att ON att.worker_id=w.id AND att.work_date=?
         WHERE {access} ORDER BY w.full_name COLLATE NOCASE,w.personnel_no,w.id
     ''', [day, day, *params]).fetchall()
-    options = {'pps': sorted({r['pps'] for r in rows}),
-               'categories': sorted({r['category'] for r in rows}, key=str.casefold)}
-    people = {r['id']: {**dict(r), 'assignments': []} for r in rows
-              if filter_matches(pps,r['pps']) and filter_matches(category,r['category'])}
     from staffing_api import assignment_authors
     authorized = {row['id'] for row in rows}
     assignments = [row for row in db.execute('''
@@ -71,44 +142,8 @@ def report_data(db, day, pps=None, category=None, author=None):
         WHERE a.work_date=? ORDER BY a.shift,o.name,s.name,a.id
     ''', (day,)) if row['worker_id'] in authorized]
     authors = assignment_authors(db, day, assignments)
-    author_labels = {}
-    for assignment in assignments:
-        actor = authors.get(assignment['assignment_id'])
-        key = str(actor['user_id']) if actor else 'unknown'
-        author_labels[key] = (actor['full_name'] or 'Пользователь №' + key) if actor else 'Автор не определён'
-    # Account IDs remain distinct even when two users share the same full name.
-    duplicate_names = {name for name in author_labels.values() if list(author_labels.values()).count(name) > 1}
-    author_labels = {key: name + (' · №' + key if name in duplicate_names else '') for key,name in author_labels.items()}
-    options.update(authors=sorted(author_labels, key=lambda key: author_labels[key].casefold()), author_labels=author_labels)
-    for assignment in assignments:
-        actor = authors.get(assignment['assignment_id'])
-        if not filter_matches(author, str(actor['user_id']) if actor else 'unknown'):
-            continue
-        if assignment['worker_id'] in people:
-            people[assignment['worker_id']]['assignments'].append({
-                'shift': 'Ночь' if assignment['shift'] in ('2 смена', 'Ночная смена') else 'День',
-                'object_name': assignment['object_name'], 'subobject_name': assignment['subobject_name']})
-    if author is not None:
-        people = {key: person for key,person in people.items() if person['assignments']}
-    groups = {}
-    totals = {'total': len(people), 'assigned': 0, 'unassigned': 0, 'absent': 0}
-    for person in people.values():
-        person['assigned'] = bool(person['assignments'])
-        status = 'absent' if person['attendance_status'] != 'Явка' else 'assigned' if person['assigned'] else 'unassigned'
-        person['status'] = status
-        totals[status] += 1
-        group = groups.setdefault((person['pps'], person['category']), {
-            'pps': person['pps'], 'category': person['category'], 'total': 0,
-            'assigned': 0, 'unassigned': 0, 'absent': 0, 'people': [], 'companies': {}})
-        group['total'] += 1
-        group[status] += 1
-        group['people'].append(person)
-        company = group['companies'].setdefault(person['contractor'], {'total': 0, 'assigned': 0, 'unassigned': 0, 'absent': 0})
-        company['total'] += 1
-        company[status] += 1
-    return {'date': day, 'filters': {'pps': pps, 'category': category, 'author': author}, 'options': options,
-            'contractors': sorted({p['contractor'] for p in people.values()}, key=str.casefold),
-            'totals': totals, 'groups': sorted(groups.values(), key=lambda r: (r['pps'], r['category'].casefold())),
+    result = render_report(rows, assignments, authors, pps=pps, category=category, author=author)
+    return {**result, 'date': day,
             'note': REPORT_NOTE + (' При выборе автора учитываются только сотрудники с назначениями этого автора; автор определяется по последнему подтверждённому событию расстановки.' if author is not None else '')}
 
 
@@ -116,8 +151,8 @@ def report_period_data(db, start, end, pps=None, category=None, author=None):
     """Daily coverage using the same scope and exclusive statuses as the daily report."""
     first, last = date.fromisoformat(start), date.fromisoformat(end)
     length = (last - first).days + 1
-    if not 1 <= length <= 92:
-        raise ValueError('Период должен содержать от 1 до 92 дней.')
+    if not 1 <= length <= 366:
+        raise ValueError('Период должен содержать от 1 до 366 дней.')
     dates = [(first + timedelta(days=i)).isoformat() for i in range(length)]
     comparison_date = (last - timedelta(days=1)).isoformat()
     calculation_dates = [comparison_date, *dates] if length == 1 else dates
@@ -127,8 +162,64 @@ def report_period_data(db, start, end, pps=None, category=None, author=None):
     totals, categories = series(), {}
     options = {'pps': set(), 'categories': set(), 'authors': set()}
     author_labels = {}
+    # Fetch the immutable roster once and all daily records once.  The former
+    # implementation called report_data for every day (three SQL paths/day).
+    access, access_params = ('1', []) if g.user['role'] == 'viewer' else worker_clause(db)
+    legacy = legacy_foreman(db)
+    static_access = access if not legacy else 'c.owner_user_id=?'
+    static_params = access_params if not legacy else [g.user['id']]
+    base = [dict(row) for row in db.execute(f'''WITH roster AS (
+        SELECT worker_id FROM ({active_members_sql()}) UNION SELECT worker_id FROM outstaff_members
+        UNION SELECT worker_id FROM manual_employees UNION SELECT worker_id FROM employee_restorations)
+        SELECT w.id,w.full_name,w.personnel_no,w.profession,w.department,COALESCE(w.pps,'') pps,
+          COALESCE(gc.name,w.category,'') category,COALESCE(ct.name,w.contractor,'') contractor,c.owner_user_id crew_owner
+        FROM roster r JOIN workers w ON w.id=r.worker_id LEFT JOIN crew_members m ON m.worker_id=w.id
+        LEFT JOIN crews c ON c.id=m.crew_id LEFT JOIN employee_gdlr eg ON eg.worker_id=w.id
+        LEFT JOIN gdlr_categories gc ON gc.id=eg.category_id LEFT JOIN employee_contractors ec ON ec.worker_id=w.id
+        LEFT JOIN contractors ct ON ct.id=ec.contractor_id WHERE w.active=1 AND {staffing_eligible_sql()} AND ({static_access})''', static_params)]
+    assignment_access = '1' if legacy else access
+    assignment_params = [calculation_dates[0], calculation_dates[-1], *([] if legacy else access_params)]
+    assignments = [dict(row) for row in db.execute(f'''SELECT a.worker_id id,a.worker_id,a.id assignment_id,a.work_date,a.shift,
+        a.shift assignment_shift,a.subobject_id,a.crew_id assignment_crew_id,a.created_at assignment_created_at,a.foreman_user_id,
+        ac.owner_user_id assignment_crew_owner,c.owner_user_id current_crew_owner,w.full_name,w.personnel_no,w.profession,w.department,COALESCE(w.pps,'') pps,
+        COALESCE(gc.name,w.category,'') category,COALESCE(ct.name,w.contractor,'') contractor,o.name object_name,s.name subobject_name
+        FROM assignments a JOIN workers w ON w.id=a.worker_id JOIN subobjects s ON s.id=a.subobject_id JOIN objects o ON o.id=s.object_id
+        LEFT JOIN crews ac ON ac.id=a.crew_id LEFT JOIN crew_members cm ON cm.worker_id=w.id LEFT JOIN crews c ON c.id=cm.crew_id LEFT JOIN employee_gdlr eg ON eg.worker_id=w.id LEFT JOIN gdlr_categories gc ON gc.id=eg.category_id
+        LEFT JOIN employee_contractors ec ON ec.worker_id=w.id LEFT JOIN contractors ct ON ct.id=ec.contractor_id
+        WHERE a.work_date BETWEEN ? AND ? AND ({assignment_access}) ORDER BY a.work_date,a.shift,o.name,s.name,a.id''', assignment_params)]
+    attendance = {(row['work_date'], row['worker_id']): row['status'] for row in db.execute(
+        'SELECT work_date,worker_id,status FROM staffing_attendance WHERE work_date BETWEEN ? AND ?', (calculation_dates[0], calculation_dates[-1]))}
+    from staffing_api import assignment_authors
+    authors = assignment_authors(db, calculation_dates[0], assignments, calculation_dates[-1])
+    base_by_id = {row['id']: row for row in base}
+    by_day = {}
+    for item in assignments:
+        by_day.setdefault(item['work_date'], []).append(item)
+    final_data = None
     for index, day in enumerate(calculation_dates):
-        data = report_data(db, day, pps=pps, category=category, author=author)
+        day_assignments = by_day.get(day, [])
+        dynamic = {item['worker_id'] for item in day_assignments
+                   if not legacy or item['foreman_user_id'] == g.user['id'] or item['assignment_crew_owner'] == g.user['id']
+                   or item['current_crew_owner'] == g.user['id']}
+        rows_by_id = dict(base_by_id)
+        for item in day_assignments:
+            if item['worker_id'] in dynamic and item['worker_id'] not in rows_by_id:
+                rows_by_id[item['worker_id']] = {key: item[key] for key in ('id','full_name','personnel_no','profession','department','pps','category','contractor')}
+        if legacy:
+            rows_by_id = {key: value for key, value in rows_by_id.items() if value.get('crew_owner') == g.user['id'] or key in dynamic}
+        visible_assignments = [item for item in day_assignments if item['worker_id'] in rows_by_id]
+        for row in rows_by_id.values():
+            row['attendance_status'] = attendance.get((day, row['id']), 'Явка')
+        if day == end:
+            rows = [{key: row[key] for key in ('id','full_name','personnel_no','profession','department','pps','category','contractor','attendance_status')}
+                    | {'work_date': day}
+                    for row in sorted(rows_by_id.values(), key=lambda row: (row['full_name'].casefold(), row['personnel_no'], row['id']))]
+            data = render_report(rows, visible_assignments, authors, pps=pps, category=category, author=author)
+            final_data = data
+        else:
+            data = aggregate_report_day(rows_by_id, visible_assignments, authors, day, pps=pps, category=category, author=author)
+        if day == end:
+            data['note'] = REPORT_NOTE + (' При выборе автора учитываются только сотрудники с назначениями этого автора; автор определяется по последнему подтверждённому событию расстановки.' if author is not None else '')
         author_labels.update(data['options']['author_labels'])
         for key in options:
             options[key].update(data['options'][key])
@@ -141,6 +232,7 @@ def report_period_data(db, start, end, pps=None, category=None, author=None):
             for key in keys:
                 parent['counts'][key][index] += group[key]
                 child['counts'][key][index] += group[key]
+    data = final_data
     groups = sorted(categories.values(), key=lambda group: group['category'].casefold())
     def changes(counts):
         result = {key: counts[key][-1] - counts[key][-2] for key in keys}
@@ -202,10 +294,10 @@ def register_placement_report(app, get_db, roles_required):
                 start = date.fromisoformat(start).isoformat()
                 if day == date.min.isoformat():
                     raise ValueError
-                if not 1 <= (date.fromisoformat(day) - date.fromisoformat(start)).days + 1 <= 92:
+                if not 1 <= (date.fromisoformat(day) - date.fromisoformat(start)).days + 1 <= 366:
                     raise ValueError
             except ValueError:
-                abort(400, description='Выберите период от 1 до 92 дней. Начало не должно быть позже окончания.')
+                abort(400, description='Выберите период от 1 до 366 дней. Начало не должно быть позже окончания.')
         metric = request.args.get('metric', 'assigned')
         if metric not in ('assigned', 'unassigned', 'absent', 'total'):
             abort(400, description='Выберите существующий показатель динамики.')

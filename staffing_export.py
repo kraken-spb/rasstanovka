@@ -20,9 +20,10 @@ HEADERS = [
     '№\nп/п', 'Группа подобъектов', 'Подобъект', 'Компания подрядчик',
     'Организация-работодатель', 'ФИО работника', 'Таб. № с префиксом',
     'Должность по штатному расписанию', 'Профессия ГСП', 'Категория ГДЛР',
-    'ФИО линейного ИТР', 'ФИО бригадира', 'Смена', 'СМУ', 'Выполняемые операции',
+    'ФИО линейного ИТР', 'ФИО бригадира', 'Смена', 'СМУ', 'Выполняемые операции', 'Вид работ',
 ]
 SHIFT_LABELS = {'1 смена': 'День', '2 смена': 'Ночь'}
+EMPTY_FILTER = '__staffing_export_empty__'
 
 
 def _period():
@@ -57,7 +58,7 @@ def _rows(db, day, shifts):
                    AND att.work_date=a.work_date AND att.status<>'Явка') present, a.id, CASE WHEN a.shift='Ночная смена' THEN '2 смена' ELSE a.shift END normalized_shift,
                o.name object_name, s.name subobject_name, a.employer assignment_employer,
                w.full_name, w.personnel_no, COALESCE(ct.name,w.contractor) contractor, w.profession, w.gsp_profession,
-               w.department, pw.description performed_work,
+               w.department, pw.description performed_work, pw.work_type_id, wt.name work_type,
                COALESCE(gc.name, w.category) category,
                d.linear_itr_override, d.brigadier_override,
                c.linear_itr crew_linear_itr, c.brigadier crew_brigadier
@@ -73,6 +74,7 @@ def _rows(db, day, shifts):
         LEFT JOIN crews c ON c.id=a.crew_id
         LEFT JOIN staffing_performed_work pw ON pw.worker_id=a.worker_id AND pw.work_date=a.work_date
             AND pw.shift=CASE WHEN a.shift='Ночная смена' THEN '2 смена' ELSE a.shift END
+        LEFT JOIN work_types wt ON wt.id=pw.work_type_id
         WHERE a.work_date=?
           AND (CASE WHEN a.shift='Ночная смена' THEN '2 смена' ELSE a.shift END)
               IN (''' + ','.join('?' for _ in shifts) + ')''' + access + '''
@@ -103,7 +105,7 @@ def _unassigned_rows(db, day, requested_shift):
                COALESCE(gc.name,w.category) category,
                d.linear_itr_override,d.brigadier_override,
                c.linear_itr crew_linear_itr,c.brigadier crew_brigadier,
-               {effective_shift} normalized_shift,pw.description performed_work
+               {effective_shift} normalized_shift,pw.description performed_work, pw.work_type_id, wt.name work_type
         FROM roster r JOIN workers w ON w.id=r.worker_id
         LEFT JOIN crew_members m ON m.worker_id=w.id LEFT JOIN crews c ON c.id=m.crew_id
         LEFT JOIN employee_contractors ew ON ew.worker_id=w.id LEFT JOIN contractors ct ON ct.id=ew.contractor_id
@@ -111,11 +113,71 @@ def _unassigned_rows(db, day, requested_shift):
         LEFT JOIN staffing_row_details d ON d.worker_id=w.id
         LEFT JOIN staffing_shifts ss ON ss.worker_id=w.id AND ss.work_date=?
         LEFT JOIN staffing_performed_work pw ON pw.worker_id=w.id AND pw.work_date=? AND pw.shift={effective_shift}
+        LEFT JOIN work_types wt ON wt.id=pw.work_type_id
         WHERE w.active=1 AND {staffing_eligible_sql()} AND NOT EXISTS (
             SELECT 1 FROM assignments a WHERE a.worker_id=w.id AND a.work_date=?)
           AND (?='all' OR {effective_shift}=?) AND ({access})
         ORDER BY w.full_name COLLATE NOCASE,w.personnel_no COLLATE NOCASE,w.id
     ''', [day, day, day, requested_shift, requested_shift, *scope_params]).fetchall()
+
+
+def _effective_person(row, field):
+    override = row[field + '_override']
+    return override if override is not None else row['crew_' + field]
+
+
+def _filter_value(value):
+    return EMPTY_FILTER if value is None or value == '' else str(value)
+
+
+def _reference_options(rows):
+    def text(field, label):
+        values = {_filter_value(row[field]) for row in rows}
+        return [{'value': value, 'label': label if value == EMPTY_FILTER else value}
+                for value in sorted(values, key=lambda value: (value != EMPTY_FILTER, value.casefold()))]
+
+    objects = {}
+    subobjects = {}
+    for row in rows:
+        object_id = _filter_value(row['object_id'])
+        subobject_id = _filter_value(row['subobject_id'])
+        objects.setdefault(object_id, 'Без группы подобъектов' if object_id == EMPTY_FILTER else row['object_name'])
+        subobjects.setdefault(subobject_id, 'Без подобъекта' if subobject_id == EMPTY_FILTER
+                          else (row['object_name'] + ' · ' + row['subobject_name']))
+    pairs = lambda values: [{'value': value, 'label': label} for value, label in
+                            sorted(values.items(), key=lambda item: (item[0] != EMPTY_FILTER, item[1].casefold(), item[0]))]
+    return {
+        'objects': pairs(objects), 'subobjects': pairs(subobjects),
+        'employers': text('assignment_employer', 'Без организации-работодателя'),
+        'work_types': pairs({_filter_value(r['work_type_id']):r['work_type'] or 'Без вида работ' for r in rows}),
+        'professions': text('profession', 'Без должности'),
+        'linear_itrs': [{'value': value, 'label': 'Без линейного ИТР' if value == EMPTY_FILTER else value}
+                        for value in sorted({_filter_value(_effective_person(row, 'linear_itr')) for row in rows},
+                                            key=lambda value: (value != EMPTY_FILTER, value.casefold()))],
+        'brigadiers': [{'value': value, 'label': 'Без бригадира' if value == EMPTY_FILTER else value}
+                       for value in sorted({_filter_value(_effective_person(row, 'brigadier')) for row in rows},
+                                           key=lambda value: (value != EMPTY_FILTER, value.casefold()))],
+    }
+
+
+def _id_filter(name):
+    selection = filter_argument(name)
+    if any(value != EMPTY_FILTER and (not value.isdecimal() or int(value) <= 0) for value in filter_values(selection)):
+        abort(400, description='Укажите корректные значения фильтра: ' + name)
+    return selection
+
+
+def _matches_reference_filters(row, filters):
+    values = {
+        'work_type_id': _filter_value(row['work_type_id']),
+        'object_id': _filter_value(row['object_id']),
+        'subobject_id': _filter_value(row['subobject_id']),
+        'employer': _filter_value(row['assignment_employer']),
+        'profession': _filter_value(row['profession']),
+        'linear_itr': _filter_value(_effective_person(row, 'linear_itr')),
+        'brigadier': _filter_value(_effective_person(row, 'brigadier')),
+    }
+    return all(filter_matches(filters[name], value) for name, value in values.items())
 
 
 def _sheet(workbook, title, rows, include_unassigned=False):
@@ -138,7 +200,7 @@ def _sheet(workbook, title, rows, include_unassigned=False):
             row['gsp_profession'], row['category'],
             row['linear_itr_override'] if row['linear_itr_override'] is not None else row['crew_linear_itr'],
             row['brigadier_override'] if row['brigadier_override'] is not None else row['crew_brigadier'],
-            'Без смены' if row['normalized_shift'] is None else SHIFT_LABELS[row['normalized_shift']], row['department'], row['performed_work'],
+            'Без смены' if row['normalized_shift'] is None else SHIFT_LABELS[row['normalized_shift']], row['department'], row['performed_work'], row['work_type'],
         )
         if include_unassigned:
             values += ('Не расставлен' if row['id'] is None else 'Расставлен',)
@@ -152,12 +214,12 @@ def _sheet(workbook, title, rows, include_unassigned=False):
                     cell.number_format = '@'
             cell.font = Font(name='Times New Roman', size=12)
             cell.alignment = Alignment(vertical='top', wrap_text=True)
-        capacities = (6, 20, 24, 20, 24, 24, 18, 28, 20, 20, 24, 24, 10, 28, 44, 20)
+        capacities = (6, 20, 24, 20, 24, 24, 18, 28, 20, 20, 24, 24, 10, 28, 44, 24, 20)
         lines = max(1, *(sum(max(1, (len(line) + capacity - 1) // capacity)
                             for line in str(value or '').split('\n'))
                          for value, capacity in zip(values, capacities)))
         sheet.row_dimensions[number + 1].height = min(409, max(32, 16 * lines))
-    widths = (7, 24, 28, 24, 28, 30, 20, 32, 24, 24, 28, 28, 12, 32, 48)
+    widths = (7, 24, 28, 24, 28, 30, 20, 32, 24, 24, 28, 28, 12, 32, 48, 28)
     if include_unassigned:
         widths += (24,)
     for column, width in enumerate(widths, 1):
@@ -182,6 +244,7 @@ def register_staffing_export_route(app, get_db, roles_required):
             rows = [*_rows(db, day, tuple(SHIFT_LABELS)), *_unassigned_rows(db, day, 'all')]
             data = {key: sorted({row[column] or '' for row in rows if row[column] or key == 'categories'}, key=str.casefold)
                     for key, column in [('departments', 'department'), ('contractors', 'contractor'), ('categories', 'category')]}
+            data.update(_reference_options(rows))
         finally:
             db.rollback()
         return data, 200, {'Cache-Control': 'no-store'}
@@ -200,6 +263,15 @@ def register_staffing_export_route(app, get_db, roles_required):
         category = filter_argument('category')
         department = filter_argument('department',500,ignore_empty=True)
         contractor = filter_argument('contractor',500,ignore_empty=True)
+        reference_filters = {
+            'work_type_id': _id_filter('work_type_id'),
+            'object_id': _id_filter('object_id'),
+            'subobject_id': _id_filter('subobject_id'),
+            'employer': filter_argument('employer', 500),
+            'profession': filter_argument('profession', 500),
+            'linear_itr': filter_argument('linear_itr', 500),
+            'brigadier': filter_argument('brigadier', 500),
+        }
         query = request.args.get('query', '')
         if len(query) > 500:
             abort(400, description='Слишком длинный фильтр отчёта.')
@@ -218,6 +290,7 @@ def register_staffing_export_route(app, get_db, roles_required):
             words = query.casefold().replace('ё', 'е').split()
             rows = [row for row in [*rows, *unassigned]
                     if filter_matches(category,row['category'] or '')
+                    and _matches_reference_filters(row, reference_filters)
                     and all(word in (row['object_name'] + ' ' + row['subobject_name']).casefold().replace('ё', 'е')
                             for word in words)]
             unassigned = [row for row in rows if row['id'] is None]
@@ -227,7 +300,7 @@ def register_staffing_export_route(app, get_db, roles_required):
         if not count:
             if contractor:
                 return {'error': 'По выбранным фильтрам компании-подрядчика нет сотрудников для выгрузки.'}, 404
-            if category is not None or query:
+            if category is not None or query or any(value is not None for value in reference_filters.values()):
                 return {'error': 'По выбранным фильтрам нет сотрудников для выгрузки.'}, 404
             if department:
                 return {'error': 'По выбранным дате, смене и СМУ нет сотрудников для выгрузки.'}, 404

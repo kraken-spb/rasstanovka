@@ -11,10 +11,12 @@ HR_ROLE_NAME = 'Управление по работе с персоналом'
 USER_ROLES = {'super_admin', 'admin', 'foreman', 'viewer', HR_VIEWER, 'rotation', 'recruitment'}
 WORKFORCE_SERVICE_ROLES = {'rotation', 'recruitment'}
 WORKFORCE_LEGACY_READ_ENDPOINTS = {
+    'work_types_list',
+    'placement_report_closure', 'placement_report_closure_version',
     'index', 'reference', 'dashboard', 'activity_dates', 'assignments',
     'employees', 'crew_transfer_options', 'list_crew_catalog', 'crew_catalog_members',
     'list_crews', 'crew_departments', 'crew_board', 'crew_candidates',
-    'contractors', 'categories', 'location_catalogs', 'list_smu',
+    'contractors', 'categories', 'location_catalogs', 'list_smu', 'list_pps',
     'personnel_dashboard', 'placement_report', 'get_verification', 'position_cards_pdf',
     'staffing_people', 'staffing_table', 'staffing_export_options', 'staffing_export',
     'staffing_history_state', 'calendar', 'get_preferences', 'get_profile',
@@ -22,12 +24,17 @@ WORKFORCE_LEGACY_READ_ENDPOINTS = {
 
 # Reviewed business-data reads. New endpoints must explicitly opt in here.
 HR_READ_ENDPOINTS = {
+    'work_types_list',
+    'smg_plans',
+    'placement_report_closure_scopes',
+    'workforce_operations', 'workforce_readiness',
+    'placement_report_closure', 'placement_report_closure_version',
     'workforce_reference', 'workforce_people', 'workforce_person', 'workforce_export',
     'workforce_export_job_status', 'workforce_export_job_download',
     'index', 'reference', 'dashboard', 'activity_dates', 'assignments', 'retired_plans',
     'users', 'employees', 'crew_transfer_options', 'list_crew_catalog', 'crew_catalog_members',
     'list_crews', 'crew_departments', 'crew_board', 'crew_candidates',
-    'contractors', 'categories', 'location_catalogs', 'list_smu', 'assignment_logs',
+    'contractors', 'categories', 'location_catalogs', 'list_smu', 'list_pps', 'assignment_logs',
     'personnel_dashboard', 'placement_report', 'get_verification', 'position_cards_pdf',
     'staffing_people', 'staffing_table', 'staffing_export_options', 'staffing_export',
     'staffing_history_state', 'calendar', 'telegram_status', 'activity',
@@ -37,6 +44,7 @@ HR_PERSONAL_OPERATIONS = {
     ('save_preferences', 'PATCH'), ('heartbeat', 'POST'), ('logout', 'POST'),
     # Creating a private export artifact does not edit personnel business data.
     ('workforce_export_job_create', 'POST'),
+    ('workforce_accommodation_prepare', 'POST'), ('workforce_accommodation_export', 'POST'),
 }
 
 

@@ -1,17 +1,13 @@
 (() => {
   'use strict';
   const stages = [['stage.leave', 'Неявка', 'on_leave'], ['stage.inbound', 'Заезд', 'inbound'],
-    ['stage.pvp', 'ПВП', 'pvp'], ['stage.onsite', 'Явка', 'onsite'], ['unconfirmed', 'Этап не подтверждён', 'unconfirmed']];
-  window.createWorkforceBoard = ({container, api, E, displayDate, openCard, reload}) => {
+    ['stage.pvp', 'ПВП', 'pvp'], ['stage.onsite', 'Явка', 'onsite'], ['stage.outbound', 'Выезд', 'outbound'], ['unconfirmed', 'Этап не подтверждён', 'unconfirmed']];
+  window.createWorkforceBoard = ({container, api, E, displayDate, openCard, reload, bulkEdit}) => {
     const state = {generation: 0, revision: null, query: null, reference: null, lanes: new Map(), selected: new Map(), loading: false,
       saving: false, dragRows: [], dialog: null, selectionBar: null, notice: null};
     const title = code => stages.find(row => row[0] === code)?.[1] || code;
     const writable = row => !!state.reference?.permissions?.transition && !!row.stage_token && row.transition_targets?.length > 0;
-    const targets = rows => stages.slice(0, 4).filter(([code]) => rows.length && rows.every(row => writable(row) && row.transition_targets.includes(code)));
-    function moscowToday() {
-      const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {timeZone: 'Europe/Moscow', year: 'numeric', month: '2-digit', day: '2-digit'}).formatToParts(new Date()).map(part => [part.type, part.value]));
-      return `${parts.year}-${parts.month}-${parts.day}`;
-    }
+    const targets = rows => stages.filter(([code]) => code !== 'unconfirmed').filter(([code]) => rows.length && rows.every(row => writable(row) && row.transition_targets.includes(code)));
     function announce(message) {if (state.notice) state.notice.textContent = message;}
     function syncSelection() {
       for (const checkbox of container.querySelectorAll('[data-wf-select]')) checkbox.checked = state.selected.has(Number(checkbox.dataset.wfSelect));
@@ -22,6 +18,8 @@
       state.selectionBar.replaceChildren(E('strong', {}, `Выбрано: ${rows.length} / 100`),
         E('button', {type: 'button', className: 'primary-button', disabled: !targets(rows).length, onclick: () => transition(rows)}, 'Изменить этап выбранным'),
         E('button', {type: 'button', className: 'secondary-button', onclick: () => {state.selected.clear();syncSelection();}}, 'Снять выбор'));
+      if (bulkEdit && state.reference?.permissions?.profile) state.selectionBar.insertBefore(
+        E('button', {type: 'button', className: 'primary-button', onclick: () => bulkEdit(rows)}, 'Изменить данные'), state.selectionBar.children[1]);
       if (rows.length && !targets(rows).length) state.selectionBar.append(E('small', {}, 'Для выбранных сотрудников нет общего доступного перехода.'));
     }
     function toggle(row, selected) {
@@ -111,26 +109,17 @@
       }
       state.lanes.set(code, lane);renderLane(lane);return node;
     }
-    async function load(query, reference) {
+    async function load(query, reference, initial = null) {
       const generation = ++state.generation;
       state.query = new URLSearchParams(query);state.query.delete('queue');state.reference = reference;
       state.loading = true;container.inert = true;container.setAttribute('aria-busy', 'true');clearDrag();
       const selectedStages = state.query.getAll('stage').filter(Boolean);
       try {
-        let responses;
-        for (let attempt = 0; attempt < 3; attempt++) {
-          responses = await Promise.all(stages.map(async ([code]) => {
-            if (selectedStages.length && !selectedStages.includes(code)) return {rows: [], totals: {total: 0}};
-            const params = new URLSearchParams(state.query);params.set('stage', code);params.set('limit', '20');params.set('offset', '0');
-            return api('people?' + params);
-          }));
-          if (generation !== state.generation) return null;
-          // Do not show a person in two columns when a transition occurred between reads.
-          const versions = new Set(responses.filter(row => row.revision != null).map(row => row.revision));
-          if (versions.size === 1) {state.revision = [...versions][0];break;}
-          if (attempt === 2) throw new Error('Состав сотрудников изменяется. Обновите доску, чтобы показать согласованные данные.');
-        }
+        // All lanes and counters are read in one repeatable-read snapshot.
+        const data = initial || await api('board?' + state.query);
+        const responses = stages.map(([code]) => data.lanes[code]);
         if (generation !== state.generation) return null;
+        state.revision = data.revision;
         state.selected.clear();state.lanes.clear();
         state.selectionBar = E('div', {className: 'wf-board-selection', hidden: true, 'aria-label': 'Действия с выбранными сотрудниками'});
         state.notice = E('p', {className: 'wf-board-notice', role: 'status', 'aria-live': 'polite'});
@@ -143,7 +132,7 @@
         });
         const totals = {total: 0};
         stages.forEach(([, , key], index) => {totals[key] = responses[index].totals.total;totals.total += totals[key];});
-        return {totals};
+        return {totals, date_options: data.date_options};
       } catch (err) {
         if (generation === state.generation) {state.selected.clear();container.replaceChildren();}
         throw err;
@@ -151,54 +140,61 @@
         if (generation === state.generation) {state.loading = false;container.inert = false;container.setAttribute('aria-busy', 'false');}
       }
     }
-    function transition(rows, preferred) {
+    function transition(rows, preferred, inlineHost = null, onClose = null) {
       if (state.loading || state.saving || state.dialog?.open || !rows.length || rows.length > 100) return;
       const allowed = targets(rows);
       if (!allowed.length) {announce('Для выбранных сотрудников нет доступного перехода. Обновите список.');return;}
-      const reportDate = state.query.get('date'), today = moscowToday();
-      const maxDate = reportDate < today ? reportDate : today;
+      const reportDate = state.query.get('date');
       const minDate = rows.map(row => row.effective_date || '').sort().at(-1) || '';
-      if (minDate && minDate > maxDate) {announce('Дата текущего этапа позже доступной даты события. Проверьте отчётную дату.');return;}
-      const select = E('select', {required: true, name: 'stage_code', id: 'wf-transition-stage'}, ...allowed.map(([code, name]) => E('option', {value: code}, name)));
+      const initialDate = minDate > reportDate ? minDate : reportDate;
+      const select = E('select', {required:true, name:'stage_code', 'aria-label':'Новое состояние'},
+        ...allowed.map(([code, name]) => E('option', {value:code}, name)));
       if (preferred && allowed.some(([code]) => code === preferred)) select.value = preferred;
-      const eventDate = E('input', {type: 'date', required: true, name: 'effective_date', min: minDate, max: maxDate, value: maxDate, id: 'wf-transition-date'});
-      const reason = E('textarea', {required: true, maxLength: 10000, name: 'reason', rows: 3, id: 'wf-transition-reason', placeholder: 'Основание и подтверждение события'});
-      const message = E('p', {className: 'error-text wf-wide', role: 'alert', hidden: true});
-      const submit = E('button', {type: 'submit', className: 'primary-button'}, 'Подтвердить событие');
-      const close = E('button', {type: 'button', className: 'secondary-button', 'aria-label': 'Закрыть подтверждение'}, '×');
-      const cancel = E('button', {type: 'button', className: 'secondary-button'}, 'Отмена');
-      const dialog = E('dialog', {className: 'wf-transition-dialog', 'aria-labelledby': 'wf-transition-title'});
-      const form = E('form', {className: 'wf-form wf-transition-form'}, E('label', {}, 'Новый этап', select), E('label', {}, 'Дата события', eventDate),
-        E('label', {className: 'wf-wide'}, 'Основание', reason), message, E('div', {className: 'wf-wide wf-transition-actions'}, submit, cancel));
-      const list = E('ul', {className: 'wf-transition-people'}, ...rows.map(row => E('li', {}, row.full_name + ' · ' + title(row.stage_code || 'unconfirmed'))));
-      dialog.append(E('header', {className: 'wf-card-heading'}, E('h2', {id: 'wf-transition-title'}, 'Изменить текущий этап'), close),
-        E('p', {className: 'wf-transition-explanation'}, 'Подтвердите фактическое событие. Будущие заезды и выезды сохраняются отдельно в поездках.'),
-        E('details', {className: 'wf-transition-list', open: rows.length === 1}, E('summary', {}, `Сотрудников: ${rows.length} · на ${displayDate(reportDate)}`), list), form);
-      let attempt = null;
-      const closeDialog = () => {if (!state.saving) dialog.close();};
-      close.addEventListener('click', closeDialog);cancel.addEventListener('click', closeDialog);
-      dialog.addEventListener('cancel', event => {if (state.saving) event.preventDefault();});
-      dialog.addEventListener('close', () => {dialog.remove();if (state.dialog === dialog) state.dialog = null;});
-      form.addEventListener('submit', async event => {
-        event.preventDefault();if (state.saving || !form.reportValidity()) return;
-        if (!reason.value.trim()) {message.textContent = 'Укажите основание события.';message.hidden = false;reason.focus();return;}
-        if (eventDate.value > moscowToday() || eventDate.value > reportDate || (minDate && eventDate.value < minDate)) {
-          message.textContent = 'Дата события должна быть не раньше текущего этапа и не позже отчётной даты или сегодняшнего дня.';message.hidden = false;return;
-        }
-        const values = {date: reportDate, effective_date: eventDate.value, stage_code: select.value, reason: reason.value.trim(), people: rows.map(row => ({id: row.id, token: row.stage_token}))};
-        const fingerprint = JSON.stringify(values);
-        if (!attempt || attempt.fingerprint !== fingerprint) attempt = {fingerprint, key: crypto.randomUUID()};
-        state.saving = true;form.inert = true;close.disabled = true;message.hidden = true;submit.textContent = 'Сохранение…';
-        try {
-          const result = await api('transitions', {method: 'POST', body: JSON.stringify({...values, request_key: attempt.key})});
-          dialog.close();state.selected.clear();await reload();
-          announce(`Подтверждён этап «${title(result.stage_code)}»: ${result.changed} сотрудников. Дата события: ${displayDate(result.effective_date)}.`);
-        } catch (err) {message.textContent = err.message;message.hidden = false;}
-        finally {state.saving = false;form.inert = false;close.disabled = false;submit.textContent = 'Подтвердить событие';}
+      const reason = E('input', {type:'text',maxLength:10000,'aria-label':'Комментарий для истории (необязательно)',
+        placeholder:'Комментарий для истории (необязательно)'});
+      const tickets = window.createWorkforceTickets({E,rows,reference:state.reference,allowDirectArrival:true});
+      const extra = E('div', {className:'wf-transition-extra'});
+      if (!preferred) extra.append(E('label', {}, 'Новое состояние', select));
+      extra.append(tickets.element, reason);
+      let attempt = null, result = null;
+      const picker = window.DateFilter.mount({
+        title: preferred ? 'Состояние: ' + title(select.value) : 'Изменить состояние',
+        description: rows.length === 1 ? rows[0].full_name : `Выбрано сотрудников: ${rows.length}`,
+        single:true,allowEmpty:false,allowAll:false,applyLabel:'Сохранить состояние',extra,
+        value:{from:initialDate,to:initialDate},
+        canApply:()=>!state.saving,
+        onApply:async value=>{
+          if (minDate && value.from < minDate) throw Error('Дата перехода раньше текущего состояния. Для исправления истории откройте карточку сотрудника.');
+          if (!tickets.validate()) throw Error('Проверьте реквизиты билетов.');
+          const values = {date:reportDate,effective_date:value.from,stage_code:select.value,reason:reason.value.trim(),
+            people:rows.map(row=>({id:row.id,token:row.stage_token}))};
+          if (!tickets.element.hidden) values.tickets = tickets.values();
+          const fingerprint = JSON.stringify(values);
+          if (!attempt || attempt.fingerprint !== fingerprint) attempt = {fingerprint,key:crypto.randomUUID()};
+          state.saving = true;
+          try {result = await api('transitions', {method:'POST',body:JSON.stringify({...values,request_key:attempt.key})});}
+          finally {state.saving = false;}
+        },
+        onChange:async()=>{
+          state.saving = true;state.selected.clear();
+          try {
+            await reload();
+            announce(`Состояние «${title(result.stage_code)}» сохранено для ${result.changed} сотрудников с ${displayDate(result.effective_date)}.`);
+          } catch (error) {announce('Состояние сохранено. Не удалось обновить список: ' + error.message);}
+          finally {state.saving = false;}
+        },
+        onClose:()=>{if (state.dialog === calendarDialog) state.dialog = null;if (onClose) onClose();}
       });
-      state.dialog = dialog;document.body.append(dialog);dialog.showModal();select.focus();
+      const calendarDialog = picker.open();
+      calendarDialog.classList.add('wf-transition-calendar');state.dialog = calendarDialog;
+      select.addEventListener('change',()=>tickets.update(select.value));
+      tickets.update(select.value);
     }
-    return {load, canLeave: () => {
+    return {load, closeInline: () => {if (state.dialog?.classList.contains('wf-transition-calendar') && !state.saving) state.dialog.close();}, transitionRows: (rows, query, reference, notice, preferred, inlineHost, onClose) => {
+      if (!query || state.saving || state.dialog?.open) return;
+      state.query = new URLSearchParams(query); state.reference = reference; state.notice = notice;
+      transition(rows, preferred, inlineHost, onClose);
+    }, canLeave: () => {
       if (state.saving) return false;
       if (state.dialog?.open) {
         if (!window.confirm('Закрыть подтверждение перемещения без сохранения?')) return false;

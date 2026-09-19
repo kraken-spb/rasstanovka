@@ -105,7 +105,7 @@ class PlacementDynamicsTest(unittest.TestCase):
 
     def test_validation_single_day_empty_and_legacy_contract(self):
         for filters in [dict(start=''), dict(start='2026-02-30'), dict(start='2026-09-14'),
-                        dict(start='2026-06-12'), dict(start='2026-09-13', metric='invalid'),
+                        dict(start='2025-09-12'), dict(start='2026-09-13', metric='invalid'),
                         dict(start='2026-09-13', pps_details='yes')]:
             self.assertEqual(self.get(**filters).status_code, 400, filters)
         one = self.get(start='2026-09-13', category='').get_json()['dynamics']

@@ -1,0 +1,30 @@
+.wf-bulk-dialog { width: min(760px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); padding: 18px; border: 1px solid #cad9cf; border-radius: 12px; color: #243d2e; overflow: auto; }
+.wf-bulk-dialog::backdrop { background: #172f2559; }
+.wf-bulk-dialog > p { margin: 8px 0; font-size: 12px; }
+.wf-bulk-form, .wf-bulk-form label { display: grid; gap: 6px; min-width: 0; font-size: 12px; }
+.wf-bulk-form { gap: 10px; }
+.wf-bulk-fields { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 10px; }
+.wf-bulk-wide { grid-column: 1 / -1; }
+.wf-bulk-form input, .wf-bulk-form select, .wf-bulk-form textarea { box-sizing: border-box; min-width: 0; width: 100%; max-width: 100%; min-height: 34px; font: inherit; padding: 6px 8px; border: 1px solid #cad9cf; border-radius: 6px; }
+.wf-bulk-form select { text-overflow: ellipsis; }
+.wf-bulk-hint:empty, .wf-bulk-message:empty { display: none; }
+.wf-bulk-preview { max-height: 240px; overflow: auto; border: 1px solid #dce5df; border-radius: 6px; }
+.wf-bulk-preview table { border-collapse: collapse; width: 100%; table-layout: fixed; }
+.wf-bulk-preview th, .wf-bulk-preview td { text-align: left; padding: 7px; overflow-wrap: anywhere; border-bottom: 1px solid #e9eeeb; }
+.wf-bulk-preview th { position: sticky; top: 0; background: #f3f7f4; }
+.wf-bulk-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.wf-bulk-message { color: #8a3b2d; }
+#view-staffing .staffing-table thead th:nth-child(15) { width: 7%; }
+@media (max-width: 600px) {
+  .wf-bulk-dialog { padding: 12px; }
+  .wf-bulk-fields { grid-template-columns: minmax(0,1fr); }
+  .wf-bulk-form input, .wf-bulk-form select, .wf-bulk-form textarea { min-height: 40px; font-size: 16px; }
+  .wf-bulk-actions button { min-height: 40px; }
+  .wf-bulk-preview table, .wf-bulk-preview tbody { display: block; }
+  .wf-bulk-preview thead { display: none; }
+  .wf-bulk-preview tr { display: block; border-bottom: 1px solid #dce5df; }
+  .wf-bulk-preview td { display: block; border: 0; }
+  .wf-bulk-preview td::before { content: attr(data-label) ': '; color: #607567; }
+}
+
+.wf-bulk-result { margin: 8px 0; padding: 8px 10px; border-radius: 6px; background: #e5f3eb; color: #176d50; font-size: 12px; }

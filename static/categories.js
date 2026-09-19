@@ -24,6 +24,7 @@
   }
   function error(message = '') { $('categories-error').textContent = message; $('categories-error').hidden = !message; }
   async function api(url, options = {}) {
+    if (options.method && options.method !== 'GET') window.catalogData.invalidate();
     const response = await fetch(url, { ...options, cache: 'no-store', headers: {
       'Content-Type': 'application/json', 'X-CSRF-Token': root.dataset.csrf,
     }});
@@ -39,17 +40,18 @@
     }
     return true;
   }
-  async function refresh(force = false) {
+  async function refresh(force = false, reuse = false) {
     if (!force && !canLeave()) return;
     state.busy = true; $('view-categories').inert = true; error(); status('Загрузка справочника…');
     try {
-      state.rows = (await api('/api/gdlr-categories')).rows;
+      const result = await window.catalogData.get('/api/gdlr-categories', () => api('/api/gdlr-categories'), {refresh: !reuse});
+      state.rows = result.rows;state.hierarchy = result.hierarchy;
       render(); status('');
     } catch (failure) { error(failure.message); }
     finally { state.busy = false; $('view-categories').inert = false; }
   }
-  async function load() { await refresh(true); }
-  function rowDraft(item) { return state.drafts.get(item.id) || {name: item.name, active: !!item.active, color: colorValue(item.color), expected_token: item.edit_token}; }
+  async function load() { await refresh(true, true); }
+  function rowDraft(item) { return state.drafts.get(item.id) || {name: item.name, active: !!item.active, staffing_allowed: !!item.staffing_allowed, color: colorValue(item.color), expected_token: item.edit_token}; }
   function createColorPreview() {
     $('category-create-color-value').textContent = state.createColor;
     $('category-create-cancel').hidden = !state.createDraft.length && state.createColor === DEFAULT_COLOR;
@@ -68,12 +70,13 @@
         const swatch = el('span', {className: 'category-color-swatch', 'aria-hidden': 'true'});swatch.style.backgroundColor = colorValue(item.color);
         return el('article', {className: 'category-catalog-row category-catalog-readonly'},
           el('strong', {}, item.name), el('span', {className: 'category-color-readonly'}, swatch, colorValue(item.color)),
-          el('span', {}, item.active ? 'Доступна для выбора' : 'Отключена'),
+          el('span', {}, (item.active ? 'Доступна для выбора' : 'Отключена') + ' · Показывать в расстановке: ' + (item.staffing_allowed ? 'да' : 'нет')),
           el('small', {}, 'Связано сотрудников: ' + item.employee_count + (item.staffing_allowed ? ' · Расстановка' : ' · Общий учёт')));
       }
       const draft = rowDraft(item);
       const name = el('input', {value: draft.name, maxLength: 200, required: true, 'aria-label': 'Название категории ' + item.name});
       const active = el('input', {type: 'checkbox', checked: draft.active, 'aria-label': 'Доступность категории ' + item.name});
+      const staffing = el('input', {type: 'checkbox', checked: draft.staffing_allowed, 'aria-label': 'Показывать в расстановке: ' + item.name});
       const color = el('input', {type: 'color', value: draft.color, 'aria-label': 'Цвет категории ' + item.name});
       const hex = el('output', {}, colorValue(draft.color));
       const save = el('button', {className: 'primary-button', disabled: !state.drafts.has(item.id), onclick: () => saveCategory(item)}, 'Сохранить');
@@ -82,18 +85,21 @@
       }}, 'Отмена');
       const changed = () => {
         const chosenColor = colorValue(color.value);hex.textContent = chosenColor;
-        if (name.value === item.name && active.checked === !!item.active && chosenColor === colorValue(item.color)) state.drafts.delete(item.id);
-        else state.drafts.set(item.id, {name: name.value, active: active.checked, color: chosenColor, expected_token: draft.expected_token});
+        if (name.value === item.name && active.checked === !!item.active && staffing.checked === !!item.staffing_allowed && chosenColor === colorValue(item.color)) state.drafts.delete(item.id);
+        else state.drafts.set(item.id, {name: name.value, active: active.checked, staffing_allowed: staffing.checked, color: chosenColor, expected_token: draft.expected_token});
         save.disabled = !state.drafts.has(item.id); cancel.hidden = save.disabled;
       };
-      name.addEventListener('input', changed); active.addEventListener('change', changed);color.addEventListener('input', changed);color.addEventListener('change', changed);
+      name.addEventListener('input', changed); active.addEventListener('change', changed);staffing.addEventListener('change', changed);color.addEventListener('input', changed);color.addEventListener('change', changed);
       return el('article', {className: 'category-catalog-row'}, el('label', {}, 'Название', name),
         el('label', {className: 'category-color-label'}, 'Цвет диаграммы', el('span', {className: 'category-color-control'}, color, hex)),
-        el('label', {className: 'check-label'}, active, 'Доступна для выбора'),
+        el('div', {className: 'category-availability check-label'},
+          el('label', {className: 'check-label'}, active, 'Доступна для выбора'),
+          el('label', {className: 'check-label', title: 'Для показа категория также должна быть доступна для выбора. Отключение не удаляет сохранённые назначения.'}, staffing, 'Показывать в расстановке')),
         el('small', {}, 'Связано сотрудников: ' + item.employee_count + (item.staffing_allowed ? ' · Расстановка' : ' · Общий учёт')), el('div', {className: 'category-actions'}, save, cancel,
           el('button', {type: 'button', className: 'text-button error-text', 'aria-label': 'Удалить категорию ' + item.name,
             onclick: () => remove(item)}, 'Удалить')));
     }));
+    window.gdlrHierarchy?.render(list, state.rows, state.hierarchy);
     $('categories-empty').hidden = count !== 0;
   }
   async function remove(item) {

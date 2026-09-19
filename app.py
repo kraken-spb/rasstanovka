@@ -74,11 +74,13 @@ def cache_policy(response):
             response.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
         return response
     # Authenticate and compute the current representation before validating a cached copy.
+    memory_only = request.endpoint in ('workforce_people', 'workforce_person')
     if (request.method in ('GET', 'HEAD') and response.status_code == 200
-            and request.path in ('/api/reference', '/api/staffing/people')):
+            and (memory_only or request.path in ('/api/reference', '/api/staffing/people', '/api/workforce/reference'))):
         identity = f"{g.user['id']}:{g.user['role']}:".encode('utf-8')
         response.set_etag(hashlib.sha256(identity + response.get_data()).hexdigest())
-        response.headers['Cache-Control'] = 'private, no-cache, max-age=0, must-revalidate'
+        # Personnel responses may be reused explicitly in this tab's memory only.
+        response.headers['Cache-Control'] = 'no-store' if memory_only else 'private, no-cache, max-age=0, must-revalidate'
         response.vary.add('Cookie')
         response.make_conditional(request)
     else:
@@ -235,6 +237,8 @@ def init_db():
     migrate_attendance_status(db)
     from performed_work import migrate_performed_work
     migrate_performed_work(db)
+    from work_types import migrate_work_types
+    migrate_work_types(db)
     from selected_transfer import migrate_selected_transfer
     migrate_selected_transfer(db)
     from staffing_history import migrate_history
@@ -255,6 +259,8 @@ def init_db():
     migrate_smu_access(db)
     from smu_api import migrate_smu_catalog
     migrate_smu_catalog(db)
+    from pps_api import migrate_pps_catalog
+    migrate_pps_catalog(db)
     from telegram_api import migrate_telegram
     migrate_telegram(db)
     from placement_verification import migrate_verification
@@ -677,11 +683,15 @@ from employer_api import register_employer_routes
 register_employer_routes(app, get_db, roles_required, utc_now)
 from smu_api import register_smu_routes
 register_smu_routes(app, get_db, roles_required, utc_now)
+from pps_api import register_pps_routes
+register_pps_routes(app, get_db, roles_required, utc_now)
 register_backup_routes(app, get_db, roles_required)
 register_location_routes(app, get_db, roles_required, utc_now)
 register_log_routes(app, get_db, roles_required)
 register_table_routes(app, get_db, roles_required, utc_now)
 register_staffing_routes(app, get_db, roles_required, utc_now)
+from work_types import register_work_types
+register_work_types(app, get_db, roles_required, utc_now)
 from staffing_history import register_history
 register_history(app, get_db, roles_required, utc_now)
 from day_inheritance import register_day_inheritance
@@ -701,6 +711,19 @@ from selected_transfer import register_selected_transfer
 register_selected_transfer(app, get_db, roles_required, utc_now)
 from workforce_api import register_workforce_routes
 register_workforce_routes(app, get_db, roles_required)
+if os.environ.get('DATABASE_BACKEND') == 'postgres':
+    from ticket_import import register_ticket_import
+    register_ticket_import(app, get_db, roles_required)
+    from rotation_summary import register_rotation_summary
+    register_rotation_summary(app, get_db, roles_required)
+    from smg_api import register_smg_routes
+    register_smg_routes(app, get_db, roles_required)
+    from workforce_operations import register_workforce_operations
+    register_workforce_operations(app, get_db, roles_required)
+    from report_closure import register_report_closure
+    from report_closure_access import authorize_report_scope, register_report_scope_options
+    register_report_scope_options(app, get_db, roles_required)
+    register_report_closure(app, get_db, roles_required, utc_now, authorize_scope=authorize_report_scope)
 
 with app.app_context():
     init_db()

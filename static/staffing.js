@@ -1,28 +1,23 @@
 (() => {
   "use strict";
   const MF = window.MultiFilter;
-  const hierarchy = window.StaffingHierarchy;
   const $ = (id) => document.getElementById(id);
   if (!$('view-staffing')) return;
   const root = document.querySelector('.app-shell');
   const readOnly = ['hr_viewer', 'rotation', 'recruitment'].includes(root.dataset.role);
-  const state = { rows: [], crews: [], crewOptions: [], collapsed: new Set(), selected: new Map(), drafts: new Map(), crewDrafts: new Map(),
-    nodes: new Map(), crewNodes: new Map(), loadedCrews: new Set(), loadingCrews: new Map(), busy: false, request: 0,
-    details: null, reference: null, imported: null, preview: null, search: '', regex: null, regexMode: false, department: '', employer: '', contractor: '', author: '', category: '', unassigned: false,
-    date: $('staffing-date').value, shift: MF.get($('staffing-shift')), freshness: '', calendarFilter: null, groupMode: 'hierarchy', itrGroups: [], rowsByItr: new Map() };
+  const state = { rows: [], crews: [], crewOptions: [], selected: new Map(), drafts: new Map(), crewDrafts: new Map(),
+    nodes: new Map(), crewNodes: new Map(), busy: false, request: 0,
+    details: null, reference: null, imported: null, preview: null, search: '', regex: null, regexMode: false, department: '', employer: '', contractor: '', author: '', category: '', work_type: '', unassigned: false,
+    date: $('staffing-date').value, shift: MF.get($('staffing-shift')), freshness: '', calendarFilter: null };
   ["staffing-shift", "staffing-category", "staffing-department", "staffing-author", "staffing-freshness"].forEach(id => MF.enable($(id), ''));
   const preferences = window.staffingPreferences;
   state.pps = preferences.get('pps', '');
   state.date = preferences.get('date', state.date);
   $('staffing-date').value = state.date;
-  for (const field of ['groupMode', 'department', 'employer', 'contractor', 'author', 'category', 'unassigned', 'search', 'regexMode', 'shift', 'freshness']) {
+  for (const field of ['department', 'employer', 'contractor', 'author', 'category', 'work_type', 'unassigned', 'search', 'regexMode', 'shift', 'freshness']) {
     state[field] = preferences.get(field, state[field]);
   }
   if (state.shift === 'all') state.shift = '';
-  state.groupLevels = preferences.get('groupLevels', hierarchy.defaults);
-  if (!hierarchy.valid(state.groupLevels)) state.groupLevels = [...hierarchy.defaults];
-  updateHierarchyLabel();
-  $('staffing-grouping').value = state.groupMode;
   MF.set($('staffing-shift'), state.shift);
   MF.set($('staffing-freshness'), state.freshness);
   $('staffing-unassigned').checked = state.unassigned;
@@ -35,10 +30,19 @@
     if (!canLeave()) return false;
     state.page = page; state.pageSize = size; render();
     $('staffing-table').scrollTop = 0;
-  }, {bottom: false});
+  }, {top: false, unit: 'чел.', sizeLabel: 'Сотрудников на странице'});
+  const columnsButton = $('staffing-columns-toggle');
+  columnsButton.classList.add('table-pagination-columns');
+  columnsButton.title = 'Настроить столбцы';
+  const sorting = window.TableSort.mount({key:'staffingSort', canApply:canLeave,
+    fields:{name:'ФИО работника',personnel:'Табельный номер',department:'СМУ',pps:'ППС',crew_number:'№ бригады',
+      object:'Группа подобъектов',subobject:'Подобъект',contractor:'Компания подрядчик',employer:'Организация-работодатель',
+      category:'Категория ГДЛР',itr:'ФИО линейного ИТР',brigadier:'ФИО бригадира',shift:'Смена',attendance:'Статус',performed_work:'Выполняемые работы',work_type:'Вид работ',assignment_author:'Кто назначил'},
+    apply:()=>{state.page=0;render();$('staffing-table').scrollTop=0;}});
+  pager.setActions(sorting.button, columnsButton);
   const headers = ['№п/п', 'Группа подобъектов', 'Подобъект', 'Компания подрядчик',
     'Организация-работодатель', 'ФИО работника', 'Таб. № с префиксом',
-    'Категория ГДЛР', 'ФИО линейного ИТР', 'ФИО бригадира', 'Смена', 'Статус', 'Выполняемые работы', 'Кто назначил'];
+    'Категория ГДЛР', 'ФИО линейного ИТР', 'ФИО бригадира', 'Смена', 'Статус', 'Выполняемые работы', 'Кто назначил', '№ бригады', 'Вид работ'];
   const el = (tag, props = {}, ...children) => {
     const node = document.createElement(tag);
     for (const [key, value] of Object.entries(props)) {
@@ -49,6 +53,13 @@
     children.flat().forEach(child => { if (child != null) node.append(child); });
     return node;
   };
+  const workTypeFilter=el('select',{id:'staffing-work-type'});
+  $('staffing-category').closest('label').after(el('label',{},'Вид работ',workTypeFilter));MF.enable(workTypeFilter);
+  workTypeFilter.addEventListener('change',()=>{if(!canLeave()){MF.set(workTypeFilter,state.work_type);return;}state.work_type=MF.get(workTypeFilter);preferences.set({work_type:state.work_type});render();});
+  function renderWorkTypes(){
+    workTypeFilter.replaceChildren(el('option',{value:''},'Все виды работ'),el('option',{value:'none'},'Без вида работ'),
+      ...(state.workTypes||[]).map(r=>el('option',{value:String(r.id)},r.name+(r.active?'':' (отключён)'))));MF.set(workTypeFilter,state.work_type);
+  }
   const employerFilter = el('select', {id: 'staffing-employer'});
   $('staffing-department').closest('label').after(el('label', {}, 'Организация-работодатель', employerFilter));
   MF.enable(employerFilter);
@@ -86,6 +97,43 @@
   });
   const norm = (value) => String(value || '').toLocaleLowerCase('ru').replace(/ё/g, 'е');
   const matches = (value, query) => norm(query).split(/\s+/).filter(Boolean).every(word => norm(value).includes(word));
+  // The summary response packs name and personnel number into search_fields[0:2].
+  const personName = row => row.search_fields ? row.search_fields[0] : row.full_name;
+  const personNumber = row => row.search_fields ? row.search_fields[1] : row.personnel_no;
+  const personFilter = el('select', {id: 'staffing-person', 'aria-label': 'ФИО сотрудника'});
+  $('staffing-search').closest('label').before(el('label', {}, 'ФИО сотрудника', personFilter));
+  MF.enable(personFilter, '', {
+    limit: Infinity, selectedOnly: true, emptyLabel: 'Никто не выбран',
+    placeholder: 'ФИО или табельный номер', resetLabel: 'На текущей странице',
+    hint: 'Без поиска — сотрудники текущей страницы. Поиск — среди всех доступных на эту дату сотрудников. Отметьте человека, чтобы добавить его к показанным.',
+    caption: () => state.personIds === null ? 'На текущей странице' : 'Выбрано: ' + (state.personIds?.size || 0),
+    beforeOpen: () => {
+      if (!canLeave()) return false;
+      const current = displayedPersonRows();
+      const chosen = new Set(current.map(row => row.id));
+      personFilter.replaceChildren(...[...state.rows].sort((a,b) =>
+        Number(chosen.has(b.id)) - Number(chosen.has(a.id)) || personName(a).localeCompare(personName(b), 'ru') || a.id - b.id)
+        .map(row => el('option', {value: String(row.id)}, personName(row) + ' · ' + personNumber(row) + ' · ' +
+          String(row.department || '').replace(/^Строительно[-– ]монтажный участок\s*/i, 'СМУ '))));
+      MF.set(personFilter, current.map(row => String(row.id)));
+    },
+    resetValues: () => displayedPersonRows().map(row => row.id),
+    onApply: ids => {
+      if (!canLeave()) return false;
+      const before = new Set(displayedPersonRows().map(row => row.id));
+      state.personIds = new Set(ids.map(Number));
+      state.personFilterSignature = filterSignature();
+      state.page = 0;
+      const added = state.rows.filter(row => state.personIds.has(row.id) && !before.has(row.id));
+      render();
+      status('Выбрано по ФИО: ' + ids.length + ' чел.' + (added.length ? ' Добавлено к выборке: ' + added.length + '.' : '') +
+        ' Изменение остальных фильтров вернёт обычную фильтрацию.');
+    }
+  });
+  state.personIds = null;
+  function displayedPersonRows() {
+    return pageRows(visibleRows());
+  }
   function status(text, error = false) {
     $('staffing-status').textContent = text;
     $('staffing-status').classList.toggle('error-text', error);
@@ -97,7 +145,7 @@
       ...(!form ? {'Content-Type': 'application/json'} : {}), 'X-CSRF-Token': root.dataset.csrf, 'X-Staffing-Date': state.date }});
     const result = await response.json().catch(() => ({error: 'Не удалось прочитать ответ сервера.'}));
     if (!response.ok) { const error = new Error(result.error || 'Ошибка сохранения.'); error.status = response.status; throw error; }
-    if (options.method && !url.startsWith('/api/staffing/history')) await refreshHistory();
+    if (options.method && !url.startsWith('/api/staffing/history')) void refreshHistory();
     return result;
   }
   function canLeave() {
@@ -105,7 +153,6 @@
     if (state.createCrewEditor) { status('Завершите создание бригады или нажмите «Отмена».'); return false; }
     if (state.categoryEditor) { status('Сохраните категорию ГДЛР или нажмите «Отмена» в форме.'); return false; }
     if (state.transferEditor) { status('Завершите перенос или нажмите «Отмена» в форме.'); return false; }
-    if (state.employerEditor) { status('Сохраните работодателя или нажмите «Отмена» в форме.'); return false; }
     if (state.workEditor) { status('Сохраните выполняемые работы или нажмите «Отмена» в форме.'); return false; }
     if (state.busy) { status('Дождитесь завершения операции.'); return false; }
     if (state.details) { status('Завершите редактирование или нажмите «Отмена».'); return false; }
@@ -135,29 +182,32 @@
   }
   async function openFromCalendar(filter) {
     state.pps = ''; MF.set(ppsFilter, '');
-    state.calendarFilter = filter;
+    state.calendarFilter = filter.kind === 'person' ? null : filter;
     state.changeDirection = 'all';
-    state.search = ''; state.regex = null; state.regexMode = false; state.department = ''; state.employer = ''; state.contractor = ''; state.author = ''; state.category = ''; state.unassigned = false;
+    state.search = ''; state.regex = null; state.regexMode = false; state.department = ''; state.employer = ''; state.contractor = ''; state.author = ''; state.category = ''; state.work_type = ''; state.unassigned = false;
     state.freshness = ''; MF.set($('staffing-freshness'), '');
     state.selected.clear();
     $('staffing-search').value = ''; $('staffing-regex').checked = false; $('staffing-unassigned').checked = false;
     $('staffing-search-error').hidden = true;
     $('staffing-date').value = filter.date; MF.set($('staffing-shift'), filter.shift);
+    if (filter.kind === 'person') {state.search = filter.full_name; $('staffing-search').value = filter.full_name;}
     await load();
     $('staffing-calendar-filter').scrollIntoView({block: 'nearest'});
   }
   async function load({refreshReference = false, skipInheritance = false} = {}) {
-    const expanded = new Set(displayGroups().filter(crew => !state.collapsed.has(crew.id)).map(crew => crew.id));
+    if (!historyLoaded) void refreshHistory();
     const request = ++state.request;
     busy(true); status('Загрузка расстановки…');
     try {
-      const [data, reference, directory, contractors, crewOptions, categories] = await Promise.all([
+      const [data, reference, directory, contractors, crewOptions, categories, employers, workTypes] = await Promise.all([
         api('/api/staffing?date=' + $('staffing-date').value + '&shift=all&view=summary' + calendarQuery()),
-        window.appReference.get({refresh: refreshReference}), api('/api/staffing/people'), api('/api/contractors'), api('/api/staffing/crew-options'), api('/api/gdlr-categories')
+        window.appReference.get({refresh: refreshReference}), api('/api/staffing/people'), api('/api/contractors'), api('/api/staffing/crew-options'), api('/api/gdlr-categories'),
+        readOnly ? Promise.resolve({rows:[]}) : api('/api/staffing/employers'), api('/api/work-types')
       ]);
       if (request !== state.request) return;
       state.reference = reference;
       state.contractors = contractors.rows;
+      state.employers = employers.rows;state.workTypes=workTypes.rows;
       state.categories = categories.rows.filter(item => item.staffing_allowed);
       state.crewOptions = crewOptions.rows;
       state.people = directory.people;
@@ -171,8 +221,6 @@
       });
       if (state.date !== $('staffing-date').value || state.imported?.id !== data.import?.id) state.selected.clear();
       state.rows = data.index; state.crews = data.crews; state.imported = data.import;
-      rebuildItrGroups();
-      if (state.calendarFilter) displayGroups().forEach(crew => expanded.add(crew.id));
       $('staffing-calendar-filter').hidden = !state.calendarFilter;
       $('staffing-shift').querySelector('option[value="none"]').disabled = !!state.calendarFilter;
       if (state.calendarFilter) $('staffing-calendar-filter-label').textContent = 'Из сводной: ' + state.calendarFilter.label +
@@ -183,8 +231,6 @@
       $('staffing-shift').disabled = !!data.report_change;
       const membership = new Map(state.rows.map(row => [row.id, row.crew_id]));
       for (const [id, crewId] of state.selected) if (membership.get(id) !== crewId) state.selected.delete(id);
-      state.loadedCrews.clear(); state.loadingCrews.clear();
-      state.collapsed = new Set(displayGroups().filter(crew => !expanded.has(crew.id)).map(crew => crew.id));
       state.drafts.clear(); state.crewDrafts.clear();
       state.rowsByCrew = new Map();
       const departments = new Map();
@@ -202,11 +248,11 @@
       $('staffing-source').textContent = state.calendarFilter ? 'Сотрудники с фактическими назначениями по выбранной позиции.' :
         data.import ? data.import.filename + (data.import.id ? ' · лист «Явка»' : '') + (data.import.has_outstaff && data.import.id ? ' + Аутстафф' : '') : 'Импортируйте численность с листа «Явка».';
       if (data.report_change) $('staffing-source').textContent = 'Пришли — вошли в выбранную группу отчёта; ушли — вышли из неё. Сравнение за день, по обеим сменам.';
-      await loadPageRows(pageRows(visibleRows()));
+      await loadPageRows([...pageRows(visibleRows()), ...state.rows.filter(row => state.selected.get(row.id) === row.crew_id)]);
       if (request !== state.request) return;
       render();
       status(data.report_change ? 'Показаны только сотрудники, изменившие состав выбранного показателя относительно предыдущего дня.' : state.calendarFilter ? 'Показаны назначения за выбранную дату и смену. Фильтр позиции можно снять над таблицей.' :
-        readOnly ? 'Просмотр расстановки. Раскройте группу, чтобы увидеть сотрудников и их назначения.' : data.import ? 'Для переноса с предыдущего дня отметьте сотрудников и нажмите «Перенести со вчера». Выбор подобъекта сохраняется автоматически.' : 'После импорта здесь появятся сотрудники по бригадам.');
+        readOnly ? 'Просмотр расстановки сотрудников на выбранную дату.' : data.import ? 'Для переноса с предыдущего дня отметьте сотрудников и нажмите «Перенести со вчера». Выбор подобъекта сохраняется автоматически.' : 'После импорта здесь появятся сотрудники.');
     } catch (error) {
       state.rows = []; state.crews = []; state.drafts.clear(); state.crewDrafts.clear(); render(); status(error.message, true);
       throw error;
@@ -238,52 +284,82 @@
   function crewUrl(crewId) {
     return '/api/staffing?date=' + state.date + '&shift=all&crew_id=' + (crewId === null ? 'unassigned' : crewId) + calendarQuery();
   }
-  function rebuildItrGroups() {
-    state.rowsByItr = new Map();
-    const groups = new Map();
-    for (const row of state.rows) {
-      const key = row.itr_group_key;
-      if (!groups.has(key)) { groups.set(key, {id: key, name: row.itr_group_label, itr: true}); state.rowsByItr.set(key, []); }
-      state.rowsByItr.get(key).push(row);
-    }
-    state.itrGroups = [...groups.values()].sort((a,b) => a.name.localeCompare(b.name, 'ru'));
-    if (state.groupMode === 'hierarchy') state.hierarchy = hierarchy.build(state.rows, state.groupLevels, state.crews);
-  }
-  function displayGroups() { return state.groupMode === 'hierarchy' ? state.hierarchy?.nodes || [] : state.groupMode === 'itr' ? state.itrGroups : state.crews; }
-  function rowsForGroup(group) { return group.hierarchical ? state.hierarchy?.byId.get(group.id)?.rows || [] : (group.itr ? state.rowsByItr : state.rowsByCrew)?.get(group.id) || []; }
-  function groupKey(row) { return state.groupMode === 'hierarchy' ? state.hierarchy.paths.get(row.id)?.at(-1) : state.groupMode === 'itr' ? row.itr_group_key : row.crew_id; }
-  function groupKeys(row) { return state.groupMode === 'hierarchy' ? state.hierarchy.paths.get(row.id) || [] : [groupKey(row)]; }
-  function displayedGroup(row) { return displayGroups().find(group => group.id === groupKey(row)); }
+  const bulkGroup = {id: 'selected', name: 'отмеченные сотрудники', itr: true, flat: true};
+  function rowsForGroup(group) { return group.flat ? state.rows : state.rowsByCrew?.get(group.id) || []; }
+  function displayedGroup() { return bulkGroup; }
   function batchSnapshot(rows) {
     return {expected_crews: Object.fromEntries(rows.map(row => [row.id, row.crew_id])),
       expected_group_tokens: Object.fromEntries(rows.map(row => [row.id, row.group_token]))};
   }
   function pageRows(filtered) {
-    // Keep each leaf contiguous, including when the hierarchy is reordered.
-    const signature = JSON.stringify([state.date, state.groupMode, state.groupLevels, state.search, state.regexMode,
-      state.department, state.employer, state.contractor, state.pps, state.category, state.author,
-      state.unassigned, state.shift, state.freshness, state.calendarFilter, state.changeDirection]);
+    const levels = sorting.get();
+    const signature = JSON.stringify([filterSignature(), state.personIds && [...state.personIds],levels]);
     if (signature !== state.pageFilter) { state.page = 0; state.pageFilter = signature; }
-    const ranks = new Map(displayGroups().map((group, index) => [group.id, index]));
-    const ordered = [...filtered].sort((a, b) => (ranks.get(groupKey(a)) ?? 0) - (ranks.get(groupKey(b)) ?? 0));
+    const ordered = [...filtered].sort((a, b) => window.TableSort.compare(a,b,levels,sortValue));
     const info = window.TablePagination.windowFor(ordered.length, state.page, state.pageSize);
-    state.page = info.page;
+    state.page = info.page; state.pageTotal = ordered.length;
     return ordered.slice(info.start, info.end);
   }
-  function pageCrews(rows, includeCollapsed = false) {
-    const ids = new Set(rows.filter(row => includeCollapsed || groupKeys(row).every(key => !state.collapsed.has(key))).map(row => row.crew_id));
-    return state.crews.filter(crew => ids.has(crew.id) && !state.loadedCrews.has(crew.id));
+  function sortValue(row, key) {
+    const searchIndex={name:0,personnel:1,crew_number:7,object:8,subobject:9,itr:10,brigadier:11};
+    if(row.search_fields && key in searchIndex)return row.search_fields[searchIndex[key]];
+    if(key==='name')return row.full_name;
+    if(key==='personnel')return row.personnel_no;
+    if(key==='crew_number')return row.crew_name;
+    if(key==='object')return state.objects?.get(row.object_id)?.name || row.object_name;
+    if(key==='subobject')return state.sites?.get(row.subobject_id)?.name || row.subobject_name;
+    if(key==='itr')return row.linear_itr_name;
+    if(key==='brigadier')return row.brigadier_name;
+    if(key==='shift')return row.employee_shift;
+    if(key==='attendance')return row.attendance_status;
+    if(key==='assignment_author')return row.assignment_author?.full_name;
+    return row[key];
   }
-  async function loadPageRows(rows, includeCollapsed = false) {
-    const crews = pageCrews(rows, includeCollapsed);
-    const request = state.request;
-    for (let i = 0; i < crews.length; i += 4) {
-      await Promise.all(crews.slice(i, i + 4).map(loadCrew));
-      if (request !== state.request) return;
+  function pendingRows(rows) { return rows.filter(row => row.search_fields); }
+  async function readWorkerPages(rows) {
+    const unique = [...new Map(rows.map(row => [row.id, row])).values()];
+    const url = '/api/staffing?date=' + state.date + '&shift=all';
+    const suffix = calendarQuery(), pages = [];
+    // Bound concurrency so a large selection cannot occupy all web/DB workers.
+    for (let start = 0; start < unique.length; start += 200) {
+      const batches = [unique.slice(start, start + 100), unique.slice(start + 100, start + 200)].filter(batch => batch.length);
+      pages.push(...await Promise.all(batches.map(async batch => ({batch,
+        data: await api(url + '&worker_ids=' + batch.map(row => row.id).join(',') + suffix)}))));
+    }
+    return pages;
+  }
+  async function loadPageRows(rows) {
+    const request = state.request, pages = await readWorkerPages(pendingRows(rows));
+    if (request !== state.request) return;
+    for (const {batch, data} of pages) {
+      const fresh = new Map(data.rows.map(row => [row.id, row]));
+      if (data.import?.id !== state.imported?.id || batch.some(row => !fresh.has(row.id) ||
+          fresh.get(row.id).crew_id !== row.crew_id || fresh.get(row.id).group_token !== row.group_token)) {
+        throw new Error('Состав сотрудников изменился. Нажмите «Обновить».');
+      }
+    }
+    for (const {batch, data} of pages) {
+      const fresh = new Map(data.rows.map(row => [row.id, row]));
+      batch.forEach(row => hydrateRow(row, fresh.get(row.id)));
     }
   }
-  async function loadGroup(group) {
-    await loadPageRows(pageRows(visibleRows()).filter(row => groupKeys(row).includes(group.id)), true);
+  async function refreshWorkers(rows) {
+    // A drill-through may lose or gain members after this write; recompute it.
+    if (state.calendarFilter) return load();
+    const request = state.request, pages = await readWorkerPages(rows);
+    if (request !== state.request) return;
+    for (const {batch, data} of pages) {
+      const fresh = new Map(data.rows.map(row => [row.id, row]));
+      if (data.import?.id !== state.imported?.id || batch.some(row => !fresh.has(row.id) || fresh.get(row.id).crew_id !== row.crew_id)) return load();
+    }
+    for (const {batch, data} of pages) {
+      const fresh = new Map(data.rows.map(row => [row.id, row]));
+      batch.forEach(row => hydrateRow(row, fresh.get(row.id)));
+    }
+    const assigned = new Map();
+    state.rows.forEach(row => assigned.set(row.crew_id, (assigned.get(row.crew_id) || 0) + Number(!!row.assignment_id)));
+    state.crews.forEach(crew => {crew.assigned = assigned.get(crew.id) || 0;});
+    render();
   }
   function selectedRows(crew, includeCrewless = false) {
     const rows = rowsForGroup(crew).filter(row => state.selected.has(row.id) && state.selected.get(row.id) === row.crew_id);
@@ -294,15 +370,12 @@
     const count = rows.filter(item => state.selected.get(item.id) === item.crew_id).length;
     const box = el('input', {type: 'checkbox', className: row ? 'staffing-select-worker' : 'staffing-select-crew',
       checked: !!rows.length && count === rows.length, indeterminate: count > 0 && count < rows.length,
-      disabled: !rows.length, 'aria-label': row ? 'Выбрать сотрудника: ' + row.full_name : 'Выбрать сотрудников по фильтру: ' + crew.name,
-      title: row ? row.full_name : 'Выбрать сотрудников этой группы на текущей странице (' + rows.length + ')'});
+      disabled: !rows.length, 'aria-label': row ? 'Выбрать сотрудника: ' + row.full_name : 'Выбрать всех сотрудников на странице',
+      title: row ? row.full_name : 'Выбрать всех на текущей странице (' + rows.length + ')'});
     box.addEventListener('change', () => {
-      if (!canLeave()) { box.checked = count === rows.length; box.indeterminate = count > 0 && count < rows.length; return; }
+      if (!canLeave()) { syncSelection(); return; }
       rows.forEach(item => box.checked ? state.selected.set(item.id, item.crew_id) : state.selected.delete(item.id));
-      render();
-      const replacement = row ? state.nodes.get(row.id)?.querySelector('.staffing-select-worker') :
-        document.querySelector('[data-staffing-crew="' + crew.id + '"] .staffing-select-crew');
-      replacement?.focus({preventScroll: true});
+      syncSelection();
     });
     return box;
   }
@@ -311,35 +384,37 @@
     Object.assign(row, fresh, {number, object_id: state.sites.get(fresh.subobject_id)?.object_id || null});
     delete row.search_fields;
   }
-  async function loadCrew(crew) {
-    if (state.loadedCrews.has(crew.id)) return;
-    if (state.loadingCrews.has(crew.id)) return state.loadingCrews.get(crew.id);
-    const request = state.request;
-    const pending = (async () => {
-      const board = await api(crewUrl(crew.id));
-      if (request !== state.request) return;
-      const rows = state.rowsByCrew.get(crew.id) || [];
-      const fresh = new Map(board.rows.map(row => [row.id, row]));
-      if (board.import?.id !== state.imported?.id || rows.length !== fresh.size ||
-          rows.some(row => !fresh.has(row.id) || fresh.get(row.id).crew_id !== crew.id || fresh.get(row.id).itr_group_key !== row.itr_group_key)) {
-        throw new Error('Состав бригады изменился. Нажмите «Обновить».');
-      }
-      rows.forEach(row => hydrateRow(row, fresh.get(row.id)));
-      const details = board.crews.find(item => item.id === crew.id);
-      if (details) Object.assign(crew, details);
-      state.loadedCrews.add(crew.id);
-    })();
-    state.loadingCrews.set(crew.id, pending);
-    try { await pending; }
-    finally { if (request === state.request) state.loadingCrews.delete(crew.id); }
+  function syncSelection() {
+    let selected = 0;
+    const rows = new Map(state.rows.map(row => [row.id, row]));
+    for (const [id, tr] of state.nodes) {
+      const row = rows.get(id);
+      const checked = !!row && state.selected.get(id) === row.crew_id;
+      tr.querySelector('.staffing-select-worker').checked = checked;
+      tr.classList.toggle('staffing-row-selected', checked);
+      selected += Number(checked);
+    }
+    const box = $('staffing-table').querySelector('.staffing-select-page');
+    if (box) {box.checked = !!state.nodes.size && selected === state.nodes.size;box.indeterminate = selected > 0 && selected < state.nodes.size;}
+    paintCrewPlace(bulkGroup);
+    updateTotals({selectionOnly: true});
+  }
+  function filterSignature() {
+    return JSON.stringify([state.date, state.search, state.regexMode, state.department, state.employer,
+      state.contractor, state.pps, state.category, state.author, state.work_type, state.unassigned, state.shift,
+      state.freshness, state.calendarFilter, state.changeDirection]);
   }
   function visibleRows() {
+    if (state.personFilterSignature !== filterSignature()) state.personIds = null;
+    return state.personIds === null ? baseVisibleRows() : state.rows.filter(row => state.personIds.has(row.id));
+  }
+  function baseVisibleRows() {
     return state.rows.filter(row => {
       const fields = [...(row.search_fields || [row.full_name, row.personnel_no, row.profession, row.category, row.department, row.employer,
         row.crew_name, row.object_name || '', row.subobject_name || '', row.linear_itr_name || '', row.brigadier_name || '']),
         row.assignment_author?.full_name || ''];
       return (state.calendarFilter?.kind !== 'changes' || !state.changeDirection || state.changeDirection === 'all' || row.report_change?.direction === state.changeDirection) &&
-        MF.matches(state.pps, row.pps) && MF.matches(state.category, categoryKey(row)) &&
+        MF.matches(state.work_type, row.work_type_id == null ? 'none' : String(row.work_type_id)) && MF.matches(state.pps, row.pps) && MF.matches(state.category, categoryKey(row)) &&
         MF.matches(state.department, row.department) && (!state.unassigned || !row.assignment_id) &&
         MF.matches(state.employer, employerKey(row)) &&
         MF.matches(state.contractor, contractorKey(row)) &&
@@ -459,54 +534,36 @@
     const rows = state.rows.filter(row => state.selected.get(row.id) === row.crew_id);
     const visible = new Set(filtered.map(row => row.id));
     return {count: rows.length, hidden: rows.filter(row => !visible.has(row.id)).length,
-      filters: ['department', 'employer', 'contractor', 'author', 'category', 'pps', 'freshness', 'shift', 'search', 'unassigned'].filter(key => !!state[key]).length};
+      filters: ['department', 'employer', 'contractor', 'author', 'category', 'work_type', 'pps', 'freshness', 'shift', 'search', 'unassigned'].filter(key => !!state[key]).length};
   }
-  function updateTotals() {
-    renderEmployers();
-    renderContractors();
-    renderCategories();
-    renderAuthors();
-    renderFreshnessFilter();
+  function updateTotals({selectionOnly = false} = {}) {
+    if (!selectionOnly) {
+      renderEmployers();
+      renderContractors();
+      renderCategories();renderWorkTypes();
+      renderAuthors();
+      renderFreshnessFilter();
+      // Refresh the caption after another filter returns to its normal mode.
+      MF.set(personFilter, state.personIds ? [...state.personIds].map(String) : []);
+    }
     const filtered = visibleRows();
     const selected = state.rows.filter(row => state.selected.get(row.id) === row.crew_id);
     document.dispatchEvent(new CustomEvent('staffing-selection-change', {detail: mobileSelection(filtered)}));
     if ($('staffing-create-crew')) $('staffing-create-crew').textContent = selected.length ?
       '+ Создать бригаду из выбранных (' + selected.length + ')' : '+ Создать бригаду';
-    const unsupported = !selected.length || selected.some(row => row.crew_id == null);
     $('staffing-clear-selected').disabled = !selected.length;
     $('staffing-clear-selected').textContent = 'Сбросить расстановку (' + selected.length + ')';
-    // Collapsed crews contain summary rows; the editor loads and validates full details.
-    $('staffing-employer-selected').disabled = !selected.length;
-    $('staffing-employer-selected').textContent = 'Работодатель (' + selected.length + ')';
-    $('staffing-work-selected').disabled = !selected.length;
-    $('staffing-work-selected').textContent = 'Выполняемые работы (' + selected.length + ')';
-    $('staffing-category-selected').disabled = unsupported;
-    $('staffing-category-selected').textContent = 'Изменить ГДЛР (' + selected.length + ')';
     $('staffing-transfer-selected').disabled = !selected.length;
     $('staffing-transfer-selected').textContent = 'Перенести со вчера (' + selected.length + ')';
     $('staffing-transfer-tomorrow').disabled = !selected.length || state.date === '9999-12-31';
     $('staffing-transfer-tomorrow').textContent = 'Перенести на завтра (' + selected.length + ')';
+    if (selectionOnly) return;
     const assigned = filtered.filter(row => row.assignment_id).length;
     $('staffing-stats').replaceChildren(...[['Сотрудников', filtered.length], ['Расставлено', assigned],
       ['Без назначения', filtered.length - assigned]].map(([label, count]) =>
       el('div', {}, el('strong', {}, String(count)), el('span', {}, label))));
-    const counts = new Map();
-    filtered.forEach(row => {
-      for (const key of groupKeys(row)) {
-        if (!counts.has(key)) counts.set(key, {total: 0, assigned: 0});
-        const count = counts.get(key); count.total++; count.assigned += Number(!!row.assignment_id);
-      }
-    });
-    const selectedCounts = new Map();
-    for (const row of selected) for (const key of groupKeys(row)) selectedCounts.set(key, (selectedCounts.get(key) || 0) + 1);
-    document.querySelectorAll('[data-crew-count]').forEach(node => {
-      const crewId = state.groupMode !== 'crew' ? node.dataset.crewCount : node.dataset.crewCount === 'null' ? null : Number(node.dataset.crewCount);
-      const count = counts.get(crewId);
-      const selected = selectedCounts.get(crewId) || 0;
-      node.textContent = (count ? count.total + ' чел. · расставлено ' + count.assigned + (Number(node.dataset.pageCount) < count.total ? ' · на странице ' + node.dataset.pageCount : '') : '0 чел.') + (selected ? ' · выбрано ' + selected : '');
-    });
-    $('staffing-total').textContent = 'По фильтру: ' + filtered.length + (state.groupMode === 'hierarchy' ? ' чел., групп: ' : state.groupMode === 'itr' ? ' чел., групп ИТР: ' : ' чел., групп бригад: ') + counts.size +
-      (state.calendarFilter?.kind === 'changes' ? '. Всего с изменениями: ' : state.calendarFilter ? '. Всего по выбранной позиции: ' : '. Всего в импортированной численности: ') + state.rows.length + ' чел.';
+    $('staffing-total').textContent = 'По фильтру: ' + filtered.length + ' чел.' +
+      (state.calendarFilter ? ' Всего по выбранной позиции: ' : ' Всего в численности: ') + state.rows.length + ' чел.';
   }
   function objectOptions() {
     const grouped = new Map();
@@ -548,6 +605,7 @@
     columnSettings.cell(tr, 10).replaceChildren(shiftControl(state.crews.find(crew => crew.id === row.crew_id), row));
     columnSettings.cell(tr, 11).replaceChildren(attendanceControl(state.crews.find(crew => crew.id === row.crew_id), row));
     columnSettings.cell(tr, 12).replaceChildren(workControl(null, row));
+    columnSettings.cell(tr,15).replaceChildren(workTypeControl(null,row));
     const draft = state.drafts.get(row.id);
     const objectId = draft ? draft.objectId : row.object_id;
     const object = state.objects.get(objectId);
@@ -614,7 +672,7 @@
     if (message) subCell.append(el('small', {className: 'staffing-row-status' + (error ? ' error-text' : ''), role: 'status'}, message));
   }
   async function refreshRow(row) {
-    const board = await api(crewUrl(row.crew_id));
+    const [{data: board}] = await readWorkerPages([row]);
     const fresh = board.rows.find(member => member.id === row.id && member.crew_id === row.crew_id);
     if (!fresh) throw new Error('Состав бригады изменился. Обновите таблицу.');
     hydrateRow(row, fresh);
@@ -652,93 +710,63 @@
       if (refreshed && (state.author || state.freshness)) render();
     } finally { busy(false); }
   }
-  function crewPlaceRow(crew, visibleCount = null) {
-    const tr = el('tr', {className: 'staffing-crew-assignment'});
-    tr.append(cell(0, '', 'staffing-crew-caption'), cell(1, null), cell(2, null),
-      cell(3, groupContractorControl(crew)), el('td', {'data-label': 'Новая бригада'}),
-      el('td', {colSpan: 2, className: 'staffing-crew-actions'}), cell(7, selectedCategoryButton(crew)),
-      cell(8, responsibleButton(crew, null, 'linear_itr')), cell(9, responsibleButton(crew, null, 'brigadier')), cell(10, shiftControl(crew)), cell(11, attendanceControl(crew)), cell(12, workControl(crew)), cell(13, '—', 'staffing-secondary'));
-    state.crewNodes.set(crew.id, tr);
-    paintCrewPlace(crew, '', false, visibleCount);
+  function bulkRow() {
+    const tr = el('tr', {className: 'staffing-bulk-row', 'aria-label': 'Изменить выбранным сотрудникам'});
+    headers.forEach((_, index) => tr.append(cell(index, null)));
+    state.crewNodes.set(bulkGroup.id, tr);
+    paintCrewPlace(bulkGroup);
     return tr;
   }
-  function paintCrewPlace(crew, message = '', error = false, visibleCount = null) {
-    if (!crew) return;
-    const tr = state.crewNodes.get(crew.id);
+  function paintCrewPlace(crew = bulkGroup, message = '', error = false) {
+    const tr = state.crewNodes.get(bulkGroup.id);
     if (!tr) return;
-    const rows = selectedRows(crew, true);
-    const selectedCount = selectedRows(crew, true).length;
-    tr.classList.toggle('mobile-group-selected', selectedCount > 0);
-    columnSettings.cell(tr, 0).textContent = selectedCount ? 'Выбрано: ' + selectedCount : 'Выберите сотрудников';
-    columnSettings.cell(tr, 0).append(el('button', {type: 'button', className: 'text-button mobile-group-more',
-      'aria-expanded': String(tr.classList.contains('mobile-group-expanded')), onclick: event => {
-        const expanded = tr.classList.toggle('mobile-group-expanded');
-        event.currentTarget.setAttribute('aria-expanded', String(expanded));
-        event.currentTarget.textContent = expanded ? 'Скрыть дополнительные действия' : 'Все действия группы';
-      }}, tr.classList.contains('mobile-group-expanded') ? 'Скрыть дополнительные действия' : 'Все действия группы'));
-    columnSettings.cell(tr, 3).replaceChildren(groupContractorControl(crew));
-    columnSettings.cell(tr, 4).replaceChildren(groupCrewControl(crew));
-    columnSettings.cell(tr, 7).replaceChildren(responsibleButton(crew, null, 'linear_itr'));
-    columnSettings.cell(tr, 8).replaceChildren(responsibleButton(crew, null, 'brigadier'));
-    columnSettings.cell(tr, 9).replaceChildren(shiftControl(crew));
-    columnSettings.cell(tr, 10).replaceChildren(attendanceControl(crew));
-    columnSettings.cell(tr, 11).replaceChildren(workControl(crew));
-    columnSettings.cell(tr, 6).replaceChildren(selectedCategoryButton(crew));
-    const draft = state.crewDrafts.get(crew.id);
-    const sharedObject = rows.length && rows.every(row => row.object_id && row.object_id === rows[0].object_id) ? rows[0].object_id : null;
+    const rows = selectedRows(bulkGroup, true), count = rows.length;
+    tr.dataset.selected = String(count);
+    const set = (index, ...nodes) => columnSettings.cell(tr, index).replaceChildren(...nodes);
+    set(0, el('strong', {}, 'Выбрано: ' + count));
+    set(3, groupContractorControl(bulkGroup));
+    set(4, groupEmployerControl(bulkGroup));
+    set(7, selectedCategoryButton(bulkGroup));
+    set(8, responsibleButton(bulkGroup, null, 'linear_itr'));
+    set(9, responsibleButton(bulkGroup, null, 'brigadier'));
+    set(10, shiftControl(bulkGroup)); set(11, attendanceControl(bulkGroup));
+    set(15,workTypeControl(bulkGroup));set(12, workControl(bulkGroup)); set(14, groupCrewControl(bulkGroup));
+    const draft = state.crewDrafts.get(bulkGroup.id);
+    const sharedObject = count && rows.every(row => row.object_id === rows[0].object_id) ? rows[0].object_id : null;
     const objectId = draft ? draft.objectId : sharedObject;
-    const sharedSite = rows.length && rows.every(row => row.subobject_id && row.subobject_id === rows[0].subobject_id) ? rows[0].subobject_id : null;
-    const object = state.objects.get(objectId);
-    const disabled = !rows.length || rows.some(row => row.locked || !row.employee_shift);
-    const begin = () => ({objectId, workerIds: rows.map(row => row.id), snapshot: batchSnapshot(rows), expected: Object.fromEntries(rows.map(row => [row.id, row.day_token]))});
-    const objectSelect = el('select', {className: 'staffing-crew-object', disabled,
-      'aria-label': 'Группа подобъектов для выбранных: ' + crew.name, title: object?.name || 'Выберите группу'},
-      el('option', {value: '', disabled: true}, 'Выберите группу'), ...objectOptions());
+    const disabled = !count || rows.some(row => row.locked || !row.employee_shift);
+    const begin = () => ({objectId, workerIds:rows.map(row=>row.id), snapshot:batchSnapshot(rows),
+      expected:Object.fromEntries(rows.map(row=>[row.id,row.day_token]))});
+    const objectSelect = el('select', {className:'staffing-crew-object', disabled,
+      'aria-label':'Группа подобъектов для выбранных'}, el('option', {value:''}, 'Выбрать…'), ...objectOptions());
     objectSelect.value = objectId ? String(objectId) : '';
     objectSelect.addEventListener('change', () => {
-      if (state.busy || state.details || state.drafts.size) { objectSelect.value = objectId ? String(objectId) : ''; canLeave(); return; }
-      state.crewDrafts.set(crew.id, {...begin(), objectId: Number(objectSelect.value)});
-      paintCrewPlace(crew);
+      if (state.busy || state.details || state.drafts.size) { canLeave(); paintCrewPlace(); return; }
+      if (!objectSelect.value) state.crewDrafts.delete(bulkGroup.id);
+      else state.crewDrafts.set(bulkGroup.id, {...begin(), objectId:Number(objectSelect.value)});
+      paintCrewPlace();
     });
-    const selectedSite = draft ? (Object.hasOwn(draft, 'siteId') ? draft.siteId : undefined) : sharedSite;
-    const subSelect = el('select', {className: 'staffing-crew-subobject', disabled: disabled || !objectId,
-      'aria-label': 'Подобъект для выбранных: ' + crew.name,
-      title: state.sites.get(selectedSite)?.name || 'Выберите подобъект'},
-      el('option', {value: '', disabled: true}, objectId ? 'Выберите подобъект' : 'Сначала выберите группу'),
-      ...(state.subsByObject.get(objectId) || []).map(site => el('option', {value: String(site.id)}, site.name)),
-      ...(rows.some(row => row.assignment_id) ? [el('option', {value: 'clear'}, 'Без назначения')] : []));
-    subSelect.value = selectedSite ? String(selectedSite) : (draft && selectedSite === null ? 'clear' : '');
-    subSelect.addEventListener('change', () => {
-      if (state.busy || state.details || state.drafts.size) { canLeave(); paintCrewPlace(crew); return; }
-      state.crewDrafts.set(crew.id, {...(draft || begin()), siteId: subSelect.value === 'clear' ? null : Number(subSelect.value)});
-      paintCrewPlace(crew);
+    const siteSelect = el('select', {className:'staffing-crew-subobject', disabled:disabled || !objectId,
+      'aria-label':'Подобъект для выбранных'}, el('option', {value:''}, objectId ? 'Выбрать…' : 'Выберите группу'),
+      ...(state.subsByObject.get(objectId) || []).map(site=>el('option',{value:String(site.id)},site.name)),
+      ...(rows.some(row=>row.assignment_id) ? [el('option',{value:'clear'},'Без назначения')] : []));
+    siteSelect.value = draft && Object.hasOwn(draft,'siteId') ? (draft.siteId === null ? 'clear' : String(draft.siteId)) : '';
+    siteSelect.addEventListener('change', () => {
+      if (state.busy || state.details || state.drafts.size) { canLeave(); paintCrewPlace(); return; }
+      if (siteSelect.value) state.crewDrafts.set(bulkGroup.id, {...(draft || begin()), siteId:siteSelect.value === 'clear' ? null : Number(siteSelect.value)});
+      else if (draft) { delete draft.siteId; }
+      paintCrewPlace();
     });
-    columnSettings.cell(tr, 1).replaceChildren(objectSelect, el('button', {type: 'button',
-      className: 'secondary-button staffing-location-open', disabled,
-      'aria-label': 'Место работы выбранных: ' + crew.name, onclick: () => {
-        const snapshot = begin();
-        pickMobileLocation('Выбранные сотрудники: ' + rows.length, objectId, sharedSite, siteId => {
-          state.crewDrafts.set(crew.id, {...snapshot, objectId: siteId == null ? objectId : state.sites.get(siteId)?.object_id, siteId});
-          saveCrewPlace(crew);
-        });
-      }}, 'Выбрать место (' + rows.length + ')'));
-    columnSettings.cell(tr, 2).replaceChildren(subSelect);
-    if (object) columnSettings.cell(tr, 1).append(el('small', {className: 'staffing-selected-label'}, object.name));
-    if (selectedSite) columnSettings.cell(tr, 2).append(el('small', {className: 'staffing-selected-label'}, state.sites.get(selectedSite)?.name || ''));
-    const ready = draft && Object.hasOwn(draft, 'siteId');
-    const visibleIds = new Set(visibleRows().map(row => row.id));
-    const hiddenCount = rows.filter(row => !visibleIds.has(row.id)).length;
-    columnSettings.cell(tr, 5).replaceChildren(el('div', {className: 'staffing-crew-apply'},
-      el('button', {className: 'secondary-button', disabled: disabled || !ready,
-        onclick: () => saveCrewPlace(crew)}, (ready && draft.siteId === null ? 'Снять назначение выбранным' : 'Назначить выбранным') + ' (' + rows.length + ' чел.)'),
-      el('span', {}, rows.length ? 'Только отмеченные в этой группе: ' + rows.length + ' чел.' + (hiddenCount ? ' Скрыты фильтром: ' + hiddenCount + '.' : '') : 'Отметьте сотрудников или выберите всю группу чекбоксом в её заголовке.'),
-      ...(draft ? [el('button', {className: 'text-button', onclick: () => {
-        if (state.busy) return;
-        state.crewDrafts.delete(crew.id); paintCrewPlace(crew);
-      }}, 'Отмена')] : []),
-      ...(rows.some(row => row.shift_conflict) ? [el('small', {className: 'error-text'}, 'У сотрудника несколько назначений за дату. Уточните их в разделе «Состав бригад».')] :
-        rows.some(row => row.locked) ? [el('small', {className: 'error-text'}, 'В бригаде есть сотрудник с назначением другой бригады. Общее назначение недоступно.')] : []),
-      ...(message ? [el('small', {className: 'staffing-row-status' + (error ? ' error-text' : ''), role: 'status'}, message)] : [])));
+    set(1, objectSelect); set(2, siteSelect);
+    const visible = new Set(pageRows(visibleRows()).map(row=>row.id));
+    const elsewhere = rows.filter(row=>!visible.has(row.id)).length;
+    set(5, el('div',{className:'staffing-bulk-apply'},
+      el('span',{}, count ? 'Только отмеченным' + (elsewhere ? ' · вне страницы: ' + elsewhere : '') : 'Отметьте сотрудников чекбоксами'),
+      ...(draft ? [el('button',{type:'button',className:'primary-button',disabled:disabled || !Object.hasOwn(draft,'siteId'),
+        onclick:()=>saveCrewPlace(bulkGroup)},'Применить (' + count + ')'),
+      el('button',{type:'button',className:'text-button',onclick:()=>{state.crewDrafts.delete(bulkGroup.id);paintCrewPlace();}},'Отмена')] : []),
+      ...(count ? [el('button',{type:'button',className:'text-button',disabled:!!draft,onclick:()=>window.staffingScreen.clearSelection()},'Снять выделение')] : []),
+      ...(message ? [el('small',{role:'status',className:error ? 'error-text' : ''},message)] : [])));
   }
   async function saveCrewPlace(crew) {
     const draft = state.crewDrafts.get(crew.id);
@@ -755,7 +783,7 @@
       saved = true;
       if (state.calendarFilter || crew.itr) {
         state.crewDrafts.delete(crew.id);
-        await load(); status('Сохранено: ' + rows.length + ' чел.'); return;
+        await refreshWorkers(rows); status('Сохранено: ' + rows.length + ' чел.'); return;
       }
       const board = await api(crewUrl(crew.id));
       const fresh = new Map(board.rows.filter(row => row.crew_id === crew.id).map(row => [row.id, row]));
@@ -783,7 +811,7 @@
     busy(true);
     let saved = false;
     try {
-      await Promise.all(state.crews.filter(crew => crewIds.has(crew.id)).map(loadCrew));
+      await loadPageRows(rows);
       if (rows.some(row => row.locked || !row.day_token || !row.employee_shift)) {
         throw new Error('У отмеченного сотрудника конфликт назначений. Уточните его в разделе «Состав бригад».');
       }
@@ -802,96 +830,66 @@
         expected_tokens: Object.fromEntries(rows.map(row => [row.id, row.day_token]))})});
       saved = true;
       state.selected.clear();
-      await load();
+      await refreshWorkers(rows);
       status('Расстановка за ' + day + ' сброшена: ' + result.cleared + ' чел.');
     } catch (error) {
       status(saved ? 'Расстановка сброшена, но таблицу не удалось обновить. Нажмите «Обновить».' : error.message, true);
     } finally { busy(false); }
   }
   function render() {
-    rebuildItrGroups();
-    const filtered = visibleRows();
-    const page = pageRows(filtered);
+    const filtered = visibleRows(), page = pageRows(filtered);
     const pageIds = new Set(page.map(row => row.id));
     const elsewhere = [...state.selected.keys()].filter(id => !pageIds.has(id)).length;
-    pager.update(filtered.length, state.page, state.pageSize, elsewhere ? 'Выбрано вне этой страницы: ' + elsewhere + '. Массовые действия учитывают всех отмеченных.' : '');
-    if (pageCrews(page).length) {
+    pager.update(state.pageTotal, state.page, state.pageSize,
+      elsewhere ? 'Выбрано вне этой страницы: ' + elsewhere + '. Массовые действия учитывают всех отмеченных.' : '');
+    if (pendingRows(page).length) {
       if (state.pageLoading) return;
       state.pageLoading = true;
-      const request = state.request;
-      const wasBusy = state.busy;
+      const request = state.request, wasBusy = state.busy;
       busy(true); status('Загрузка страницы…');
-      $('staffing-table').replaceChildren(el('div', {className: 'empty-state', role: 'status'}, 'Загрузка страницы…'));
+      $('staffing-table').replaceChildren(el('div', {className:'empty-state',role:'status'}, 'Загрузка страницы…'));
       loadPageRows(page).then(() => {
         if (request === state.request) { state.pageLoading = false; render(); status('Страница загружена.'); }
       }).catch(error => {
         if (request === state.request) {
-          page.forEach(row => groupKeys(row).forEach(key => state.collapsed.add(key)));
-          state.pageLoading = false; render(); status(error.message + ' Повторите раскрытие группы.', true);
+          $('staffing-table').replaceChildren(el('div',{className:'empty-state',role:'alert'}, error.message));
+          status(error.message, true);
         }
       }).finally(() => { state.pageLoading = false; if (request === state.request) busy(wasBusy); });
       return;
     }
-    const groups = new Map();
-    state.nodes.clear();
-    state.crewNodes.clear();
-    page.forEach(row => { for (const key of groupKeys(row)) { if (!groups.has(key)) groups.set(key, []); groups.get(key).push(row); } });
-    const table = el('table', {className: 'staffing-table'}, el('thead', {}, el('tr', {}, ...headers.map(h => el('th', {scope: 'col'}, h)))));
-    displayGroups().filter(crew => groups.has(crew.id) &&
-      (!crew.hierarchical || !crew.ancestorIds.some(id => state.collapsed.has(id)))).forEach(crew => {
-      const rows = groups.get(crew.id);
-      const body = el('tbody', {'data-staffing-crew': String(crew.id)});
-      if (crew.hierarchical) {
-        body.classList.add('staffing-hierarchy-group');
-        body.classList.toggle('hierarchy-parent', !!crew.children.length);
-        body.style.setProperty('--group-depth', crew.depth);
-        body.dataset.groupLevel = crew.field;
-      }
-      const expanded = !state.collapsed.has(crew.id);
-      const toggle = el('button', {className: 'staffing-group-toggle', 'aria-expanded': String(expanded),
-        'aria-label': 'Развернуть или свернуть ' + crew.name, onclick: async () => {
-          if (!canLeave()) return;
-          if (!state.collapsed.has(crew.id)) { state.collapsed.add(crew.id); render(); return; }
-          const request = state.request;
-          busy(true); toggle.setAttribute('aria-busy', 'true'); status('Загрузка состава: ' + crew.name + '…');
-          try {
-            await loadGroup(crew);
-            if (request !== state.request) return;
-            state.collapsed.delete(crew.id); render(); status('Состав загружен: ' + crew.name + '.');
-          } catch (error) { status(error.message + ' Повторите раскрытие бригады.', true); }
-          finally {
-            toggle.removeAttribute('aria-busy');
-            if (request === state.request) busy(false);
-          }
-        }}, el('span', {className: 'staffing-outline-icon', 'aria-hidden': 'true'}, expanded ? '−' : '+'), crew.name);
-      body.append(el('tr', {className: 'staffing-group-row'}, el('th', {colSpan: headers.length, scope: 'rowgroup'},
-        el('div', {className: 'staffing-group-content'}, el('label', {className: 'check-label'}, selectionBox(crew, null, rows)), toggle,
-          el('span', {'data-crew-count': String(crew.id), 'data-page-count': rows.length}, rows.length + ' чел.'),
-          ...(!readOnly && crew.itr ? [el('small', {}, 'Бригад: ' + new Set(rows.map(row => row.crew_id).filter(Boolean)).size)] :
-            readOnly ? [] : [el('button', {className: 'text-button', disabled: !crew.id || crew.can_edit_whole === false,
-              title: crew.can_edit_whole === false ? 'В бригаде есть сотрудники других СМУ. Выберите доступных сотрудников для изменения ответственных.' : '',
-              onclick: () => openDetails(crew)}, 'Ответственные бригады')])))));
-      if (expanded && (!crew.hierarchical || !crew.children.length)) { if (!readOnly) body.append(crewPlaceRow(crew, rows.length)); rows.forEach(row => body.append(renderRow(row, state.crews.find(item => item.id === row.crew_id)))); }
-      table.append(body);
-    });
-    $('staffing-table').replaceChildren(filtered.length ? table : el('div', {className: 'empty-state'}, 'Нет сотрудников по выбранным условиям.'));
-    if (filtered.length) columnSettings.attach(table);
+    state.headerObserver?.disconnect();
+    state.nodes.clear(); state.crewNodes.clear();
+    const head = el('tr', {}, ...headers.map(h => el('th', {scope:'col'}, h)));
+    const selectPage = selectionBox(bulkGroup, null, page);
+    selectPage.classList.add('staffing-select-page');
+    head.cells[0].prepend(selectPage);
+    const thead = el('thead', {}, head);
+    if (!readOnly) thead.append(bulkRow());
+    const table = el('table', {className:'staffing-table staffing-flat-table'}, thead,
+      el('tbody', {}, ...page.map((row,index)=>renderRow(row,state.crews.find(crew=>crew.id===row.crew_id),state.page*state.pageSize+index+1))));
+    $('staffing-table').replaceChildren(filtered.length ? table : el('div',{className:'empty-state'},'Нет сотрудников по выбранным условиям.'));
+    if (filtered.length) {
+      columnSettings.attach(table);
+      state.headerObserver = new ResizeObserver(()=>table.style.setProperty('--staffing-header-height', head.getBoundingClientRect().height + 'px'));
+      state.headerObserver.observe(head);
+    }
     updateTotals();
   }
-  function renderRow(row, crew) {
+  function renderRow(row, crew, number) {
     const tr = el('tr', {className: 'staffing-worker-row' + (state.selected.get(row.id) === crew.id ? ' staffing-row-selected' : ''), 'data-worker-id': String(row.id)});
-    tr.append(cell(0, el('label', {className: 'check-label'}, selectionBox(crew, row), String(row.number)), 'staffing-number'), cell(1, null), cell(2, null),
+    tr.append(cell(0, el('label', {className: 'check-label'}, selectionBox(crew, row), String(number)), 'staffing-number'), cell(1, null), cell(2, null),
       cell(3, contractorControl(row), 'staffing-secondary'), cell(4, employerControl(row), 'staffing-secondary'),
-      cell(5, [el('strong', {}, row.full_name), row.pps ? el('small', {className: 'staffing-worker-crew'}, row.pps) : null,
+      cell(5, [document.getElementById('view-workforce') ? el('button', {type:'button',className:'wf-person-link',onclick:()=>window.openWorkforcePerson(row.id,state.date)}, row.full_name) : el('strong', {}, row.full_name), row.pps ? el('small', {className: 'staffing-worker-crew'}, row.pps) : null,
         row.report_change ? el('span', {className: 'staffing-change-badge ' + row.report_change.direction}, row.report_change.direction === 'arrived' ? 'Пришёл' : 'Ушёл') : null,
         row.report_change ? el('small', {className: 'staffing-worker-crew'}, row.report_change.previous_status + ' → ' + row.report_change.current_status) : null,
         el('span', {className: 'staffing-placement-badge', hidden: true}, 'Расставлен'),
-        state.groupMode !== 'crew' ? el('small', {className: 'staffing-worker-crew'}, row.crew_name || 'Без бригады') : null,
         el('span', {className: 'staffing-freshness'}), el('small', {className: 'staffing-freshness-detail'})], 'staffing-name'), cell(6, row.personnel_no),
       cell(7, selectedCategoryButton(crew, row), 'staffing-secondary'),
       cell(8, responsibleButton(crew, row, 'linear_itr'), 'staffing-secondary'),
       cell(9, responsibleButton(crew, row, 'brigadier')), cell(10, shiftControl(crew, row)), cell(11, attendanceControl(crew, row)), cell(12, workControl(null, row)),
-      cell(13, el('small', {className: 'staffing-assignment-author'}), 'staffing-secondary'));
+      cell(13, el('small', {className: 'staffing-assignment-author'}), 'staffing-secondary'),
+      cell(14, (row.crew_name || '').replace(/^Бригада\s*№?\s*/iu, '') || '—', 'staffing-crew-number'),cell(15,workTypeControl(null,row)));
     const more = el('button', {className: 'staffing-more text-button', 'aria-expanded': 'false', onclick: () => {
       const expanded = tr.classList.toggle('show-all'); more.setAttribute('aria-expanded', String(expanded));
       more.textContent = expanded ? 'Скрыть дополнительные поля' : 'Все поля';
@@ -911,7 +909,7 @@
       onclick: () => openSelectedCategory(targets),
       'aria-label': 'Категория ГДЛР' + (row ? ': ' + row.full_name : ' для выбранных: ' + crew.name),
       title: (value || 'Выбрать категорию') + (row ? ' · Корректировка сотрудника' : ' · Только выбранным сотрудникам')},
-      value || 'Выбрать категорию');
+      row ? value || 'Выбрать категорию' : 'Изменить…');
   }
   async function openSelectedCategory(selectedTargets = null) {
     if (!canLeave()) return;
@@ -922,8 +920,7 @@
     let catalog;
     try {
       const crewIds = new Set(targets.map(row => row.crew_id));
-      [catalog] = await Promise.all([api('/api/gdlr-categories'),
-        ...state.crews.filter(crew => crewIds.has(crew.id)).map(loadCrew)]);
+      [catalog] = await Promise.all([api('/api/gdlr-categories'), loadPageRows(targets)]);
     } catch (error) { status(error.message, true); return; }
     finally { busy(false); }
     const rows = state.rows.filter(row => ids.has(row.id));
@@ -1025,6 +1022,28 @@
     });
     state.transferEditor = dialog; document.body.append(dialog); dialog.showModal();
   }
+  function workTypeControl(crew,row=null){
+    if(readOnly)return row?.work_type||'—';
+    const targets=row?[row]:selectedRows(crew,true);
+    const choice=el('select',{'aria-label':row?'Вид работ: '+row.full_name:'Вид работ выбранных',disabled:!targets.length||targets.some(r=>r.locked||!r.employee_shift)},
+      ...(!row?[el('option',{value:'',disabled:true},'Выбранным…')]:[]),el('option',{value:'none'},'Не указан'),
+      ...(state.workTypes||[]).filter(t=>t.active||t.id===row?.work_type_id).map(t=>el('option',{value:String(t.id),disabled:!t.active},t.name)));
+    choice.value=row?(row.work_type_id==null?'none':String(row.work_type_id)):'';
+    choice.onchange=async()=>{
+      const value=choice.value;if(!value||!canLeave())return;
+      const ids=new Set(targets.map(r=>r.id));busy(true);
+      try{
+        await loadPageRows(targets);const rows=state.rows.filter(r=>ids.has(r.id));
+        if(rows.length!==ids.size)throw Error('Состав изменился. Обновите таблицу.');
+        const kind=state.workTypes.find(t=>String(t.id)===value);
+        await api('/api/staffing/work-type',{method:'PUT',body:JSON.stringify({date:state.date,worker_ids:rows.map(r=>r.id),
+          work_type_id:value==='none'?null:Number(value),work_type_token:kind?.edit_token,
+          expected_tokens:Object.fromEntries(rows.map(r=>[r.id,r.performed_work_token])),
+          expected_day_tokens:Object.fromEntries(rows.map(r=>[r.id,r.day_token])),...batchSnapshot(rows)})});
+        await load({skipInheritance:true});status('Вид работ сохранён: '+rows.length+' чел.');
+      }catch(e){status(e.message,true);choice.value=row?(row.work_type_id==null?'none':String(row.work_type_id)):'';}finally{busy(false);}
+    };return choice;
+  }
   function workControl(crew, row = null) {
     if (readOnly) return el('span', {className: 'staffing-work-text'}, row?.performed_work || 'Не указаны');
     const rows = row ? [row] : selectedRows(crew, true);
@@ -1032,7 +1051,7 @@
       row ? el('span', {className: 'staffing-work-text'}, row.performed_work || 'Не указаны') : null,
       el('button', {className: 'text-button', disabled: !rows.length || rows.some(r => !r.active || !r.employee_shift),
         'aria-label': row ? 'Выполняемые работы: ' + row.full_name : 'Выполняемые работы выбранных: ' + crew.name,
-        onclick: () => openWorkEditor(rows)}, row ? 'Изменить' : 'Внести работы (' + rows.length + ')'));
+        onclick: () => openWorkEditor(rows)}, row ? 'Изменить' : 'Изменить…'));
   }
   async function openWorkEditor(targets) {
     if (!canLeave() || !targets.length) return;
@@ -1040,7 +1059,7 @@
     busy(true);
     try {
       const crewIds = new Set(targets.map(row => row.crew_id));
-      for (const crew of state.crews.filter(item => crewIds.has(item.id))) await loadCrew(crew);
+      await loadPageRows(targets);
     } catch (error) { status(error.message, true); return; }
     finally { busy(false); }
     const rows = state.rows.filter(row => ids.has(row.id));
@@ -1200,70 +1219,52 @@
     });
     return select;
   }
-  function employerControl(row) {
-    if (readOnly) return row.employer || 'Не указан';
-    return el('div', {className: 'staffing-work-cell'},
-      el('span', {className: 'staffing-work-text'}, row.employer || 'Не указан'),
-      el('button', {type: 'button', className: 'text-button', disabled: !row.active,
-        'aria-label': 'Работодатель: ' + row.full_name,
-        title: 'Изменить постоянную организацию-работодателя',
-        onclick: () => openEmployerEditor([row])}, 'Сменить'));
+  function employerSelect(rows, label) {
+    const common = rows.length && rows.every(row => row.employer === rows[0].employer) ? rows[0].employer : '';
+    const select = el('select', {'aria-label': label,
+      title: 'Постоянный работодатель из справочника. Сохранённые назначения сохраняют прежнее значение.',
+      disabled: !rows.length || rows.some(row => !row.active || !row.employer_token)},
+      el('option', {value: '', disabled: true}, !rows.length ? 'Выберите сотрудников' : common || 'Выберите работодателя'),
+      ...state.employers.map(item => el('option', {value:item.name}, item.name)));
+    select.value = state.employers.some(item => item.name === common) ? common : '';
+    return select;
   }
-  async function openEmployerEditor(targets) {
-    if (!canLeave() || !targets.length) return;
-    const ids = new Set(targets.map(row => row.id));
-    busy(true);
+  async function saveEmployer(rows, name) {
+    busy(true);status('Сохранение работодателя…');
+    let saved = false;
     try {
-      const crewIds = new Set(targets.map(row => row.crew_id));
-      for (const crew of state.crews.filter(item => crewIds.has(item.id))) await loadCrew(crew);
-    } catch (error) { status(error.message, true); return; }
-    finally { busy(false); }
-    const rows = state.rows.filter(row => ids.has(row.id));
-    if (rows.length !== ids.size || rows.some(row => !row.active || !row.employer_token)) {
-      status('Состав сотрудников изменился. Обновите расстановку.', true); return;
-    }
-    const snapshot = {worker_ids: rows.map(row => row.id), ...batchSnapshot(rows),
-      expected_tokens: Object.fromEntries(rows.map(row => [row.id, row.employer_token]))};
-    const common = rows.every(row => row.employer === rows[0].employer);
-    const input = el('input', {id: 'staffing-employer-name', type: 'text', maxLength: 200,
-      value: common ? rows[0].employer || '' : '',
-      placeholder: 'Выберите или введите организацию'});
-    input.setAttribute('list', 'staffing-employer-suggestions');
-    input.style.cssText = 'width:100%;max-width:100%;box-sizing:border-box';
-    const suggestions = el('datalist', {id: 'staffing-employer-suggestions'},
-      ...[...new Set(state.rows.map(row => row.employer).filter(Boolean))].sort((a,b) => a.localeCompare(b, 'ru'))
-        .map(name => el('option', {value: name})));
-    const message = el('p', {role: 'status'});
-    const close = () => { if (state.busy) return; state.employerEditor = null; dialog.close(); dialog.remove(); };
-    const cancel = el('button', {type: 'button', className: 'secondary-button', onclick: close}, 'Отмена');
-    const save = el('button', {type: 'button', className: 'primary-button', disabled: !input.value.trim()}, 'Сохранить работодателя');
-    input.addEventListener('input', () => { save.disabled = !input.value.trim(); });
-    const visible = new Set(visibleRows().map(row => row.id));
-    const hidden = rows.filter(row => !visible.has(row.id)).length;
-    const dialog = el('dialog', {className: 'staffing-work-dialog', 'aria-labelledby': 'staffing-employer-title'},
-      el('h2', {id: 'staffing-employer-title'}, 'Организация-работодатель'),
-      el('p', {}, rows.length === 1 ? rows[0].full_name : 'Выбрано: ' + rows.length + ' чел.' +
-        (hidden ? ' Скрыты фильтром: ' + hidden + '.' : '')),
-      el('p', {}, 'Постоянная привязка в карточке сотрудника. Сохраняется при повторном импорте. Уже сохранённые назначения останутся с прежним работодателем.'),
-      !common ? el('p', {}, 'Сейчас у сотрудников разные работодатели. Новое значение будет назначено всем выбранным.') : null,
-      el('label', {htmlFor: input.id}, 'Организация-работодатель'), input, suggestions, message,
-      el('div', {className: 'staffing-work-actions'}, cancel, save));
-    dialog.addEventListener('cancel', event => { event.preventDefault(); close(); });
-    save.addEventListener('click', async () => {
-      if (state.busy || !input.value.trim()) return;
-      busy(true); save.disabled = true; cancel.disabled = true; input.disabled = true;
-      let saved = false;
-      try {
-        await api('/api/staffing/groups/employer', {method: 'PUT', body: JSON.stringify({...snapshot, employer: input.value})});
-        saved = true; state.employerEditor = null; dialog.close(); dialog.remove();
-        await load({skipInheritance: true});
-        status('Работодатель сохранён постоянно: ' + rows.length + ' чел.');
-      } catch (error) {
-        if (saved) status('Работодатель сохранён. Не удалось обновить таблицу: ' + error.message, true);
-        else { message.textContent = error.message; message.classList.add('error-text'); }
-      } finally { busy(false); save.disabled = !input.value.trim(); cancel.disabled = false; input.disabled = false; }
+      await api('/api/staffing/groups/employer', {method:'PUT', body:JSON.stringify({
+        employer:name,worker_ids:rows.map(row=>row.id),...batchSnapshot(rows),
+        expected_tokens:Object.fromEntries(rows.map(row=>[row.id,row.employer_token]))})});
+      saved = true;
+      await load({skipInheritance:true});
+      status('Работодатель сохранён: ' + rows.length + ' чел.');
+      return true;
+    } catch(error) {
+      status((saved ? 'Работодатель сохранён, но таблицу не удалось обновить. ' : '') + error.message + ' Обновите расстановку.',true);
+      return false;
+    } finally {busy(false);}
+  }
+  function employerControl(row) {
+    if(readOnly) return row.employer || 'Не указан';
+    const select = employerSelect([row], 'Работодатель: ' + row.full_name);
+    select.addEventListener('change',async()=>{
+      const previous = state.employers.some(item=>item.name===row.employer) ? row.employer : '';
+      if(!canLeave()) {select.value=previous;return;}
+      if(!await saveEmployer([row],select.value)) select.value=previous;
     });
-    state.employerEditor = dialog; document.body.append(dialog); dialog.showModal(); input.focus();
+    return select;
+  }
+  function groupEmployerControl(crew) {
+    const rows=selectedRows(crew,true), select=employerSelect(rows,'Работодатель выбранных: '+crew.name);
+    const apply=el('button',{className:'text-button',disabled:true,
+      'aria-label':'Применить работодателя выбранным: '+crew.name},'Задать ('+rows.length+')');
+    select.addEventListener('change',()=>{apply.disabled=select.disabled || !select.value;});
+    apply.addEventListener('click',async()=>{
+      if(!canLeave())return;
+      await saveEmployer(rows,select.value);
+    });
+    return el('div',{className:'staffing-contractor-control'},select,apply);
   }
   function contractorControl(row) {
     if (readOnly) return row.contractor || 'Не указан';
@@ -1283,7 +1284,7 @@
           method: 'PUT', body: JSON.stringify({contractor_id: Number(select.value),
             expected_token: row.contractor_token, expected_crew_id: row.crew_id})});
         Object.assign(row, result);
-        if (state.calendarFilter) await load(); else if (state.groupMode === 'hierarchy') render(); else paintCrewPlace(displayedGroup(row));
+        if (state.calendarFilter) await load(); else render();
         status('Подрядчик сотрудника сохранён.');
       } catch (error) {
         select.value = previous;
@@ -1311,7 +1312,7 @@
           status: select.value, worker_ids: rows.map(r => r.id),
           expected_tokens: Object.fromEntries(rows.map(r => [r.id, r.attendance_token])),
           expected_group_tokens: Object.fromEntries(rows.map(r => [r.id, r.group_token]))})});
-        await load(); status('Статус сохранён: ' + rows.length + ' чел.');
+        await refreshWorkers(rows); status('Статус сохранён: ' + rows.length + ' чел.');
       } catch (error) {
         try { await load(); } catch (_) { /* The original save error remains visible. */ }
         status(error.message, true);
@@ -1352,7 +1353,7 @@
       await api(crew.itr || crew.id == null ? '/api/staffing/groups/shifts' : '/api/staffing/crews/' + crew.id + '/shifts', {method: 'PUT', body: JSON.stringify({
         date: state.date, shift, worker_ids: rows.map(row => row.id),
         expected_tokens: Object.fromEntries(rows.map(row => [row.id, row.day_token])), ...(crew.itr || crew.id == null ? batchSnapshot(rows) : {})})});
-      await load(); status('Смена сохранена: ' + rows.length + ' чел. Места работы сохранены.');
+      await refreshWorkers(rows); status('Смена сохранена: ' + rows.length + ' чел. Места работы сохранены.');
     } catch (error) {
       try { await load(); } catch (_) { /* Keep the load error visible with the original failure. */ }
       status(error.message, true);
@@ -1369,7 +1370,7 @@
       disabled: (!crew.id && !supportsCrewless) || (!row && !targets.length), onclick: () => openDetails(crew, row, field, targets),
       'aria-label': label + (row ? ': ' + row.full_name : ' для выбранных: ' + crew.name),
       title: (value || 'Заполнить') + (row ? ' · Корректировка сотрудника' : ' · Только выбранным сотрудникам')},
-      value || 'Заполнить', corrected ? el('small', {}, 'Исправлено в строке') : null);
+      row ? value || 'Заполнить' : 'Изменить…', corrected ? el('small', {}, 'Исправлено в строке') : null);
   }
   function openDetails(crew, row = null, field = 'brigadier', targets = null) {
     if (!canLeave()) return;
@@ -1378,7 +1379,7 @@
       expected: targets ? Object.fromEntries(targets.map(item => [item.id, item.row_token])) : null};
     $('staffing-details').hidden = false;
     $('staffing-details-title').textContent = targets ? (field === 'linear_itr' ? 'Линейный ИТР' : 'Бригадир') + ': выбрано ' + targets.length + ' чел. · ' + crew.name : row ? (field === 'linear_itr' ? 'Линейный ИТР: ' : 'Бригадир: ') + row.full_name : 'Вся бригада: ' + crew.name;
-    $('staffing-details-note').textContent = targets ? 'Изменение только отмеченных сотрудников этой группы. «Как у бригады» вернёт каждому значение его бригады.' : row ? 'Изменение только этой строки. «Как у бригады» возвращает общее значение.' : 'ФИО ИТР и бригадира заполнятся для всей бригады. Индивидуальные корректировки обоих полей сохранятся.';
+    $('staffing-details-note').textContent = targets ? 'Изменение только отмеченных сотрудников. «Как у бригады» вернёт каждому значение его бригады.' : row ? 'Изменение только этой строки. «Как у бригады» возвращает общее значение.' : 'ФИО ИТР и бригадира заполнятся для всей бригады. Индивидуальные корректировки обоих полей сохранятся.';
     $('staffing-itr-label').hidden = !!(row || targets) && field !== 'linear_itr';
     $('staffing-brigadier-label').hidden = !!(row || targets) && field !== 'brigadier';
     $('staffing-itr-field').hidden = $('staffing-itr-label').hidden;
@@ -1448,30 +1449,6 @@
     if (!state.calendarFilter) preferences.set({department: state.department});
     render();
   });
-  function updateHierarchyLabel() {
-    const option = $('staffing-grouping').querySelector('option[value="hierarchy"]');
-    option.textContent = hierarchy.describe(state.groupLevels);
-    $('staffing-grouping').title = option.textContent + ' → сотрудники';
-  }
-  $('staffing-hierarchy-settings').addEventListener('click', () => {
-    if (!canLeave()) return;
-    hierarchy.openEditor(state.groupLevels, levels => {
-      state.groupLevels = levels; state.groupMode = 'hierarchy';
-      preferences.set({groupMode: 'hierarchy', groupLevels: levels});
-      $('staffing-grouping').value = 'hierarchy'; updateHierarchyLabel();
-      rebuildItrGroups(); state.collapsed = new Set(displayGroups().map(group => group.id));
-      render(); status('Иерархия: ' + hierarchy.describe(levels) + '.');
-    }, $('staffing-hierarchy-settings'));
-  });
-  $('staffing-grouping').addEventListener('change', () => {
-    if (!canLeave()) { $('staffing-grouping').value = state.groupMode; return; }
-    state.groupMode = $('staffing-grouping').value;
-    preferences.set({groupMode: state.groupMode});
-    rebuildItrGroups();
-    state.collapsed = new Set(displayGroups().map(group => group.id));
-    render();
-    status(state.groupMode === 'hierarchy' ? 'Иерархия: ' + hierarchy.describe(state.groupLevels) + '.' : state.groupMode === 'itr' ? 'Группы по фактическому линейному ИТР с учётом корректировок сотрудников. Раскройте группу и отметьте сотрудников для массового назначения.' : 'Группы по бригадам.');
-  });
   $('staffing-unassigned').addEventListener('change', () => {
     if (!canLeave()) { $('staffing-unassigned').checked = state.unassigned; return; }
     state.unassigned = $('staffing-unassigned').checked;
@@ -1507,13 +1484,14 @@
   async function resetFilters() {
     if (!canLeave()) return;
     const reload = !!state.calendarFilter;
-    const defaults = {department: '', employer: '', contractor: '', category: '', author: '', unassigned: false,
+    const defaults = {department: '', employer: '', contractor: '', category: '', author: '', work_type: '', unassigned: false,
       search: '', regexMode: false, shift: '', pps: ''};
     MF.set(ppsFilter, '');
     if ($('staffing-freshness')) defaults.freshness = '';
     Object.assign(state, defaults, {regex: null, calendarFilter: null});
+    state.personIds = null;
     state.selected.clear();
-    for (const [field, id] of [['department', 'staffing-department'], ['employer', 'staffing-employer'], ['contractor', 'staffing-contractor'], ['category', 'staffing-category'],
+    for (const [field, id] of [['work_type','staffing-work-type'],['department', 'staffing-department'], ['employer', 'staffing-employer'], ['contractor', 'staffing-contractor'], ['category', 'staffing-category'],
       ['author', 'staffing-author'], ['search', 'staffing-search'], ['shift', 'staffing-shift'], ['freshness', 'staffing-freshness']]) {
       if ($(id)) { if ($(id).multiple) MF.set($(id), defaults[field]); else $(id).value = defaults[field]; }
     }
@@ -1546,27 +1524,6 @@
     if (!state.calendarFilter) preferences.set({shift: state.shift});
     if (state.calendarFilter) load().catch(() => {});
     else render();
-  });
-  $('staffing-collapse').addEventListener('click', () => {
-    if (!canLeave()) return;
-    state.collapsed = new Set(displayGroups().map(crew => crew.id)); render();
-  });
-  $('staffing-expand').addEventListener('click', async () => {
-    if (!canLeave()) return;
-    const visible = new Set(pageRows(visibleRows()).flatMap(groupKeys));
-    const crews = displayGroups().filter(crew => visible.has(crew.id));
-    const request = state.request;
-    busy(true); status('Загрузка состава бригад…');
-    try {
-      for (let i = 0; i < crews.length; i += 4) {
-        const batch = crews.slice(i, i + 4);
-        await Promise.all(batch.map(loadGroup));
-        if (request !== state.request) return;
-        batch.forEach(crew => state.collapsed.delete(crew.id));
-      }
-      status('Состав бригад загружен.');
-    } catch (error) { status(error.message, true); }
-    finally { if (request === state.request) { render(); busy(false); } }
   });
   $('staffing-details-cancel').addEventListener('click', () => { state.details = null; $('staffing-details').hidden = true; status('Редактирование отменено.'); });
   $('staffing-details-form').addEventListener('submit', event => { event.preventDefault(); saveDetails(); });
@@ -1741,17 +1698,11 @@
       event.preventDefault(); closeTransferMenus(true);
     }
   });
-  $('staffing-clear-selected').before(el('button', {id: 'staffing-work-selected', className: 'secondary-button', disabled: true,
-    onclick: () => openWorkEditor(state.rows.filter(row => state.selected.get(row.id) === row.crew_id))}, 'Выполняемые работы (0)'));
-  $('staffing-work-selected').before(el('button', {id: 'staffing-transfer-selected', className: 'secondary-button', disabled: true,
-    onclick: () => openSelectedTransfer()}, 'Перенести со вчера (0)'),
-    el('button', {id: 'staffing-transfer-tomorrow', className: 'secondary-button', disabled: true,
-      onclick: () => openSelectedTransfer('tomorrow')}, 'Перенести на завтра (0)'));
-  $('staffing-work-selected').before(el('button', {id: 'staffing-category-selected', className: 'secondary-button', disabled: true,
-    onclick: () => openSelectedCategory()}, 'Изменить ГДЛР (0)'));
-  $('staffing-work-selected').before(el('button', {id: 'staffing-employer-selected', className: 'secondary-button', disabled: true,
-    onclick: () => openEmployerEditor(state.rows.filter(row => state.selected.get(row.id) === row.crew_id))}, 'Работодатель (0)'));
-  let historyState = {undo: null, redo: null}, historyRequest = 0;
+  $('staffing-clear-selected').before(el('button', {id:'staffing-transfer-selected', className:'secondary-button', disabled:true,
+    onclick:()=>openSelectedTransfer()}, 'Перенести со вчера (0)'),
+    el('button', {id:'staffing-transfer-tomorrow',className:'secondary-button',disabled:true,
+      onclick:()=>openSelectedTransfer('tomorrow')}, 'Перенести на завтра (0)'));
+  let historyState = {undo: null, redo: null}, historyRequest = 0, historyLoaded = false;
   const historyButtons = {};
   for (const [direction, label] of [['undo', 'Отменить'], ['redo', 'Повторить']]) {
     const button = el('button', {id: 'staffing-' + direction, type: 'button', className: 'secondary-button', disabled: true,
@@ -1762,6 +1713,8 @@
   async function refreshHistory() {
     if (readOnly) return;
     const requestId = ++historyRequest;
+    historyLoaded = true;
+    for (const button of Object.values(historyButtons)) button.disabled = true;
     try {
       const next = await api('/api/staffing/history');
       if (requestId !== historyRequest) return;
@@ -1805,13 +1758,12 @@
   });
   $('staffing-refresh').addEventListener('click', refreshHistory);
   if (readOnly) {
-    for (const id of ['undo', 'redo', 'transfer-selected', 'transfer-tomorrow', 'category-selected', 'employer-selected', 'work-selected', 'clear-selected']) {
+    for (const id of ['undo', 'redo', 'transfer-selected', 'transfer-tomorrow', 'clear-selected']) {
       $('staffing-' + id).hidden = true;
     }
   }
-  refreshHistory();
   window.staffingScreen = {load, canLeave, openFromCalendar, mobileSelection, clearSelection: () => {
     if (!canLeave()) return;
-    state.selected.clear(); render(); status('Выделение снято. Назначения сохранены.');
+    state.selected.clear(); syncSelection(); status('Выделение снято. Назначения сохранены.');
   }};
 })();

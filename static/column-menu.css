@@ -1,0 +1,25 @@
+.app-shell :is(#view-staffing, #view-workforce, #view-employees, #view-outstaff) button.column-menu-toggle { box-sizing: border-box; display: inline-flex; flex: 0 0 34px; align-items: center; justify-content: center; align-self: end; width: 34px; min-width: 34px; height: 34px; min-height: 34px; margin: 0; padding: 0; gap: 0; border: 1px solid #d2e1e3; border-radius: 6px; background: #fff; color: #35505a; font-size: 0; }
+.app-shell :is(#view-staffing, #view-workforce, #view-employees, #view-outstaff) button.column-menu-toggle::before { width: 18px; height: 18px; flex: 0 0 18px; }
+.app-shell :is(#view-staffing, #view-workforce, #view-employees, #view-outstaff) button.column-menu-toggle[hidden] { display: none; }
+.column-menu-toggle:focus-visible { outline: 2px solid #16818b; outline-offset: 2px; }
+@media (max-width: 900px) {
+  .app-shell :is(#view-staffing, #view-workforce, #view-employees, #view-outstaff) button.column-menu-toggle { flex-basis: 44px; width: 44px; min-width: 44px; height: 44px; min-height: 44px; }
+}
+.column-menu-popup { box-sizing: border-box; position: fixed; inset: auto; margin: 0; padding: 8px; border: 1px solid #d6e2df; border-radius: 10px; background: #fff; color: #243e30; box-shadow: 0 10px 30px #17313a26; font: 12px/1.35 Arial, sans-serif; overflow: auto; overscroll-behavior: contain; }
+.column-menu-popup::backdrop { background: transparent; }
+.column-menu-title { display: block; padding: 5px 7px 9px; font-size: 13px; }
+.column-menu-popup .column-menu-content { position: static; box-sizing: border-box; display: block; width: auto; max-width: none; min-width: 0; max-height: none; margin: 0; padding: 0; overflow: visible; border: 0; border-radius: 0; box-shadow: none; background: transparent; }
+.column-menu-popup .column-menu-content[hidden] { display: none; }
+.column-menu-content > p { display: none; }
+.column-menu-popup :is(.wf-columns-list,.staffing-columns-list) { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; margin: 0 0 6px; }
+.column-menu-popup .wf-column-setting { display: block; }
+.column-menu-popup .staffing-column-setting { display: grid; grid-template-columns: 42px minmax(0, 1fr); align-items: center; gap: 4px; }
+.column-menu-popup :is(.column-menu-item,.wf-column-check,.staffing-column-setting .check-label) { display: flex; align-items: center; flex-direction: row; gap: 9px; min-height: 32px; margin: 0; padding: 5px 7px; border-radius: 5px; box-sizing: border-box; font-size: 12px; font-weight: 400; color: inherit; cursor: pointer; overflow-wrap: anywhere; }
+.column-menu-popup :is(.column-menu-item,.wf-column-check,.staffing-column-setting .check-label):hover { background: #eef6f2; }
+.column-menu-popup input[type=checkbox] { box-sizing: border-box; flex: 0 0 16px; width: 16px; height: 16px; min-height: 0; padding: 0; margin: 0; accent-color: #176d50; }
+.column-menu-popup input:disabled { opacity: .55; }
+.column-menu-popup .staffing-column-position { box-sizing: border-box; width: 42px; min-width: 0; height: 28px; min-height: 28px; padding: 2px; border: 1px solid #d6e2df; border-radius: 5px; font: inherit; color: #52665b; background: #fff; }
+.column-menu-popup :is(.column-menu-content,.employee-columns-options) > button { box-sizing: border-box; width: 100%; min-height: 32px; margin-top: 6px; padding: 6px 8px; border: 1px solid #d6e2df; border-radius: 6px; background: #f7faf8; font: inherit; color: #176d50; }
+.column-menu-popup #wf-columns-status { margin: 4px 7px 0; font-size: 11px; }
+.column-menu-popup :focus-visible { outline: 2px solid #16818b; outline-offset: 2px; }
+@media (pointer: coarse) { .column-menu-popup :is(.column-menu-item,.wf-column-check,.staffing-column-setting .check-label) { min-height: 40px; } }

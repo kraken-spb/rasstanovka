@@ -143,8 +143,8 @@ def register_selected_transfer(app, get_db, roles_required, utc_now):
                                (day, row['worker_id'], value, secrets.token_hex(16), user['id'], stamp))
             for row in previous['staffing_performed_work']:
                 if row['worker_id'] not in ids: continue
-                db.execute('''INSERT INTO staffing_performed_work(work_date,worker_id,shift,description,edit_token,updated_by,updated_at)
-                    VALUES (?,?,?,?,?,?,?)''', (day, row['worker_id'], row['shift'], row['description'], secrets.token_hex(16), user['id'], stamp))
+                db.execute('''INSERT INTO staffing_performed_work(work_date,worker_id,shift,description,work_type_id,edit_token,updated_by,updated_at)
+                    VALUES (?,?,?,?,?,?,?,?)''', (day, row['worker_id'], row['shift'], row['description'], row['work_type_id'], secrets.token_hex(16), user['id'], stamp))
             snapshots = {i: {} for i in ids}
             kinds = {'assignments': 'assignment', 'staffing_shifts': 'shift', 'staffing_attendance': 'attendance', 'staffing_performed_work': 'work'}
             copied = records_for(db, day, sorted(ids))
@@ -152,7 +152,8 @@ def register_selected_transfer(app, get_db, roles_required, utc_now):
                 for row in copied[table]:
                     kind = kinds[table]
                     key = kind + (':' + canonical_shift(row['shift']) if kind in ('assignment', 'work') else '')
-                    snapshots[row['worker_id']].setdefault(key, []).append(digest(row))
+                    value={k:v for k,v in row.items() if k!='work_type_id' or v is not None}
+                    snapshots[row['worker_id']].setdefault(key, []).append(digest(value))
             for i, snapshot in snapshots.items():
                 for values in snapshot.values(): values.sort()
                 db.execute('INSERT INTO staffing_inherited_rows VALUES (?,?,?,?)',

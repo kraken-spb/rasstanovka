@@ -41,7 +41,7 @@ class SelectedTransferTest(unittest.TestCase):
     def test_partial_current_day_skips_occupied_and_preserves_explicit_clear(self):
         with self.app.app_context():
             db = self.module.get_db()
-            db.execute("INSERT INTO staffing_performed_work VALUES ('2026-09-14',?,'1 смена','','cleared',?,'now')", (self.ids[0], self.admin_id))
+            db.execute("INSERT INTO staffing_performed_work(work_date,worker_id,shift,description,edit_token,updated_by,updated_at) VALUES ('2026-09-14',?,'1 смена','','cleared',?,'now')", (self.ids[0], self.admin_id))
             db.commit()
         plan = self.preview().json
         self.assertEqual((plan['ready'], plan['skipped']), (1, 1))

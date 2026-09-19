@@ -5,6 +5,7 @@ import sqlite3
 import unicodedata
 
 from flask import abort, g, jsonify, request
+from pps_api import pps_value
 
 
 def migrate_smu_catalog(db):
@@ -122,15 +123,17 @@ def register_smu_routes(app, get_db, roles_required, utc_now):
     def list_smu():
         db = get_db()
         rows = [dict(r) for r in db.execute('''
-            SELECT c.*,u.full_name site_chief_name,u.active site_chief_active,
+            SELECT c.*,p.name pps_name,p.active pps_active,u.full_name site_chief_name,u.active site_chief_active,
                    COALESCE(e.employee_count,0) employee_count FROM smu_catalog c
             LEFT JOIN users u ON u.id=c.site_chief_user_id
+            LEFT JOIN pps_catalog p ON p.id=c.pps_id
             LEFT JOIN (SELECT smu_id,COUNT(worker_id) employee_count
                        FROM employee_smu GROUP BY smu_id) e ON e.smu_id=c.id
             ORDER BY c.name''')]
         options = [dict(r) for r in db.execute('''SELECT id,full_name,username FROM users
             WHERE active=1 ORDER BY full_name,username,id''')] if g.user['role'] == 'super_admin' else []
-        return jsonify({'rows': rows, 'chief_options': options})
+        return jsonify({'rows': rows, 'chief_options': options,
+                        'pps_options': [dict(r) for r in db.execute('SELECT id,name,active FROM pps_catalog ORDER BY name,id')]})
 
     @app.post('/api/smu')
     @roles_required('super_admin')
@@ -143,9 +146,10 @@ def register_smu_routes(app, get_db, roles_required, utc_now):
                 db.execute('BEGIN IMMEDIATE')
                 check_actor(db)
                 chief_id = chief_value(db, data)
+                pps_id = pps_value(db, data)
                 smu_id = db.execute('''INSERT INTO smu_catalog
-                    (name,site_chief_user_id,updated_by,updated_at) VALUES (?,?,?,?)''',
-                    (name, chief_id, g.user['id'], utc_now())).lastrowid
+                    (name,site_chief_user_id,pps_id,updated_by,updated_at) VALUES (?,?,?,?,?)''',
+                    (name, chief_id, pps_id, g.user['id'], utc_now())).lastrowid
                 db.execute('INSERT INTO smu_aliases VALUES (?,?)', (name, smu_id))
         except sqlite3.IntegrityError:
             abort(409, description='Такое название СМУ уже есть или сохранено как прежнее название.')
@@ -166,6 +170,7 @@ def register_smu_routes(app, get_db, roles_required, utc_now):
                 db.execute('BEGIN IMMEDIATE')
                 old = checked_row(db, smu_id, data)
                 chief_id = chief_value(db, data, old['site_chief_user_id'])
+                pps_id = pps_value(db, data, old['pps_id'])
                 alias = db.execute('SELECT smu_id FROM smu_aliases WHERE name=?', (name,)).fetchone()
                 if alias and alias[0] != smu_id:
                     abort(409, description='Такое название уже связано с другим СМУ.')
@@ -176,9 +181,9 @@ def register_smu_routes(app, get_db, roles_required, utc_now):
                     users = db.execute('SELECT u.* FROM users u JOIN user_smu_access a ON a.user_id=u.id').fetchall()
                     rights = {u['id']: allowed_workers(db, ids, u) for u in users}
                     views = {u['id']: access_view(db, u) for u in users}
-                db.execute('''UPDATE smu_catalog SET name=?,active=?,site_chief_user_id=?,
+                db.execute('''UPDATE smu_catalog SET name=?,active=?,site_chief_user_id=?,pps_id=?,
                     edit_token=?,updated_by=?,updated_at=? WHERE id=?''',
-                    (name, data['active'], chief_id, secrets.token_hex(16), g.user['id'], stamp, smu_id))
+                    (name, int(data['active']), chief_id, pps_id, secrets.token_hex(16), g.user['id'], stamp, smu_id))
                 db.execute('INSERT INTO smu_aliases VALUES (?,?) ON CONFLICT(name) DO NOTHING', (name, smu_id))
                 if name != old['name']:
                     db.execute('UPDATE workers SET department=? WHERE id IN (SELECT worker_id FROM employee_smu WHERE smu_id=?)',
@@ -214,6 +219,10 @@ def register_smu_routes(app, get_db, roles_required, utc_now):
             aliases = {r[0] for r in db.execute('SELECT name FROM smu_aliases WHERE smu_id=?', (smu_id,))}
             if any(aliases.intersection(json.loads(r[0])) for r in db.execute('SELECT departments_json FROM user_smu_access')):
                 abort(409, description='СМУ используется в настройках доступа пользователей.')
+            if getattr(db,'dialect',None) == 'postgres':
+                if db.native('SELECT 1 FROM workforce_profiles p JOIN workforce_divisions d ON d.id=p.division_id WHERE d.smu_id=%s LIMIT 1',(smu_id,)).fetchone():
+                    abort(409, description='СМУ используется как подразделение сотрудников. Можно отключить его для выбора.')
+                db.native('DELETE FROM workforce_divisions WHERE smu_id=%s',(smu_id,))
             db.execute('DELETE FROM smu_aliases WHERE smu_id=?', (smu_id,))
             db.execute('DELETE FROM smu_catalog WHERE id=?', (smu_id,))
         return jsonify({'deleted': smu_id})

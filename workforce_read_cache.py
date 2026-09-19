@@ -15,7 +15,7 @@ _stripes = tuple(Lock() for _ in range(64))
 _missing = object()
 
 
-def cached(db, revision, key, calculate):
+def cached(db, revision, key, calculate, *, latest_only=False):
     if current_app.testing:
         return calculate()
     key = (db._pool, revision, key)
@@ -28,6 +28,12 @@ def cached(db, revision, key, calculate):
                 return result
         result = calculate()
         with _lock:
+            if latest_only:
+                # Large common catalogues need only one cached revision per pool.
+                # Readers of an older snapshot still calculate their exact revision.
+                for previous in list(_values):
+                    if previous[0] is key[0] and previous[2] == key[2] and previous != key:
+                        _values.pop(previous, None)
             _values[key] = result
             _values.move_to_end(key)
             while len(_values) > 1024:

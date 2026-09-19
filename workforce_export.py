@@ -35,7 +35,8 @@ def report_records(db, day):
         COALESCE(gc.name,w.category) category,pr.label project,st.stage_code,
         trip.id movement_id,trip.direction,trip.planned_date,ba.label basis,re.label result,
         old.planned_date previous_planned_date,ro.planned_end_date rotation_end,ro.next_arrival_date,
-        EXISTS(SELECT 1 FROM workforce_source_records sr WHERE sr.worker_id=w.id AND sr.source_role<>'outstaff') mixed_sources,
+        (p.has_main_registry_record OR EXISTS(SELECT 1 FROM workforce_source_records sr
+            WHERE sr.worker_id=w.id AND sr.source_role<>'outstaff')) mixed_sources,
         (SELECT string_agg(DISTINCT cf.description,E'\\n') FROM workforce_conflicts cf WHERE cf.worker_id=w.id AND cf.state='open') conflicts
         FROM workers w JOIN workforce_profiles p ON p.worker_id=w.id
         LEFT JOIN workforce_organizations o ON o.id=p.employer_id

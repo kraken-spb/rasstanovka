@@ -5,6 +5,7 @@ from io import BytesIO
 from unittest.mock import patch
 
 from openpyxl import load_workbook
+from openpyxl.utils import get_column_letter
 
 import test_workforce_api as fixtures
 from workforce_registry_export import HEADERS, registry_workbook
@@ -12,7 +13,7 @@ from workforce_registry_export import HEADERS, registry_workbook
 
 class RegistryWorkbookTest(unittest.TestCase):
     def test_dates_text_identifiers_formula_literals_and_empty_sheet(self):
-        for section, title in [('rotation', 'Перевахта'), ('recruitment', 'Комплектование')]:
+        for section, title in [('rotation', 'Перевахта'), ('recruitment', 'Комплектация')]:
             with self.subTest(section=section):
                 row = {'full_name': '=HYPERLINK("https://example.invalid")', 'personnel_no': '000825',
                        'profession': '+Опасная формула', 'arrival_date': '2026-09-01',
@@ -20,20 +21,40 @@ class RegistryWorkbookTest(unittest.TestCase):
                 book = load_workbook(BytesIO(registry_workbook([row], '2026-09-17', section)))
                 sheet = book[title]
                 self.assertEqual([cell.value for cell in sheet[4]], list(HEADERS))
-                self.assertEqual(sheet['B5'].data_type, 's')
-                self.assertEqual(sheet['B5'].value, row['full_name'])
-                self.assertEqual(sheet['C5'].value, '000825')
-                self.assertEqual(sheet['L5'].value, datetime(2026, 9, 1))
-                self.assertEqual(sheet['O5'].value, datetime(2026, 9, 21))
-                self.assertEqual(sheet['J5'].value, 'Без подтверждённого состояния')
+                self.assertEqual(sheet.cell(5, HEADERS.index('ФИО') + 1).data_type, 's')
+                self.assertEqual(sheet.cell(5, HEADERS.index('ФИО') + 1).value, row['full_name'])
+                self.assertEqual(sheet.cell(5, HEADERS.index('Табельный номер') + 1).value, '000825')
+                self.assertEqual(sheet.cell(5, HEADERS.index('Дата заезда') + 1).value, datetime(2026, 9, 1))
+                self.assertEqual(sheet.cell(5, HEADERS.index('Плановая дата поездки') + 1).value, datetime(2026, 9, 21))
+                self.assertEqual(sheet.cell(5, HEADERS.index('Состояние') + 1).value, 'Без подтверждённого состояния')
                 self.assertEqual(sheet.freeze_panes, 'D5')
-                self.assertEqual(sheet.auto_filter.ref, 'A4:S5')
+                self.assertEqual(sheet.auto_filter.ref, f'A4:{get_column_letter(len(HEADERS))}5')
                 self.assertEqual(sheet['B2'].value, 1)
                 book.close()
                 empty = load_workbook(BytesIO(registry_workbook([], '2026-09-17', section)))
                 self.assertEqual(empty[title].max_row, 4)
                 self.assertEqual(empty[title]['B2'].value, 0)
                 empty.close()
+
+
+    def test_reuses_the_same_row_styles_without_losing_safe_text_or_dates(self):
+        rows = [
+            {'full_name': '=Первая', 'personnel_no': '001', 'arrival_date': '2026-09-01'},
+            {'full_name': '+Вторая', 'personnel_no': '002', 'arrival_date': '2026-09-02'},
+            {'full_name': '@Третья', 'personnel_no': '003', 'arrival_date': '2026-09-03'},
+        ]
+        book = load_workbook(BytesIO(registry_workbook(rows, '2026-09-17', 'rotation')))
+        sheet = book.active
+        self.assertEqual(sheet.cell(5, HEADERS.index('ФИО') + 1).data_type, 's')
+        self.assertEqual(sheet['B5'].style_id, sheet['C5'].style_id)
+        self.assertEqual(sheet['B5'].style_id, sheet['B7'].style_id)
+        self.assertNotEqual(sheet['B5'].style_id, sheet['B6'].style_id)
+        self.assertEqual(sheet.cell(5, HEADERS.index('Дата заезда') + 1).number_format, 'dd.mm.yyyy')
+        arrival = HEADERS.index('Дата заезда') + 1
+        self.assertEqual(sheet.cell(5, arrival).style_id, sheet.cell(7, arrival).style_id)
+        self.assertNotEqual(sheet.cell(5, arrival).style_id, sheet.cell(6, arrival).style_id)
+        self.assertEqual(sheet.cell(6, arrival).fill.fgColor.rgb, sheet['B6'].fill.fgColor.rgb)
+        book.close()
 
 
 @unittest.skipUnless(os.getenv('CREW_POSTGRES_TEST_ENV'), 'Select an isolated PostgreSQL database.')

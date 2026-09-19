@@ -7,8 +7,11 @@
   const error = document.createElement('p');error.className = 'error-text';error.setAttribute('role','alert');error.hidden = true;
   view.querySelector('.page-heading').after(error);
   let section = 'categories', switching = false;
-  const canLeave = () => !switching && (!window.workforceCatalogs || window.workforceCatalogs.canLeave()) && window.crewCatalogScreen.canLeave() && window.smuScreen.canLeave() && window.categoriesScreen.canLeave() && window.contractorsScreen.canLeave() && window.locationsScreen.canLeave();
+  const canLeave = () => (!window.divisionsScreen || window.divisionsScreen.canLeave()) && (!window.workTypesScreen || window.workTypesScreen.canLeave()) && !switching && (!window.ppsScreen || window.ppsScreen.canLeave()) && (!window.workforceCatalogs || window.workforceCatalogs.canLeave()) && window.crewCatalogScreen.canLeave() && window.smuScreen.canLeave() && window.categoriesScreen.canLeave() && window.contractorsScreen.canLeave() && window.locationsScreen.canLeave();
   const paths = {
+    divisions: 'M4 3h6v6H4z M14 15h6v6h-6z M4 15h6v6H4z M7 9v3h10v3 M7 12v3',
+    'work-types': 'M3 7h18v14H3z M8 7V3h8v4 M3 12h18 M10 12v3h4v-3',
+    pps: 'M3 21V9l9-6 9 6v12 M7 21v-7h10v7 M3 9h18 M9 9V5 M15 9V5',
     categories: 'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z',
     crews: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M16 3a4 4 0 0 1 0 8 M22 21v-2a4 4 0 0 0-3-4 M13 7a4 4 0 1 1-8 0a4 4 0 0 1 8 0',
     smu: 'M3 21V7h8v14 M11 3h10v18 M6 11h2 M6 15h2 M15 7h2 M15 11h2 M15 15h2 M1 21h22',
@@ -20,6 +23,7 @@
     profession: 'M3 8h18v13H3z M8 8V4h8v4 M3 13h18 M10 13v3h4v-3',
     travelpoint: 'M12 22s8-8 8-13a8 8 0 0 0-16 0c0 5 8 13 8 13z M15 9a3 3 0 1 1-6 0a3 3 0 0 1 6 0',
     place: 'M3 11l9-8 9 8 M5 10v11h14V10 M9 21v-8h6v8',
+    accommodation: 'M3 18V6 M3 14h18v4 M21 18v-8h-9v4 M3 18v3 M21 18v3 M6 9h3v5H6z',
     schedule: 'M3 5h18v16H3z M7 3v4 M17 3v4 M3 10h18 M7 14h2 M15 14h2 M7 18h2',
     document: 'M5 3h9l5 5v13H5z M14 3v6h5 M8 13h8 M8 17h5',
     check: 'M8 4h8v4H8z M8 6H4v15h16V6h-4 M8 14l3 3 5-6',
@@ -88,9 +92,10 @@
       button.classList.toggle('active',selected);button.setAttribute('aria-pressed',String(selected));
       if (selected) button.setAttribute('aria-current','page');else button.removeAttribute('aria-current');
     }
-    for (const [id,name] of [['view-crew-catalog','crews'],['view-categories','categories'],['view-smu','smu'],['view-contractors','contractors']]) {
+    for (const [id,name] of [['view-work-types','work-types'],['view-pps','pps'],['view-crew-catalog','crews'],['view-categories','categories'],['view-smu','smu'],['view-contractors','contractors']]) {
       $(id).hidden = section !== name;$(id).classList.toggle('active',section === name);
     }
+    if ($('view-divisions')) { $('view-divisions').hidden = section !== 'divisions'; $('view-divisions').classList.toggle('active',section === 'divisions'); }
     $('location-catalog').hidden = !['stages','groups','subobjects'].includes(section);
     for (const name of ['stages','groups','subobjects']) $('catalog-' + name).hidden = section !== name;
     $('catalog-location-title').textContent = {stages:'Этапы',groups:'Группы подобъектов',subobjects:'Подобъекты'}[section] || '';
@@ -107,9 +112,12 @@
         error.hidden = false;return false;
       }
       select(next);
-      if (section === 'categories') await window.categoriesScreen.load();
+      if (section === 'divisions') await window.divisionsScreen.load();
+      else if (section === 'work-types') await window.workTypesScreen.load();
+      else if (section === 'categories') await window.categoriesScreen.load();
       else if (section === 'crews') await window.crewCatalogScreen.load();
       else if (section === 'smu') await window.smuScreen.load();
+      else if (section === 'pps') await window.ppsScreen.load();
       else if (section === 'contractors') await window.contractorsScreen.load();
       else if (!section.startsWith('workforce:')) await window.locationsScreen.load();
       try {localStorage.setItem(key,section);} catch (_) {}

@@ -22,6 +22,7 @@
   }
   function error(message = '') { $('contractors-error').textContent = message; $('contractors-error').hidden = !message; }
   async function api(url, options = {}) {
+    if (options.method && options.method !== 'GET') window.catalogData.invalidate();
     const response = await fetch(url, { ...options, cache: 'no-store', headers: {
       'Content-Type': 'application/json', 'X-CSRF-Token': root.dataset.csrf,
     }});
@@ -37,16 +38,16 @@
     }
     return true;
   }
-  async function refresh(force = false) {
+  async function refresh(force = false, reuse = false) {
     if (!force && !canLeave()) return;
     state.busy = true; $('view-contractors').inert = true; error(); status('Загрузка справочника…');
     try {
-      state.rows = (await api('/api/contractors')).rows;
+      state.rows = (await window.catalogData.get('/api/contractors', () => api('/api/contractors'), {refresh: !reuse})).rows;
       render(); status('');
     } catch (failure) { error(failure.message); }
     finally { state.busy = false; $('view-contractors').inert = false; }
   }
-  async function load() { await refresh(true); }
+  async function load() { await refresh(true, true); }
   function rowDraft(item) { return state.drafts.get(item.id) || {name: item.name, active: !!item.active, expected_token: item.edit_token}; }
   function render() {
     const count = state.rows.length;

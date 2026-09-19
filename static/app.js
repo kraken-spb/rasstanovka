@@ -63,6 +63,7 @@
     let route = typeof value === 'string' ? value.replace(/^#/, '') : '';
     if (route === 'categories') route = 'catalogs';
     const available = new Set(all('.view').map(node => node.id.slice(5)));
+    if (route === 'employees' && available.has('workforce')) route = 'workforce/recruitment';
     if (route === 'workforce' && available.has('workforce')) route = 'workforce/' + (role === 'recruitment' ? 'recruitment' : 'rotation');
     if (window.workforceScreen?.routeView(route) === 'workforce' && available.has('workforce')) return {route, view:'workforce'};
     if (available.has(route)) return {route, view:route};
@@ -70,14 +71,14 @@
     return {route:view, view};
   }
   function workforceListRoute(route) {
-    const section = /^workforce\/(rotation|recruitment)(?:\/|$)/.exec(route || '');
-    return section ? 'workforce/' + section[1] : 'workforce';
+    const section = /^(workforce\/(?:rotation|recruitment)(?:\/summary\/[^/]+)?)(?:\/|$)/.exec(route || '');
+    return section ? section[1] : 'workforce';
   }
   async function switchView(route, staffingFilter = null, navigation = {}) {
     if (restoringNavigation) return false;
     const request = ++navigationRequest, next = navigationRoute(route), view = next.view;
     for (const screen of ['outstaffScreen','outstaffImport','employeesScreen','categoriesScreen','staffingScreen',
-      'backupsScreen','locationsScreen','workforceScreen','catalogsScreen']) {
+      'backupsScreen','locationsScreen','workforceScreen','catalogsScreen','smgScreen']) {
       if (window[screen] && !window[screen].canLeave()) return false;
     }
     if (state.busy) { toast("Дождитесь сохранения."); return false; }
@@ -87,15 +88,18 @@
     const old = currentNavigation, saved = historyEntry(navigation.state), push = navigation.mode === 'push' && old?.route !== next.route;
     const entry = navigation.mode === 'pop' && saved?.route === next.route ? {...saved, view} : {
       owner:navigationOwner, index:push ? (old?.index ?? 0) + 1 : old?.index ?? saved?.index ?? 0,
-      route:next.route, view, cardFromList:push ? old?.view === 'workforce' && old.route === workforceListRoute(old.route) : (!old || old.route === next.route) && saved?.route === next.route ? !!saved.cardFromList : false
+      route:next.route, view, cardFromList:push ? !!old && (old.view !== 'workforce' || old.route === workforceListRoute(old.route)) : (!old || old.route === next.route) && saved?.route === next.route ? !!saved.cardFromList : false
     };
     if (old?.view === 'workforce' && view !== 'workforce') window.workforceScreen?.deactivate();
     all(".view").forEach((el) => el.classList.toggle("active", el.id === "view-" + view));
-    const navigationTab = view === 'workforce' ? (workforceListRoute(next.route) === 'workforce' ? 'workforce/' + (role === 'recruitment' ? 'recruitment' : 'rotation') : workforceListRoute(next.route)) : view;
+    const navigationTab = view === 'workforce' ? (workforceListRoute(next.route) === 'workforce' ? 'workforce/' + (role === 'recruitment' ? 'recruitment' : 'rotation') : workforceListRoute(next.route).split('/summary/')[0]) : view;
     all("[data-view]").forEach((el) => { el.classList.toggle("active", el.dataset.view === navigationTab); });
     currentNavigation = entry;
     writeHistory(entry, push ? 'push' : 'replace');
     try {
+      await window.loadViewModules(view);
+      if (request !== navigationRequest) return true;
+      if (view === 'smg') { await window.smgScreen.load(); return true; }
       if (view === 'workforce') { await window.workforceScreen.activate(next.route); return true; }
       await loadLocationReference();
       if (request !== navigationRequest) return true;
@@ -146,9 +150,10 @@
   }
   window.addEventListener('popstate', historyChanged);
   window.addEventListener('hashchange', historyChanged);
-  window.openWorkforcePerson = id => {
+  window.openWorkforcePerson = (id, day) => {
     const value = String(id);
     if (!/^[1-9]\d*$/.test(value) || !Number.isSafeInteger(Number(value)) || !window.workforceScreen) return Promise.resolve(false);
+    if (typeof day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(day)) document.getElementById('wf-date').value = day;
     return switchView(workforceListRoute(currentNavigation?.route) + '/people/' + value, null, {mode:'push'});
   };
   window.closeWorkforcePerson = () => {
@@ -159,6 +164,7 @@
     } else return switchView(workforceListRoute(currentNavigation.route));
   };
   window.openStaffingReport = filter => switchView('staffing', filter);
+  window.openWorkforceReport = route => switchView(route, null, {mode:'push'});
   all("[data-view]").forEach((el) => el.addEventListener("click", () => switchView(el.dataset.view)));
   $(".brand").addEventListener("click", (event) => { event.preventDefault(); switchView(role === "viewer" ? "dashboard" : "staffing"); });
   function setBusy(busy) {
@@ -374,6 +380,7 @@
     return { ...data, plansByKey: plans, factsByKey: facts };
   }
   async function loadCalendar(view) {
+    if (view === 'dashboard' && state.summaryMode === 'rotation') return window.rotationSummary.load();
     if (view === 'dashboard' && ['placement', 'category'].includes(state.summaryMode)) return window.placementReport.load();
     const report = view === "dashboard" && state.summaryMode === "date";
     const dateInput = report ? $("#report-date") : $("#" + view + "-start");
@@ -620,9 +627,22 @@
     const previousMode = state.summaryMode;
     state.summaryMode = button.dataset.summaryMode;
     const placement = ['placement', 'category'].includes(state.summaryMode);
+    const rotation = state.summaryMode === 'rotation';
+    if ($('#rotation-summary')) $('#rotation-summary').hidden = !rotation;
+    if ($('#report-closure')) $('#report-closure').hidden = rotation;
+    const sharedExport = $('#staffing-export-date')?.closest('details');
+    if (sharedExport) sharedExport.hidden = rotation;
     window.placementReport.setMode(state.summaryMode);
     $('#placement-report').hidden = !placement;
-    $('#dashboard-calendar-panel').hidden = placement;
+    $('#dashboard-calendar-panel').hidden = placement || rotation;
+    if (rotation) {
+      state.calendars.dashboard = {...state.calendars.dashboard, requestId: (state.calendars.dashboard?.requestId || 0) + 1};
+      all('[data-summary-mode]').forEach(item => item.setAttribute('aria-pressed', String(item === button)));
+      $('#view-dashboard .page-heading p').textContent = 'Численность, движение и прогноз по категориям ГДЛР';
+      status('#dashboard-status', '');
+      window.rotationSummary.load();
+      return;
+    }
     if (placement) {
       state.calendars.dashboard = {...state.calendars.dashboard, requestId: (state.calendars.dashboard?.requestId || 0) + 1};
       all('[data-summary-mode]').forEach(item => item.setAttribute('aria-pressed', String(item === button)));

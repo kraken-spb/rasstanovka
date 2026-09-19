@@ -1,0 +1,23 @@
+.accommodation-dialog{width:min(920px,calc(100vw - 24px));max-height:calc(100dvh - 24px);padding:18px;border:0;border-radius:14px}.accommodation-dialog::backdrop{background:#18233a88}.accommodation-form,.accommodation-common,.accommodation-row{display:grid;gap:10px}.accommodation-common{grid-template-columns:repeat(3,minmax(0,1fr));border:1px solid #d6dce7}.accommodation-common legend,.accommodation-common .check-label{grid-column:1/-1}.accommodation-rows{display:grid;gap:10px}.accommodation-row{grid-template-columns:repeat(4,minmax(0,1fr));padding:12px;border:1px solid #d6dce7;border-radius:10px}.accommodation-row h3,.accommodation-facts{grid-column:1/-1;margin:0}.accommodation-actions{display:flex;gap:8px;justify-content:flex-end}.accommodation-message{min-height:1.3em}@media(max-width:760px){.accommodation-dialog{padding:12px}.accommodation-common,.accommodation-row{grid-template-columns:1fr}.accommodation-actions{position:sticky;bottom:0;background:white;padding-top:8px}.accommodation-row{padding:10px}}
+.accommodation-missing{grid-column:1/-1;margin:0;color:#8a4b00}
+#wf-accommodation-request{display:inline-flex;align-items:center;justify-content:center;width:34px;min-width:34px;height:34px;min-height:34px;padding:5px;flex:none}
+#wf-accommodation-request svg{display:block;flex:none}
+@media(max-width:760px){
+  #wf-list-workspace .wf-heading{grid-template-columns:minmax(0,1fr) 128px}
+  #wf-list-workspace .wf-heading>div:first-child{grid-column:1}
+  #wf-list-workspace .wf-heading h1{font-size:16px}
+  #wf-list-workspace .wf-heading>label{grid-column:2}
+  #wf-list-workspace .wf-heading input{width:100%}
+  #wf-list-workspace .wf-heading>.wf-heading-actions{grid-column:1/-1;justify-content:flex-end}
+}
+.accommodation-dialog{color:#243d2e;overflow:auto;font-size:13px}
+.accommodation-dialog h2{font-size:17px;line-height:1.35}
+.accommodation-dialog h3{font-size:14px;overflow-wrap:anywhere}
+.accommodation-form label{display:grid;gap:4px;min-width:0;font-size:12px}
+.accommodation-form input:not([type=checkbox]),.accommodation-form select{box-sizing:border-box;min-width:0;width:100%;max-width:100%;min-height:34px;padding:6px 8px;font:inherit;border-radius:6px}
+.accommodation-form .check-label{display:flex;align-items:center;gap:8px}
+.accommodation-form .check-label input{width:18px;height:18px;min-height:18px;flex:none}
+.accommodation-form button{min-height:34px;font-size:12px;padding:6px 10px;align-self:end}
+.accommodation-common{margin:0;min-width:0}
+.accommodation-facts{overflow-wrap:anywhere}
+@media(max-width:600px){.accommodation-form input:not([type=checkbox]),.accommodation-form select{min-height:40px;font-size:16px}.accommodation-form button{min-height:40px}}

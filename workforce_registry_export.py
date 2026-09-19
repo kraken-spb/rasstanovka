@@ -11,16 +11,20 @@ from openpyxl.worksheet.worksheet import Worksheet
 
 
 MAX_ROWS = 25000
-SECTIONS = {'rotation': 'Перевахта', 'recruitment': 'Комплектование'}
+SECTIONS = {'rotation': 'Перевахта', 'recruitment': 'Комплектация'}
 HEADERS = (
-    '№ п/п', 'ФИО', 'Табельный номер', 'Проект', 'СМУ', 'Организация-работодатель',
-    'Должность', 'Категория ГДЛР', 'Статус сотрудника', 'Состояние на дату',
-    'Дата начала состояния', 'Дата заезда', 'Прогноз окончания вахты',
+    '№ п/п', 'ФИО', 'Табельный номер', 'Телефон', 'E-mail', 'Гражданство', 'Город отправления', 'Проект', 'СМУ', 'Организация-работодатель',
+    'Должность', 'Категория ГДЛР', 'Статус сотрудника', 'Состояние',
+    'Дата начала статуса', 'Дата заезда', 'Прогноз окончания вахты',
     'Заезд / выезд', 'Плановая дата поездки', 'Тип заезда/выезда',
-    'График вахтования', 'Дата окончания МО', 'Следующий заезд',
+    'График вахтования', 'Дата окончания МО', 'Следующий заезд', 'Проживание', 'Дата начала МО', 'Подразделение',
 )
-WIDTHS = (8, 38, 19, 24, 35, 28, 40, 32, 24, 26, 19, 19, 22, 18, 22, 24, 26, 20, 20)
+WIDTHS = (8, 38, 19, 24, 32, 24, 28, 24, 35, 28, 40, 32, 24, 26, 19, 19, 22, 18, 22, 24, 26, 20, 20, 22, 20, 38)
 
+
+COLUMN_ORDER = (0, 9, 12, 13, 20, 2, 1, 10, 11, 5, 3, 4, 8, 25, 6, 24, 21, 15, 16, 7, 14, 17, 18, 19, 22, 23)
+HEADERS = tuple(HEADERS[i] for i in COLUMN_ORDER)
+WIDTHS = tuple(WIDTHS[i] for i in COLUMN_ORDER)
 
 def excel_date(value):
     return date.fromisoformat(value) if isinstance(value, str) and value else value or None
@@ -44,19 +48,31 @@ def registry_workbook(rows, day, section):
     header_font = Font(name='Calibri', size=11, bold=True, color='FFFFFF')
     header_fill = PatternFill('solid', fgColor='176D50')
     alternate = PatternFill('solid', fgColor='F0F6F3')
+    alignment = Alignment(vertical='top', wrap_text=True)
+
+    def style(*, header=False, stripe=False, date_value=False):
+        template = WriteOnlyCell(sheet)
+        template.font = header_font if header else font
+        template.alignment = alignment
+        if header or stripe:
+            template.fill = header_fill if header else alternate
+        if date_value:
+            template.number_format = 'dd.mm.yyyy'
+        return template._style
+
+    styles = {(False, False): style(), (False, True): style(stripe=True),
+              (True, False): style(header=True), (True, True): style(header=True, date_value=True),
+              (False, 'date'): style(date_value=True), (True, 'date'): style(stripe=True, date_value=True)}
 
     def cells(values, *, header=False, stripe=False):
         result = []
+        plain_style = styles[(header, stripe)]
+        date_style = styles[(header, stripe) if header else (True, 'date') if stripe else (False, 'date')]
         for value in values:
             cell = WriteOnlyCell(sheet, value=value)
             if isinstance(value, str):
                 cell.data_type = 's'
-            cell.font = header_font if header else font
-            cell.alignment = Alignment(vertical='top', wrap_text=True)
-            if isinstance(value, date):
-                cell.number_format = 'dd.mm.yyyy'
-            if header or stripe:
-                cell.fill = header_fill if header else alternate
+            cell._style = date_style if isinstance(value, date) else plain_style
             result.append(cell)
         return result
 
@@ -69,14 +85,14 @@ def registry_workbook(rows, day, section):
     for index, row in enumerate(rows, 1):
         movement, rotation = row.get('movement') or {}, row.get('rotation') or {}
         direction = {'arrival': 'Заезд', 'departure': 'Выезд'}.get(movement.get('direction'), '')
-        values = [index, row['full_name'], row.get('personnel_no') or '', row.get('project'),
+        values = [index, row['full_name'], row.get('personnel_no') or '', row.get('phone'), row.get('email'), row.get('citizenship'), row.get('origin_city'), row.get('project'),
                   row.get('department'), row.get('employer'), row.get('profession'), row.get('category'),
                   row.get('employment'), row.get('stage') or 'Без подтверждённого состояния',
                   excel_date(row.get('effective_date')), excel_date(row.get('arrival_date')),
                   excel_date(row.get('forecast_departure_date')), direction,
                   excel_date(movement.get('planned_date')), movement.get('basis'), rotation.get('schedule'),
-                  excel_date(rotation.get('leave_end_date')), excel_date(rotation.get('next_arrival_date'))]
-        sheet.append(cells(values, stripe=index % 2 == 0))
+                  excel_date(rotation.get('leave_end_date')), excel_date(rotation.get('next_arrival_date')), row.get('accommodation'), excel_date(row.get('leave_start_date')), row.get('division')]
+        sheet.append(cells([values[i] for i in COLUMN_ORDER], stripe=index % 2 == 0))
     sheet.auto_filter.ref = f'A4:{get_column_letter(len(HEADERS))}{len(rows) + 4}'
     stream = BytesIO()
     book.save(stream)

@@ -137,6 +137,49 @@ class StaffingEligibilityTest(unittest.TestCase):
                         if r['id'] == response.get_json()['id'])
         self.assertEqual(category['staffing_allowed'], 0)
 
+    def test_super_admin_can_toggle_staffing_without_losing_assignments(self):
+        worker = self.fixture.table().get_json()['rows'][0]
+        category = next(r for r in self.fixture.super_admin.get('/api/gdlr-categories').get_json()['rows']
+                        if r['id'] == worker['category_id'])
+        with self.module.app.app_context():
+            db = self.module.get_db()
+            site = db.execute('SELECT id FROM subobjects ORDER BY id LIMIT 1').fetchone()[0]
+            db.execute('''INSERT INTO assignments(work_date,shift,subobject_id,worker_id,employer,
+                foreman_user_id,created_at,crew_id,edit_token) VALUES ('2026-09-11','1 смена',?,?,'',?,'now',?,'keep')''',
+                (site, worker['id'], self.fixture.admin_id, worker['crew_id']))
+            db.commit()
+        headers = {'X-CSRF-Token':'staffing-csrf'}
+        url = '/api/gdlr-categories/' + str(category['id'])
+        change = {'name':category['name'],'active':True,'staffing_allowed':False,'expected_token':category['edit_token']}
+        self.assertEqual(self.fixture.super_admin.patch(url,json=change,headers=headers).status_code,200)
+        self.assertNotIn(worker['id'],{r['id'] for r in self.fixture.table().get_json()['rows']})
+        self.assertEqual(self.fixture.super_admin.patch(url,json=change,headers=headers).status_code,409)
+        history = self.fixture.admin.get('/api/placement-report?date=2026-09-11').get_json()
+        self.assertIn(worker['id'],{p['id'] for group in history['groups'] for p in group['people']})
+        current = next(r for r in self.fixture.super_admin.get('/api/gdlr-categories').get_json()['rows'] if r['id']==category['id'])
+        change.update(staffing_allowed=True,expected_token=current['edit_token'])
+        self.assertEqual(self.fixture.super_admin.patch(url,json=change,headers=headers).status_code,200)
+        self.assertIn(worker['id'],{r['id'] for r in self.fixture.table().get_json()['rows']})
+        with self.module.app.app_context():
+            self.assertEqual(self.module.get_db().execute("SELECT COUNT(*) FROM assignments WHERE worker_id=? AND edit_token='keep'",(worker['id'],)).fetchone()[0],1)
+
+    def test_staffing_toggle_validates_roles_csrf_boolean_and_preserves_omitted_flag(self):
+        category = self.create_nonstaffing_category()
+        url = '/api/gdlr-categories/' + str(category['id'])
+        body = {'name':category['name'],'active':True,'staffing_allowed':True,'expected_token':category['edit_token']}
+        headers = {'X-CSRF-Token':'staffing-csrf'}
+        self.assertEqual(self.fixture.admin.patch(url,json=body,headers=headers).status_code,403)
+        self.assertEqual(self.fixture.super_admin.patch(url,json=body).status_code,403)
+        for invalid in [1,0,'true',None]:
+            self.assertEqual(self.fixture.super_admin.patch(url,json={**body,'staffing_allowed':invalid},headers=headers).status_code,400)
+        self.assertEqual(self.fixture.super_admin.patch(url,json=body,headers=headers).status_code,200)
+        current = next(r for r in self.fixture.super_admin.get('/api/gdlr-categories').get_json()['rows'] if r['id']==category['id'])
+        body.pop('staffing_allowed');body['expected_token'] = current['edit_token'];body['active'] = False
+        self.assertEqual(self.fixture.super_admin.patch(url,json=body,headers=headers).status_code,200)
+        current = next(r for r in self.fixture.super_admin.get('/api/gdlr-categories').get_json()['rows'] if r['id']==category['id'])
+        self.assertEqual(current['staffing_allowed'],1)
+        self.assertEqual(current['active'],0)
+
     def test_category_change_invalidates_transfer_and_preserves_historical_fact(self):
         row = self.fixture.table().get_json()['rows'][0]
         with self.module.app.app_context():

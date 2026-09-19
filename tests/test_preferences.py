@@ -63,6 +63,57 @@ class PreferencesTest(unittest.TestCase):
         self.assertEqual(self.save({'groupMode': 'crew'}, role='foreman').status_code, 200)
         self.assertEqual(fresh.get('/api/preferences/staffing').get_json()['settings'], values)
 
+    def test_theme_is_validated_isolated_and_rendered_before_scripts(self):
+        self.assertIn('data-theme="lgss"', self.clients['admin'].get('/').get_data(as_text=True))
+        self.assertEqual(self.save({'theme': 'lgss'}, csrf=False).status_code, 403)
+        for invalid in ('unknown', '', None, {}, [], 1):
+            self.assertEqual(self.save({'theme': invalid}).status_code, 400)
+        self.assertEqual(self.save({'theme': 'lgss', 'department': 'СМУ 15.1'}).status_code, 200)
+        fresh = self.client_for(self.admin)
+        self.assertIn('data-theme="lgss"', fresh.get('/').get_data(as_text=True))
+        self.assertNotIn('theme', self.clients['foreman'].get('/api/preferences/staffing').json['settings'])
+        self.assertEqual(self.save({'theme': 'default'}).status_code, 200)
+        self.assertIn('data-theme="default"', fresh.get('/').get_data(as_text=True))
+        self.assertIn('data-theme="lgss"', self.clients['foreman'].get('/').get_data(as_text=True))
+        self.assertEqual(fresh.get('/api/preferences/staffing').json['settings'], {'theme':'default','department':'СМУ 15.1'})
+
+    def test_every_role_can_change_only_own_theme_without_widening_viewer_access(self):
+        with self.module.app.app_context():
+            db = self.module.get_db()
+            for role in ('super_admin', 'hr_viewer', 'rotation', 'recruitment'):
+                user_id = db.execute("INSERT INTO users(username,password_hash,full_name,role,created_at) VALUES (?,'unused',?,?,'now')", (role,role,role)).lastrowid
+                self.clients[role] = self.client_for(user_id)
+            db.commit()
+        for role in self.clients:
+            with self.subTest(role=role):
+                self.assertEqual(self.save({'theme':'lgss'}, role=role).status_code, 200)
+                self.assertEqual(self.clients[role].get('/api/preferences/staffing').json['settings']['theme'], 'lgss')
+        self.assertEqual(self.save({'theme':'default','department':'СМУ 15.1'}, role='viewer').status_code, 403)
+        self.assertEqual(self.save({'theme':'default','rotationSort':[{'field':'phone','direction':'asc'}]}, role='viewer').status_code, 403)
+
+    def test_workforce_columns_are_account_scoped_and_independent_per_section(self):
+        recruitment = {'hidden': ['department', 'employer', 'stage_date', 'forecast_departure_date', 'number', 'planned_date', 'movement_basis'], 'widths': {'name': 310, 'stage': 180, 'arrival_date': 120, 'personnel': 100, 'rotation_schedule': 160}}
+        rotation = {'hidden': ['dates', 'leave_end_date', 'next_arrival_date'], 'widths': {'project': 120, 'department': 210, 'category': 200, 'stage_date': 170, 'movement_direction': 120}}
+        values = {'recruitmentColumns': recruitment, 'rotationColumns': rotation,
+                  'columns': {'hidden': ['itr'], 'widths': {'name': 250}}}
+        self.assertEqual(self.save(values).status_code, 200)
+        fresh = self.client_for(self.admin)
+        self.assertEqual(fresh.get('/api/preferences/staffing').json['settings'], values)
+        self.assertEqual(self.clients['foreman'].get('/api/preferences/staffing').json['settings'], {})
+        self.assertEqual(self.save({'recruitmentColumns': {'hidden': [], 'widths': {}}}).status_code, 200)
+        saved = fresh.get('/api/preferences/staffing').json['settings']
+        self.assertEqual(saved['rotationColumns'], rotation)
+        self.assertEqual(saved['columns'], values['columns'])
+        self.assertEqual(saved['recruitmentColumns'], {'hidden': [], 'widths': {}})
+        from user_preferences import WORKFORCE_COLUMNS
+        for invalid in [{'hidden': ['unknown'], 'widths': {}}, {'hidden': [], 'widths': {'name': True}},
+                        {'hidden': [], 'widths': {'name': 801}}, {'hidden': ['name', 'name'], 'widths': {}},
+                        {'hidden': sorted(WORKFORCE_COLUMNS), 'widths': {}},
+                        {'hidden': sorted(WORKFORCE_COLUMNS - {'arrival_date', 'forecast_departure_date'}) + ['dates'], 'widths': {}}]:
+            with self.subTest(invalid=invalid):
+                self.assertEqual(self.save({'recruitmentColumns': invalid}).status_code, 400)
+        self.assertEqual(self.save({'rotationColumns': rotation}, csrf=False).status_code, 403)
+
     def test_moscow_midnight_and_explicit_date_survive_new_login(self):
         from datetime import datetime, UTC
         class Clock(datetime):
@@ -147,7 +198,7 @@ class PreferencesTest(unittest.TestCase):
         self.assertEqual(self.save({'columns': columns}).status_code, 200)
         fresh = self.client_for(self.admin)
         self.assertEqual(fresh.get('/api/preferences/staffing').get_json()['settings']['columns'], columns)
-        for bad in (order[:-1], [order[0]] * len(order), order + ['unknown'], None, {'name': 0}):
+        for bad in ([key for key in order if key!='name'], [order[0]] * len(order), order + ['unknown'], None, {'name': 0}):
             self.assertEqual(self.save({'columns': {**columns, 'order': bad}}).status_code, 400)
         self.save({'columns': {'hidden': [], 'widths': {'name': 400}}})
         settings = fresh.get('/api/preferences/staffing').get_json()['settings']['columns']

@@ -68,12 +68,13 @@
     move($('staffing-search')?.closest('label'), search);
     move($('staffing-unassigned')?.closest('label'), quick);
     move($('staffing-refresh'), quick);
+    move($('staffing-columns-toggle')?.closest('.table-view-controls') || $('staffing-columns-toggle'), quick);
     for (const id of ['grouping', 'category', 'department', 'employer', 'contractor', 'pps', 'author', 'freshness', 'regex']) {
       move($('staffing-' + id)?.closest('label'), filters.lastElementChild);
     }
     move($('staffing-reset-filters'), filters.lastElementChild);
     move($('staffing-freshness-help'), filters.lastElementChild);
-    for (const id of ['collapse', 'expand', 'undo', 'redo', 'columns-toggle']) move($('staffing-' + id), tools.lastElementChild);
+    for (const id of ['collapse', 'expand', 'undo', 'redo']) move($('staffing-' + id), tools.lastElementChild);
     move(view.querySelector('.staffing-transfers'), tools.lastElementChild);
     for (const id of ['transfer-selected', 'transfer-tomorrow', 'category-selected', 'employer-selected', 'work-selected', 'clear-selected']) {
       move($('staffing-' + id), selected.lastElementChild);

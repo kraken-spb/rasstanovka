@@ -204,6 +204,32 @@
   for (const key of ['metric', 'pps-details']) $('placement-report-' + key).addEventListener('change', () => {
     if (currentData) render(currentData);
   });
+  async function queuedPdf(params) {
+    const root = document.querySelector('.app-shell');
+    const storageKey = 'placement-pdf:' + root.dataset.userId + ':' + params.toString();
+    let key; try { key = sessionStorage.getItem(storageKey); } catch (_) {}
+    if (!key) { key = crypto.randomUUID(); try { sessionStorage.setItem(storageKey, key); } catch (_) {} }
+    const body = {type: 'placement_pdf', date: params.get('date'),
+      filters: [...params.entries()].filter(([name]) => name !== 'date'), request_key: key};
+    const started = await fetch('/api/workforce/export-jobs', {method:'POST', cache:'no-store',
+      headers:{'Content-Type':'application/json','X-CSRF-Token':root.dataset.csrf},body:JSON.stringify(body)});
+    const job = await started.json().catch(() => ({}));
+    if (!started.ok) { if (started.status < 500) try { sessionStorage.removeItem(storageKey); } catch (_) {} throw new Error(job.error || 'Не удалось поставить PDF в очередь.'); }
+    for (let attempt = 0; attempt < 180; attempt++) {
+      const stateResponse = await fetch('/api/workforce/export-jobs/' + key, {cache:'no-store'});
+      const state = await stateResponse.json().catch(() => ({}));
+      if (!stateResponse.ok || state.state === 'failed') { try { sessionStorage.removeItem(storageKey); } catch (_) {} throw new Error(state.error || 'Не удалось подготовить PDF.'); }
+      if (state.state === 'ready') {
+        const file = await fetch('/api/workforce/export-jobs/' + key + '/download', {cache:'no-store'});
+        if (file.ok) try { sessionStorage.removeItem(storageKey); } catch (_) {}
+        return file;
+      }
+      setStatus(state.state === 'pending' ? 'PDF в очереди…' : 'Формируем PDF…');
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    throw new Error('PDF ещё формируется. Нажмите кнопку повторно, чтобы проверить готовность.');
+  }
+
   $('placement-report-pdf').addEventListener('click', async () => {
     if (readyQuery === null || downloading) return;
     const params = new URLSearchParams(readyQuery);
@@ -216,7 +242,7 @@
     downloading = true; $('placement-report-pdf').disabled = true;
     setStatus('Подготовка PDF…');
     try {
-      const response = await fetch('/api/placement-report/pdf?' + query, {cache: 'no-store'});
+      const response = document.body.classList.contains('workforce-layout') ? await queuedPdf(params) : await fetch('/api/placement-report/pdf?' + query, {cache: 'no-store'});
       if (!response.ok) {
         const data = await response.json(); throw new Error(data.error || 'Не удалось подготовить PDF.');
       }

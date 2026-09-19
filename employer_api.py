@@ -35,6 +35,20 @@ def migrate_employers(db):
 
 
 def register_employer_routes(app, get_db, roles_required, utc_now):
+    @app.get('/api/staffing/employers')
+    @roles_required('admin', 'foreman')
+    def employer_options():
+        db = get_db()
+        if getattr(db, 'dialect', None) == 'postgres':
+            rows = [dict(row) for row in db.native('SELECT name FROM workforce_organizations WHERE active ORDER BY name')]
+        else:
+            # The legacy SQLite application has no organization catalog.
+            rows = [{'name': row['employer']} for row in db.execute(
+                "SELECT DISTINCT employer FROM workers WHERE trim(COALESCE(employer,''))<>'' ORDER BY employer COLLATE NOCASE")]
+        response = jsonify({'rows': rows})
+        response.headers['Cache-Control'] = 'private, no-store'
+        return response
+
     @app.put('/api/staffing/groups/employer')
     @roles_required('admin', 'foreman')
     def bind_group_employer():
@@ -64,7 +78,7 @@ def register_employer_routes(app, get_db, roles_required, utc_now):
             actor = db.execute('SELECT role,active FROM users WHERE id=?', (g.user['id'],)).fetchone()
             if not actor or not actor['active'] or actor['role'] not in ('admin', 'super_admin', 'foreman'):
                 abort(403, description='Нет права изменять расстановку.')
-            if getattr(db, 'dialect', None) == 'postgres' and actor['role'] == 'foreman':
+            if getattr(db, 'dialect', None) == 'postgres':
                 if not db.native('SELECT id FROM workforce_organizations WHERE name_key=log_casefold(trim(%s)) AND active',
                                  (name,)).fetchone():
                     abort(400, description='Выберите работодателя из готового справочника. Новую организацию добавляет администратор.')
@@ -90,5 +104,9 @@ def register_employer_routes(app, get_db, roles_required, utc_now):
                     VALUES (?,?,?,?,?,?) ON CONFLICT(worker_id) DO UPDATE SET employer=excluded.employer,
                     edit_token=excluded.edit_token,updated_by=excluded.updated_by,updated_at=excluded.updated_at''',
                     (worker['id'], name, worker['employer'], token, g.user['id'], now))
+                if getattr(db, 'dialect', None) == 'postgres':
+                    # SQLite has correction triggers; PostgreSQL needs the effective
+                    # worker value updated explicitly, then its profile trigger runs.
+                    db.execute('UPDATE workers SET employer=? WHERE id=?', (name, worker['id']))
                 updated.append({'id': worker['id'], 'employer': name, 'employer_token': token})
         return jsonify({'rows': updated})

@@ -18,8 +18,7 @@
     $('backups-create').disabled = value;
     $('backups-refresh').disabled = value;
     $('backups-date').disabled = value;
-    $('backups-prev').disabled = value || state.page <= 1;
-    $('backups-next').disabled = value || !state.hasNext;
+    pager.setBusy(value);
   }
   async function api(url, options = {}) {
     const response = await fetch(url, {...options, cache: 'no-store', headers: {
@@ -29,11 +28,15 @@
     if (!response.ok) throw new Error(data.error || 'Не удалось выполнить операцию с резервными копиями.');
     return data;
   }
+  const pager = window.TablePagination.mount($('backups-list'), 'Резервные копии', async nextPage => {
+    if (state.busy) return false;
+    state.page = nextPage + 1;
+    await load();
+  }, {top: false, sizes: false, container: document.querySelector('.backup-pagination')});
   function render(data) {
     const list = $('backups-list');
     list.replaceChildren();
-    state.hasNext = data.page * data.page_size < data.total;
-    $('backups-page').textContent = 'Копий: ' + data.total + ' · Страница ' + data.page;
+    pager.update(data.total, data.page - 1, data.page_size);
     if (!data.rows.length) { list.append(el('p', 'Резервных копий пока нет.', 'empty-state')); return; }
     const table = document.createElement('table'); table.className = 'backup-table';
     const head = document.createElement('thead'); const heading = document.createElement('tr');
@@ -87,8 +90,6 @@
   });
   $('backups-refresh').addEventListener('click', () => load());
   $('backups-date').addEventListener('change', () => { state.page = 1; load(); });
-  $('backups-prev').addEventListener('click', () => { if (!state.busy && state.page > 1) { state.page--; load(); } });
-  $('backups-next').addEventListener('click', () => { if (!state.busy && state.hasNext) { state.page++; load(); } });
   window.backupsScreen = {load, canLeave: () => {
     if (state.busy) { status('Дождитесь завершения операции с резервными копиями.'); return false; }
     return true;

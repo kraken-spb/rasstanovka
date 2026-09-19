@@ -34,7 +34,9 @@ def day_snapshots(db, day, ids, records=None):
         rows = records[table] if records is not None else dated_records(db, table, day, ids)
         for row in rows:
             key = kind + (':' + canonical_shift(row['shift']) if kind in ('assignment', 'work') else '')
-            digest = hashlib.sha256(json.dumps(dict(row), sort_keys=True, ensure_ascii=False).encode('utf-8')).hexdigest()
+            value=dict(row)
+            if value.get('work_type_id') is None:value.pop('work_type_id',None)
+            digest = hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode('utf-8')).hexdigest()
             # Keep legacy duplicate shift spellings distinct; never hide one in the fingerprint.
             result[row['worker_id']].setdefault(key, []).append(digest)
     for values in result.values():
@@ -160,8 +162,8 @@ def register_day_inheritance(app, get_db, roles_required, utc_now):
                     VALUES (?,?,?,?,?,?)''', (day, row['worker_id'], row['status'],
                     secrets.token_urlsafe(16), actor['id'], stamp))
             for row in records['staffing_performed_work']:
-                db.execute('''INSERT INTO staffing_performed_work(work_date,worker_id,shift,description,edit_token,updated_by,updated_at)
-                    VALUES (?,?,?,?,?,?,?)''', (day, row['worker_id'], row['shift'], row['description'],
+                db.execute('''INSERT INTO staffing_performed_work(work_date,worker_id,shift,description,work_type_id,edit_token,updated_by,updated_at)
+                    VALUES (?,?,?,?,?,?,?,?)''', (day, row['worker_id'], row['shift'], row['description'], row['work_type_id'],
                     secrets.token_urlsafe(16), actor['id'], stamp))
             for worker_id, snapshot in day_snapshots(db, day, sorted(ids)).items():
                 db.execute('INSERT INTO staffing_inherited_rows VALUES (?,?,?,?)',

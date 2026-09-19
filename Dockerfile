@@ -1,5 +1,8 @@
 FROM python:3.12-slim
 
+RUN apt-get update && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
@@ -20,6 +23,8 @@ COPY user_preferences.py outstaff_api.py app.py user_activity.py user_roles.py l
 COPY tools/import_staffing.py ./tools/import_staffing.py
 COPY tools/sync_gdlr_catalog.py ./tools/sync_gdlr_catalog.py
 COPY tools/promote_super_admin.py ./tools/promote_super_admin.py
+COPY employee_listing.py ./
+COPY tools/employee_regex.cjs ./tools/employee_regex.cjs
 COPY seed.example.json ./seed.json
 COPY placement_report.py placement_report_pdf.py ./
 COPY position_cards.py position_cards_pdf.py ./

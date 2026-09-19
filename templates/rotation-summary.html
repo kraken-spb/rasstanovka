@@ -1,0 +1,15 @@
+<section id="rotation-summary" hidden aria-label="Свод перевахтовки">
+  <form id="rotation-summary-filters" class="rotation-summary-filters">
+    <label>Отчётная дата<input id="rs-date" type="date" value="{{ today }}" required></label>
+    <label>Конец периода 1<input id="rs-end1" type="date" required></label>
+    <label>Конец периода 2<input id="rs-end2" type="date" required></label>
+    <label>ППС<select id="rs-pps" aria-label="ППС"><option value="">Все ППС</option></select></label>
+    <label>СМУ<select id="rs-smu" aria-label="СМУ"><option value="">Все СМУ</option></select></label>
+    <div class="rotation-summary-actions"><button type="submit" class="secondary-button">Обновить</button>
+    <button id="rs-export" type="button" class="primary-button" disabled>Скачать Excel</button></div>
+  </form>
+  <p id="rs-status" class="table-note" role="status" aria-live="polite"></p>
+  <div id="rs-warnings" class="table-note"></div>
+  <details class="rotation-summary-method"><summary>Как считается свод</summary><ul id="rs-method"></ul></details>
+  <div id="rs-table" class="rotation-summary-scroll" tabindex="0" aria-label="Свод перевахтовки с прокруткой"></div>
+</section>

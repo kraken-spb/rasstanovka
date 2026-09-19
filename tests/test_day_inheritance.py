@@ -43,7 +43,7 @@ class DayInheritanceTest(unittest.TestCase):
                     VALUES ('2026-09-13','2 смена',1,?,'ЛГСС',?,'old',?,'old-assignment')''', (worker_id, self.foreman_id, self.crew_id))
                 db.execute("INSERT INTO staffing_shifts VALUES ('2026-09-13',?,'2 смена','old-shift',?,'old')", (worker_id, self.admin_id))
                 db.execute("INSERT INTO staffing_attendance VALUES ('2026-09-13',?,'Больн','old-status',?,'old')", (worker_id, self.admin_id))
-                db.execute("INSERT INTO staffing_performed_work VALUES ('2026-09-13',?,'2 смена','Монтаж трубопровода','old-work',?,'old')", (worker_id, self.admin_id))
+                db.execute("INSERT INTO staffing_performed_work(work_date,worker_id,shift,description,edit_token,updated_by,updated_at) VALUES ('2026-09-13',?,'2 смена','Монтаж трубопровода','old-work',?,'old')", (worker_id, self.admin_id))
             db.commit()
         self.admin = self.client(self.admin_id)
 
@@ -120,7 +120,7 @@ class DayInheritanceTest(unittest.TestCase):
     def test_target_with_only_work_description_is_preserved(self):
         with self.app.app_context():
             db = self.module.get_db()
-            db.execute("INSERT INTO staffing_performed_work VALUES ('2026-09-14',?,'1 смена','Сварка','target-work',?,'now')", (self.ids[0], self.admin_id))
+            db.execute("INSERT INTO staffing_performed_work(work_date,worker_id,shift,description,edit_token,updated_by,updated_at) VALUES ('2026-09-14',?,'1 смена','Сварка','target-work',?,'now')", (self.ids[0], self.admin_id))
             db.commit()
         self.assertEqual(self.inherit().get_json()['status'], 'existing')
         self.assertEqual(self.rows('assignments'), [])

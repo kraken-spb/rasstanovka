@@ -56,6 +56,8 @@ def register_crew_routes(app, get_db, roles_required, utc_now):
     @app.get('/api/employees')
     @roles_required('admin', 'foreman')
     def employees():
+        from employee_listing import employee_page
+        paged = 'page' in request.args
         try:
             report_date = date.fromisoformat(request.args.get('date', date.today().isoformat())).isoformat()
         except ValueError:
@@ -92,7 +94,7 @@ def register_crew_routes(app, get_db, roles_required, utc_now):
             item['removal'] = {key: removal[key] for key in ('worker_id', 'effective_date', 'reason', 'changed_at', 'actor_name')} if removal else None
             item['can_remove'] = bool(row['active'] and row['id'] in editable and g.user['role'] in ('admin', 'super_admin'))
             item['can_restore'] = bool(not row['active'] and row['id'] in editable and g.user['role'] in ('admin', 'super_admin'))
-            item['restoration_token'] = restoration_token(restoration_workers[row['id']], removal, restorations.get(row['id'])) if item['can_restore'] else None
+            item['restoration_token'] = None
             item['outstaff'] = outstaff.get(row['id'])
             source = qualifications.get((row['personnel_no'].strip().casefold(), row['full_name'].strip().casefold()))
             qualification = next(iter(source['values'])) if source and len(source['values']) == 1 else ''
@@ -105,12 +107,19 @@ def register_crew_routes(app, get_db, roles_required, utc_now):
             item['source_category'] = row['category']
             item['category'] = row['category_name'] if row['category_id'] is not None else row['category']
             item['can_edit'] = bool(row['active'] and row['id'] in editable)
-            item['membership_token'] = employee_token(row)
             rows.append(item)
+        page_data = {}
+        if paged:
+            rows, page_data = employee_page(rows)
+        originals = {row['id']: row for row in employees}
+        for item in rows:
+            item['membership_token'] = employee_token(originals[item['id']])
+            if item['can_restore']:
+                item['restoration_token'] = restoration_token(restoration_workers[item['id']], removals.get(item['id']), restorations.get(item['id']))
         return jsonify({'rows': rows, 'date': report_date, 'departments': reference_data(db)[1] if request.args.get('scope') == 'outstaff' else [], 'summary': {
             'total': len(rows), 'workers': sum(row['is_worker'] for row in rows),
             'assigned': sum(row['assigned_on_date'] for row in rows),
-            'unknown_qualification': sum(not row['qualification'] for row in rows)}})
+            'unknown_qualification': sum(not row['qualification'] for row in rows)}, **page_data})
 
     @app.put('/api/employees/<int:worker_id>/pps')
     @roles_required('admin', 'foreman')

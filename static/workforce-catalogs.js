@@ -1,9 +1,10 @@
 (() => {
   'use strict';
   const root=document.querySelector('.app-shell');
+  const pageSize=50;
   let panel, reference, kind='organization', search='', offset=0, busy=false, dirty=false, loading=false, loadId=0, discardedDirty=false;
   const kinds=[['organization','Работодатели'],['citizenship','Гражданство'],['profession','Должности и профессии'],['travelpoint','Пункты поездок'],['place','Места ПВП'],['schedule','Графики вахтования'],
-    ['document','Документы'],['check','Проверки оформления'],['project','Проекты'],['employment','Статус сотрудника'],
+    ['document','Документы'],['check','Проверки оформления'],['project','Проекты'],['employment','Статус сотрудника'],['accommodation','Проживание'],
     ['stage','Присутствие'],['direction','Направление поездки'],['destination','Тип места назначения'],['basis','Основание поездки'],['result','Результат поездки'],['docstate','Состояние документа'],['checkstate','Состояние проверки']];
   const fixed=new Set(['employment','stage','direction','destination','basis','result','docstate','checkstate']);
   const openSpecialties=new Set();
@@ -20,6 +21,7 @@
     return node;
   };
   async function api(path,options={}) {
+    if(options.method&&options.method!=='GET')window.catalogData.invalidate();
     const response=await fetch('/api/workforce/'+path,{...options,cache:'no-store',headers:{'Content-Type':'application/json','X-CSRF-Token':root.dataset.csrf}});
     return window.readApiResponse(response,'Не удалось сохранить справочник.');
   }
@@ -30,13 +32,13 @@
     panel.querySelector('.wf-catalog-load-error')?.remove();
     panel.prepend(el('p',{className:'error-text wf-catalog-load-error',role:'alert'},message));
   }
-  async function load(nextKind=kind) {
+  async function load(nextKind=kind,refresh=false) {
     panel=document.getElementById('workforce-catalog-panel');if(!panel)return false;
     if(!kinds.some(([value])=>value===nextKind)){dirty=dirty||discardedDirty;discardedDirty=false;loadError('Неизвестный справочник учёта. Выберите раздел в меню.');return false;}
     const current=++loadId, previous={reference,kind,search,offset,dirty:dirty||discardedDirty};
     loading=true;panel.inert=true;
     try {
-      const nextReference=await api('reference');if(current!==loadId)return false;
+      const nextReference=await window.catalogData.get('/api/workforce/reference',()=>api('reference'),{refresh});if(current!==loadId)return false;
       reference=nextReference;
       if(nextKind!==kind){kind=nextKind;offset=0;search='';}
       render();dirty=false;discardedDirty=false;return true;
@@ -79,7 +81,7 @@
     const initialActive=row?.active!==false&&row?.active!==0;
     const active=el('input',{type:'checkbox',checked:initialActive});
     form.append(el('label',{className:'check-label'},active,'Действующее значение'));
-    const reason=el('textarea',{required:true,maxLength:10000});form.append(el('label',{className:'wf-wide'},'Основание изменения',reason));
+    const reason=el('textarea',{maxLength:10000,placeholder:'Необязательно для истории'});form.append(el('label',{className:'wf-wide'},'Основание изменения (необязательно)',reason));
     const message=el('p',{className:'error-text wf-wide',role:'alert'});
     const submit=el('button',{type:'submit',className:'primary-button wf-wide'},row?'Сохранить':'Добавить');form.append(submit,message);
     form.addEventListener('input',()=>{dirty=true;});
@@ -108,11 +110,46 @@
     section.addEventListener('toggle',()=>{if(section.open&&!loaded){loaded=true;section.append(editor(row,editorKind,defaults));}});
     return section;
   }
+  function catalogTable(columns,rows,editable,editorKind=kind) {
+    const body=el('tbody');
+    const table=el('table',{className:'catalog-data-table'},
+      el('thead',{},el('tr',{},...columns.map(([label])=>el('th',{scope:'col'},label)),
+        ...(editable?[el('th',{scope:'col',className:'catalog-action-cell'},'Действия')]:[]))),body);
+    for(const row of rows) {
+      const cells=columns.map(([label,value])=>el('td',{'data-label':label},value(row)));
+      const line=el('tr',{},...cells);
+      body.append(line);
+      if(editable) {
+        const actions=el('td',{'data-label':'Действия',className:'catalog-action-cell'});
+        line.append(actions);
+        if(!row.system_value) {
+          let detail;
+          const button=el('button',{type:'button',className:'secondary-button','aria-expanded':'false',
+            'aria-label':'Редактировать: '+(row.label||row.name),onclick:()=>{
+              if(!detail) {
+                detail=el('tr',{className:'catalog-editor-row'},el('td',{colSpan:columns.length+1},editor(row,editorKind)));
+                line.after(detail);
+              } else detail.hidden=!detail.hidden;
+              button.setAttribute('aria-expanded',String(!detail.hidden));
+            }},'Редактировать');
+          actions.append(button);
+        } else actions.append(el('span',{className:'table-note'},'Системное'));
+      }
+    }
+    if(!rows.length)body.append(el('tr',{},el('td',{colSpan:columns.length+(editable?1:0)},'Ничего не найдено.')));
+    return table;
+  }
+  const statusCell=row=>el('span',{className:'catalog-status'+(isActive(row)?'':' is-inactive')},isActive(row)?'Действует':'Отключено');
   function pagination(total,unit='') {
-    offset=Math.min(offset,Math.max(0,Math.floor((total-1)/50)*50));
-    return el('div',{className:'wf-list-heading'},el('span',{},`${total?offset+1:0}–${Math.min(offset+50,total)} из ${total}${unit}`),
-      el('div',{},el('button',{type:'button',className:'secondary-button',disabled:!offset,onclick:()=>{if(canLeave()){offset=Math.max(0,offset-50);dirty=false;discardedDirty=false;render();}}},'←'),
-      el('button',{type:'button',className:'secondary-button',disabled:offset+50>=total,onclick:()=>{if(canLeave()){offset+=50;dirty=false;discardedDirty=false;render();}}},'→')));
+    const info=window.TablePagination.windowFor(total,Math.floor(offset/pageSize),pageSize);
+    offset=info.start;
+    const container=el('div',{className:'wf-list-heading'});
+    const pager=window.TablePagination.mount(container,'Справочник учёта',nextPage=>{
+      if(!canLeave())return false;
+      offset=nextPage*pageSize;dirty=false;discardedDirty=false;render();
+    },{top:false,sizes:false,container,unit:unit.trim()});
+    pager.update(total,info.page,pageSize);
+    return container;
   }
   function renderProfessions(content,editable) {
     const parents=reference.catalog.filter(row=>row.kind==='specialty');
@@ -143,13 +180,9 @@
         else if(parent&&!isActive(parent))body.append(el('p',{className:'table-note'},'Новые назначения и добавление разрядов недоступны, пока специальность в архиве.'));
         if(!parent)body.append(el('p',{className:'table-note'},'Исходные должности сохранены. Для сопоставления выберите специальность в редакторе строки.'));
         if(!group.children.length)body.append(el('p',{className:'table-note'},query?'Подходящих вариантов нет.':'Разряды и варианты должностей пока не добавлены.'));
-        for(const row of [...group.children].sort((a,b)=>(a.grade??0)-(b.grade??0)||a.label.localeCompare(b.label,'ru'))) {
-          const block=el('article',{className:'wf-profession-row'},el('div',{className:'wf-profession-heading'},
-            el('span',{className:'wf-profession-grade'},row.grade==null?'Разряд не указан':row.grade+' разряд'),el('strong',{},row.label)),
-            ...(!isActive(row)?[el('small',{},'Вариант в архиве')]:[]));
-          if(editable&&!row.system_value)block.append(lazyEditor('Редактировать',row,'profession'));
-          body.append(block);
-        }
+        if(group.children.length)body.append(catalogTable([
+          ['Название',row=>row.label],['Разряд',row=>row.grade==null?'—':String(row.grade)],['Состояние',statusCell]
+        ],[...group.children].sort((a,b)=>(a.grade??0)-(b.grade??0)||a.label.localeCompare(b.label,'ru')),editable,'profession'));
         section.append(body);
       };
       section.addEventListener('toggle',()=>{if(section.open){openSpecialties.add(group.key);fill();}else openSpecialties.delete(group.key);});
@@ -161,7 +194,7 @@
     selector.addEventListener('change',()=>{if(!canLeave()){selector.value=kind;return;}kind=selector.value;offset=0;search='';dirty=false;discardedDirty=false;render();});
     const query=el('input',{type:'search',value:search,placeholder:'Поиск по названию','aria-label':'Поиск по справочнику'});
     query.addEventListener('change',()=>{if(!canLeave()){query.value=search;return;}search=query.value;offset=0;dirty=false;discardedDirty=false;render();});
-    const reload=el('button',{className:'secondary-button',type:'button',onclick:()=>{if(canLeave())load();}},'Обновить');
+    const reload=el('button',{className:'secondary-button',type:'button',onclick:()=>{if(canLeave())load(kind,true);}},'Обновить');
     const content=document.createDocumentFragment();
     const heading=document.getElementById('catalog-rail')?el('h2',{className:'wf-catalog-title'},kinds.find(([value])=>value===kind)[1]):selector;
     content.append(el('div',{className:'wf-toolbar panel'},heading,query,reload));
@@ -169,16 +202,15 @@
     if(kind==='profession'){renderProfessions(content,editable);panel.replaceChildren(content);return;}
     let rows=kind==='organization'?reference.organizations:kind==='place'?reference.places:kind==='schedule'?reference.rotation_schedules:reference.catalog.filter(row=>row.kind===kind);
     rows=rows.filter(row=>(row.name||row.label).toLocaleLowerCase('ru').includes(search.toLocaleLowerCase('ru')));
-    if(editable)content.append(el('details',{className:'wf-entry'},el('summary',{},'Добавить значение'),editor(null)));
+    if(editable)content.append(lazyEditor('Добавить значение',null,kind));
     else content.append(el('p',{className:'table-note'},fixed.has(kind)?'Перечень закреплён правилами учёта.':'Справочник доступен для просмотра.'));
     content.append(pagination(rows.length));
-    for(const row of rows.slice(offset,offset+50)) {
-      const block=el('article',{className:'wf-entry'},el('strong',{},row.name||row.label),el('small',{},row.active?'Действует':'Отключено'));
-      if(kind==='schedule')block.append(el('p',{},row.needs_review?'Длительность не уточнена; автоматический расчёт недоступен.':`${row.onsite_days} дней на участке · ${row.leave_days} дней МО · ${row.travel_days} дней до заезда`));
-      if(kind==='place')block.append(el('p',{},[row.address,row.capacity!=null?'Мест: '+row.capacity:''].filter(Boolean).join(' · ')));
-      if(editable&&!row.system_value)block.append(el('details',{},el('summary',{},'Редактировать'),editor(row)));
-      content.append(block);
-    }
+    const columns=[['Название',row=>row.name||row.label]];
+    if(kind==='schedule')columns.push(['На участке, дней',row=>row.onsite_days??'—'],['МО, дней',row=>row.leave_days??'—'],
+      ['До заезда, дней',row=>row.travel_days??'—'],['Расчёт',row=>row.needs_review?'Требует уточнения':'Доступен']);
+    if(kind==='place')columns.push(['Адрес',row=>row.address||'—'],['Мест',row=>row.capacity??'—']);
+    columns.push(['Состояние',statusCell]);
+    content.append(catalogTable(columns,rows.slice(offset,offset+pageSize),editable));
     panel.replaceChildren(content);
   }
   window.addEventListener('beforeunload',event=>{if(busy||(dirty&&visible())){event.preventDefault();event.returnValue='';}});

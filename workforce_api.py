@@ -8,6 +8,9 @@ from uuid import uuid4
 from flask import abort, g, jsonify, request
 import psycopg
 
+from workforce_identity_filters import add_filters as identity_filters, option_values as identity_options
+from workforce_date_filters import FORECAST_SQL, date_filters, filter_source, options as date_options
+
 from workforce_core import (ADMINS, READERS, actor_scope, audit, catalog_value, date_value,
                             departure_warnings, plain, profile_snapshot, remember, replay,
                             require_worker, text_value, uuid_value)
@@ -57,7 +60,8 @@ def clear_catalog_text(clean, pairs):
 
 def payload(fields, required=()):
     data = request.get_json(silent=True)
-    if not isinstance(data, dict) or set(data) - set(fields) or set(required) - set(data):
+    # A history comment is optional; business fields remain mandatory.
+    if not isinstance(data, dict) or set(data) - set(fields) or (set(required) - {'reason'}) - set(data):
         abort(400, description='Неверный состав полей запроса.')
     return data
 
@@ -70,6 +74,9 @@ def validate_fields(db, values, rules, required=()):
             clean[key] = date_value(value, key, key in required)
         elif spec[0] == 'text':
             clean[key] = text_value(value, key, spec[1], key in required)
+        elif spec[0] == 'email':
+            from workforce_core import email_value
+            clean[key] = email_value(value)
         elif spec[0] == 'catalog':
             clean[key] = catalog_value(db, value, spec[1], key in required)
         elif spec[0] == 'catalog_choice':
@@ -124,8 +131,11 @@ def register_workforce_routes(app, get_db, roles_required):
             def guarded(*args, **kwargs):
                 try:
                     return view(*args, **kwargs)
-                except sqlite3.IntegrityError:
+                except sqlite3.IntegrityError as error:
                     get_db().rollback()
+                    cause = error.__cause__
+                    if isinstance(cause, psycopg.errors.UniqueViolation) and cause.diag.constraint_name == 'uq_workers_0':
+                        return jsonify(error='Табельный номер уже занят. Он должен быть уникальным для всех сотрудников комплектации и перевахты, включая отключённых. Новая запись или изменение не сохранены.'), 409
                     return jsonify(error='Запись уже существует или связанные данные изменились. Обновите карточку.'), 409
             return guarded
         return decorate
@@ -146,21 +156,41 @@ def register_workforce_routes(app, get_db, roles_required):
     register_import_routes(app, database, roles_required)
     from workforce_board import STAGES, register_board_routes, stage_token, transition_targets
     register_board_routes(app, database, roles_required)
+    from workforce_create import register_create_routes
+    register_create_routes(app, database, roles_required)
+    from workforce_bulk import register_bulk_routes
+    register_bulk_routes(app, database, roles_required)
+    from workforce_table_bulk import register_table_bulk_routes
+    register_table_bulk_routes(app, database, roles_required)
+    from division_api import register_division_routes
+    register_division_routes(app, database, roles_required)
+    from accommodation import register_accommodation_routes
+    register_accommodation_routes(app, database, roles_required)
 
     @app.get('/api/workforce/reference')
     @roles_required(*READERS)
     def workforce_reference():
         db = database()
-        actor, scope, args = actor_scope(db)
-        categories = plain(db.native('SELECT id,name,active FROM gdlr_categories ORDER BY name').fetchall())
-        departments = plain(db.native(f'''SELECT DISTINCT w.department name FROM workers w
-            WHERE ({scope}) AND w.department<>'' ORDER BY w.department''', args).fetchall())
-        return jsonify({'catalog': plain(db.native('SELECT * FROM workforce_catalog ORDER BY kind,sort_order,label').fetchall()),
+        from workforce_read_cache import cached
+        with db:
+            db.execute('BEGIN')
+            actor, scope, args = actor_scope(db)
+            revision = db.native('SELECT revision FROM workforce_registry_revision WHERE singleton').fetchone()[0]
+            common = cached(db, revision, ('reference_common',), lambda: {
+                        'catalog': plain(db.native('SELECT * FROM workforce_catalog ORDER BY kind,sort_order,label').fetchall()),
                         'organizations': plain(db.native('SELECT * FROM workforce_organizations ORDER BY name').fetchall()),
-                        'places': plain(db.native('SELECT * FROM workforce_pvp_places ORDER BY name').fetchall()),
                         'rotation_schedules': plain(db.native('SELECT * FROM workforce_rotation_schedules ORDER BY name').fetchall()),
-                        'categories': categories, 'departments': departments,
-                        'permissions': {'profile': actor['role'] in ADMINS | {'rotation', 'recruitment'},
+                        'divisions': plain(db.native("SELECT d.id,d.name,d.active,d.pps_id,p.name pps_name FROM workforce_divisions d LEFT JOIN pps_catalog p ON p.id=d.pps_id ORDER BY p.name,d.name").fetchall()),
+                        'categories': plain(db.native('SELECT id,name,active FROM gdlr_categories ORDER BY name').fetchall())}, latest_only=True)
+            departments = cached(db, revision, ('reference_departments', scope, json.dumps(args, ensure_ascii=False)), lambda: plain(db.native(f'''
+                SELECT DISTINCT w.department name FROM workers w WHERE ({scope}) AND w.department<>'' ORDER BY w.department''', args).fetchall()))
+            from workforce_pps_filter import choices as pps_choices
+            pps = pps_choices(db, scope, args)
+            # PVP places have no registry-revision trigger; never reuse stale values.
+            places = plain(db.native('SELECT * FROM workforce_pvp_places ORDER BY name').fetchall())
+        return jsonify({**common, 'places': places, 'departments': departments, 'pps': pps,
+                        'permissions': {'accommodation_request': actor['role'] in ADMINS | {'rotation', 'recruitment', 'hr_viewer'},
+                                        'create': actor['role'] in ADMINS | {'recruitment'}, 'profile': actor['role'] in ADMINS | {'rotation', 'recruitment'},
                                         'movement': actor['role'] in ADMINS | {'rotation'},
                                         'stage': actor['role'] in ADMINS | {'rotation'},
                                         'transition': actor['role'] in ADMINS | {'rotation', 'recruitment'},
@@ -169,10 +199,12 @@ def register_workforce_routes(app, get_db, roles_required):
                                         'check': actor['role'] in ADMINS | {'recruitment'},
                                         'catalog': actor['role'] in ADMINS and scope == 'TRUE'}})
 
+    @app.get('/api/workforce/board')
     @app.get('/api/workforce/people')
     @roles_required(*READERS)
     def workforce_people(exporting=False):
         db = database()
+        board_view = request.path == '/api/workforce/board'
         day = date_value(request.args.get('date') or datetime.now(timezone(timedelta(hours=3))).date().isoformat(), required=True)
         try:
             limit = min(100, max(1, int(request.args.get('limit', 50))))
@@ -186,8 +218,13 @@ def register_workforce_routes(app, get_db, roles_required):
         if exporting:
             from workforce_registry_export import MAX_ROWS, registry_download
             if not section:
-                abort(400, description='Выберите «Перевахту» или «Комплектование».')
+                abort(400, description='Выберите «Перевахту» или «Комплектацию».')
             limit, offset = MAX_ROWS + 1, 0
+        selected_dates = date_filters(request.args)
+        include_date_options = not exporting and (board_view or request.args.get('date_options') == '1')
+        identity_option_key = request.args.get('identity_options', '') if not exporting else ''
+        if identity_option_key not in ('', 'full_name', 'personnel_no'):
+            abort(400, description='Неизвестный фильтр сотрудников.')
         stages = sorted({value for value in request.args.getlist('stage') if value})
         if any(value not in (*STAGES, 'unconfirmed') for value in stages):
             abort(400, description='Выберите доступные состояния сотрудника.')
@@ -195,16 +232,28 @@ def register_workforce_routes(app, get_db, roles_required):
             db.execute('BEGIN')
             db.native("SET LOCAL statement_timeout='1000ms'")
             actor, scope, args = actor_scope(db)
+            from table_sorting import workforce_sort, sql_sort, ordered_ids
+            sorting = workforce_sort(request.args, db, actor, section)
+            sort_select, sort_args = sql_sort(sorting, day)
             clauses = [scope]
-            if section:
-                clauses.append('''EXISTS(SELECT 1 FROM workforce_source_records sr
-                    WHERE sr.worker_id=w.id AND sr.active AND sr.source_key=ANY(%s))''')
-                args.append([key for key, (service, _) in SOURCES.items() if service == section])
+            summary_filter = request.args.get('rotation_summary')
+            if summary_filter is not None:
+                if section != 'rotation':
+                    abort(400, description='Состав свода доступен в разделе «Перевахта».')
+                from rotation_summary import drilldown_ids
+                clauses.append('w.id=ANY(%s)')
+                args.append(drilldown_ids(db, summary_filter, day))
+            # A report includes all accessible profiles, even without an Excel registry membership.
+            if section and summary_filter is None:
+                from workforce_service_membership import section_filter
+                membership, membership_args = section_filter(section, day, SOURCES)
+                clauses.append(membership)
+                args.extend(membership_args)
             queue = request.args.get('queue', '')
             if queue not in ('', 'movements', 'plans', 'pvp', 'rotations'):
                 abort(400, description='Неизвестный раздел учёта.')
             if queue == 'movements':
-                clauses.append("""(st.stage_code IN ('stage.leave','stage.inbound') OR EXISTS(
+                clauses.append("""(st.stage_code IN ('stage.leave','stage.inbound','stage.outbound') OR EXISTS(
                     SELECT 1 FROM workforce_movements qm WHERE qm.worker_id=w.id AND qm.actual_date IS NULL
                     AND COALESCE(qm.result_code,'') NOT IN ('result.cancelled','result.happened')
                     AND NOT EXISTS(SELECT 1 FROM workforce_movements qn WHERE qn.rescheduled_from=qm.id)))""")
@@ -232,20 +281,37 @@ def register_workforce_routes(app, get_db, roles_required):
                 if 'unconfirmed' in stages:
                     stage_clauses.append('st.stage_code IS NULL')
                 clauses.append(' OR '.join(stage_clauses))
-            for key, column in [('department', 'w.department'), ('employment', 'p.employment_code')]:
-                if request.args.get(key):
-                    clauses.append(column + '=%s')
-                    args.append(request.args[key])
-            if request.args.get('employer'):
-                clauses.append('p.employer_id=%s')
-                args.append(uuid_value(request.args['employer']))
-            if request.args.get('category'):
-                try:
-                    category_id = int(request.args['category'])
-                except ValueError:
-                    abort(400, description='Выберите категорию ГДЛР.')
-                clauses.append('eg.category_id=%s')
-                args.append(category_id)
+            if exporting:
+                from workforce_export_filters import add_filters as export_reference_filters
+                export_reference_filters(request.args, actor, clauses, args)
+            for key, column in ([] if exporting else [('department', 'w.department'), ('employment', 'p.employment_code'),
+                                ('employer', 'p.employer_id'), ('category', 'eg.category_id'),
+                                ('accommodation', 'p.accommodation_code')]):
+                values = sorted({value for value in request.args.getlist(key) if value})
+                if len(values) > 100:
+                    abort(400, description='Можно выбрать до 100 значений фильтра.')
+                if key == 'employer':
+                    values = [uuid_value(value) for value in values]
+                elif key == 'category':
+                    try:
+                        values = [int(value) for value in values]
+                        if any(value <= 0 or value > 2147483647 for value in values):
+                            raise ValueError
+                    except ValueError:
+                        abort(400, description='Выберите категории ГДЛР.')
+                if key == 'accommodation' and any(value != '__none__' and not value.startswith('accommodation.') for value in values):
+                    abort(400, description='Выберите значение справочника «Проживание».')
+                if key in {'employment', 'accommodation'} and '__none__' in values:
+                    clauses.append('(' + column + ' IS NULL OR ' + column + '=ANY(%s))')
+                    args.append([value for value in values if value != '__none__'])
+                elif values:
+                    clauses.append(column + '=ANY(%s)')
+                    args.append(values)
+            from division_api import add_division_filter
+            add_division_filter(request.args, clauses, args)
+            from workforce_pps_filter import add_filter as pps_filter
+            pps_filter(db, request.args, clauses, args)
+            identity_filters(request.args, clauses, args)
             if request.args.get('conflicts') == '1':
                 clauses.append("EXISTS(SELECT 1 FROM workforce_conflicts cf WHERE cf.worker_id=w.id AND cf.state='open')")
             if search:
@@ -264,27 +330,67 @@ def register_workforce_routes(app, get_db, roles_required):
                     ORDER BY e.worker_id,e.effective_date DESC,e.sequence DESC) st ON st.worker_id=w.id
                 WHERE ''' + ' AND '.join('(' + clause + ')' for clause in clauses)
             bound = [day, day, *args]
+            options_source, options_bound = source, list(bound)
+            source, bound = filter_source(source, bound, selected_dates, day)
+            available_dates = {}
             try:
                 from workforce_read_cache import cached
                 revision = db.native('SELECT revision FROM workforce_registry_revision WHERE singleton').fetchone()[0]
+                if identity_option_key:
+                    identity_key = json.dumps([identity_option_key, source, bound], default=str, ensure_ascii=False)
+                    choices = cached(db, revision, ('identity_options', identity_key),
+                        lambda: identity_options(db, identity_option_key, source, bound))
+                    return jsonify({'options': choices})
+                if include_date_options:
+                    options_key = json.dumps([options_source, options_bound, day], default=str, ensure_ascii=False)
+                    available_dates = cached(db, revision, ('date_options', options_key),
+                        lambda: date_options(db, options_source, options_bound, day))
                 cache_key = json.dumps([source, bound], default=str, ensure_ascii=False)
                 totals = cached(db, revision, ('totals', cache_key), lambda: plain(db.native('''SELECT count(*) total,
                     count(*) FILTER(WHERE st.stage_code='stage.onsite') onsite,
                     count(*) FILTER(WHERE st.stage_code='stage.pvp') pvp,
                     count(*) FILTER(WHERE st.stage_code='stage.inbound') inbound,
+                    count(*) FILTER(WHERE st.stage_code='stage.outbound') outbound,
                     count(*) FILTER(WHERE st.stage_code IS NULL) unconfirmed,
                     count(*) FILTER(WHERE st.stage_code='stage.leave') on_leave ''' + source, bound).fetchone()))
                 if exporting and totals['total'] > MAX_ROWS:
                     abort(422, description=f'В выгрузке больше {MAX_ROWS} сотрудников. Уточните фильтры.')
-                read_rows = lambda: plain(db.native('''WITH page AS MATERIALIZED (
-                    SELECT w.id,w.name_search,st.stage_code,st.effective_date ''' + source + '''
-                    ORDER BY w.name_search,w.id LIMIT %s OFFSET %s)
+                page_source, page_bound, page_offset = source, list(bound), offset
+                sort_outer, outer_args = 'page.name_search,page.id', []
+                ordered = None
+                if sorting:
+                    order_key = ('sort_ids', cache_key, json.dumps(sorting, sort_keys=True))
+                    ordered = cached(db, revision, order_key, lambda: ordered_ids(db.native(
+                        'SELECT w.id,w.name_search' + sort_select + ' ' + source,
+                        [*sort_args, *bound]).fetchall(), sorting))
+                    if not board_view:
+                        page_ids = ordered[offset:offset + limit]
+                        page_source += ' AND w.id=ANY(%s)'
+                        page_bound.append(page_ids); page_offset = 0
+                        sort_outer, outer_args = 'array_position(%s::bigint[],page.id)', [page_ids]
+                page_sql = '''WITH page AS MATERIALIZED (
+                    SELECT w.id,w.name_search,st.stage_code,st.effective_date ''' + page_source + '''
+                    ORDER BY w.name_search,w.id LIMIT %s OFFSET %s)'''
+                page_parameters = [*page_bound, limit, page_offset]
+                if board_view:
+                    limit, offset = 20, 0
+                    lane_order = 'w.name_search,w.id' if ordered is None else 'array_position(%s::bigint[],w.id)'
+                    page_sql = '''WITH ranked AS MATERIALIZED (
+                        SELECT w.id,w.name_search,st.stage_code,st.effective_date,
+                            ROW_NUMBER() OVER (PARTITION BY st.stage_code ORDER BY ''' + lane_order + ''') lane_row
+                        ''' + source + '''), page AS MATERIALIZED (
+                        SELECT id,name_search,stage_code,effective_date FROM ranked WHERE lane_row<=%s)'''
+                    page_parameters = ([] if ordered is None else [ordered]) + [*bound, limit]
+                    if ordered is not None:
+                        sort_outer, outer_args = 'array_position(%s::bigint[],page.id)', [ordered]
+                read_rows = lambda: plain(db.native(page_sql + '''
                     SELECT w.id,w.uuid,w.full_name,w.department,w.profession,w.active,
+                    p.division_id,dv.name division,dv.pps_id division_pps_id,dp.name division_pps,
                     CASE WHEN w.personnel_is_internal THEN '' ELSE w.personnel_no::text END personnel_no,
                     o.name employer,pr.label project,em.label employment,ci.label citizenship,
-                    p.arrival_date,COALESCE((SELECT r.planned_end_date FROM workforce_rotations r WHERE r.worker_id=w.id
-                        AND NOT r.cancelled AND r.start_date<=%s AND COALESCE(r.actual_end_date,r.next_arrival_date)>=%s
-                        ORDER BY r.start_date DESC LIMIT 1),p.forecast_departure_date) forecast_departure_date,
+                    p.accommodation_code,ac.label accommodation,
+                    p.phone,p.email,COALESCE(city.label,NULLIF(p.origin_city,'')) origin_city,
+                    p.arrival_date,p.leave_start_date,''' + FORECAST_SQL + ''' forecast_departure_date,
                     COALESCE(gc.name,w.category) category,
                     sc.label stage,page.stage_code,page.effective_date,
                     p.staffing_ready,
@@ -300,19 +406,23 @@ def register_workforce_routes(app, get_db, roles_required):
                         'leave_end_date',ro.leave_end_date,'next_arrival_date',ro.next_arrival_date)
                         FROM workforce_rotations ro JOIN workforce_rotation_schedules rs ON rs.id=ro.schedule_id
                         WHERE ro.worker_id=w.id AND NOT ro.cancelled AND ro.actual_end_date IS NULL
-                        ORDER BY ro.start_date DESC LIMIT 1) rotation
+                        ORDER BY ro.start_date DESC,ro.id LIMIT 1) rotation
                     FROM page JOIN workers w ON w.id=page.id
                     JOIN workforce_profiles p ON p.worker_id=w.id
+                    LEFT JOIN workforce_divisions dv ON dv.id=p.division_id
+                    LEFT JOIN pps_catalog dp ON dp.id=dv.pps_id
                     LEFT JOIN workforce_organizations o ON o.id=p.employer_id
                     LEFT JOIN employee_gdlr eg ON eg.worker_id=w.id LEFT JOIN gdlr_categories gc ON gc.id=eg.category_id
                     LEFT JOIN employee_smu es ON es.worker_id=w.id
                     LEFT JOIN workforce_smu_projects sp ON sp.smu_id=es.smu_id
                     LEFT JOIN workforce_catalog pr ON pr.code=sp.project_code
                     LEFT JOIN workforce_catalog em ON em.code=p.employment_code
+                    LEFT JOIN workforce_catalog ac ON ac.code=p.accommodation_code
                     LEFT JOIN workforce_catalog ci ON ci.code=p.citizenship_code
+                    LEFT JOIN workforce_catalog city ON city.code=p.origin_code
                     LEFT JOIN workforce_catalog sc ON sc.code=page.stage_code
-                    ORDER BY page.name_search,page.id''', [*bound, limit, offset, day, day]).fetchall())
-                rows = read_rows() if exporting else cached(db, revision, ('page', cache_key, limit, offset), read_rows)
+                    ORDER BY ''' + sort_outer, [*page_parameters, day, day, *outer_args]).fetchall())
+                rows = read_rows() if exporting else cached(db, revision, ('board' if board_view else 'page', cache_key, json.dumps(sorting, sort_keys=True), limit, offset), read_rows)
                 if exporting and len(rows) > MAX_ROWS:
                     abort(422, description=f'В выгрузке больше {MAX_ROWS} сотрудников. Уточните фильтры.')
             except psycopg.errors.InvalidRegularExpression:
@@ -322,6 +432,13 @@ def register_workforce_routes(app, get_db, roles_required):
             # Assignments change independently of the registry cache. Read their current
             # dated facts in this snapshot, and never put role-specific fields in cache.
             ids = [row['id'] for row in rows]
+            # User names can change independently of the registry revision.
+            # Fetch assignment attribution once for this page, outside its cache.
+            category_assignments = {row['worker_id']: plain(row) for row in db.native('''
+                SELECT eg.worker_id,NULLIF(trim(u.full_name),'') assigned_by,eg.updated_at assigned_at
+                FROM employee_gdlr eg LEFT JOIN users u ON u.id=eg.updated_by
+                WHERE eg.worker_id=ANY(%s)''', (ids,)).fetchall()} if ids else {}
+            rows = [{**row, 'category_assignment': category_assignments.get(row['id'])} for row in rows]
             assigned = {row['worker_id'] for row in db.native('''SELECT DISTINCT worker_id
                 FROM assignments WHERE work_date=%s AND worker_id=ANY(%s)''', (day, ids)).fetchall()} if ids else set()
             addresses = {}
@@ -331,14 +448,23 @@ def register_workforce_routes(app, get_db, roles_required):
                     FROM workforce_pvp_stays s JOIN workforce_pvp_places p ON p.id=s.place_id
                     WHERE s.worker_id=ANY(%s) AND s.arrived_on<=%s AND (s.departed_on IS NULL OR s.departed_on>%s)
                     ORDER BY s.worker_id,s.arrived_on DESC,s.updated_at DESC,s.id''', (ids, day, day)).fetchall()}
-            rows = [{**{key: value for key, value in row.items() if key != 'stage_revision'},
+            private_fields = {'phone', 'email', 'origin_city'} if actor['role'] in {'foreman', 'viewer'} else set()
+            rows = [{**{key: value for key, value in row.items() if key != 'stage_revision' and key not in private_fields},
                      'stage_token': stage_token(row['id'], day, row['stage_revision']),
                      'transition_targets': transition_targets(actor['role'], row['stage_code'], row['active']),
                      'pvp_address': addresses.get(row['id']), 'assigned': row['id'] in assigned} for row in rows]
         if exporting:
             return registry_download(rows, day, section)
+        if board_view:
+            keys = {'stage.leave': 'on_leave', 'stage.inbound': 'inbound', 'stage.pvp': 'pvp',
+                    'stage.onsite': 'onsite', 'stage.outbound': 'outbound', 'unconfirmed': 'unconfirmed'}
+            lanes = {code: {'rows': [], 'totals': {'total': totals[key]}} for code, key in keys.items()}
+            for row in rows:
+                lanes[row['stage_code'] or 'unconfirmed']['rows'].append(row)
+            return jsonify({'lanes': lanes, 'totals': totals, 'date': day,
+                            'revision': str(revision), 'date_options': available_dates})
         return jsonify({'rows': rows, 'totals': totals, 'offset': offset, 'limit': limit, 'date': day,
-                        'revision': str(revision)})
+                        'revision': str(revision), 'date_options': available_dates})
 
     @app.get('/api/workforce/people/export')
     @roles_required(*READERS)
@@ -373,7 +499,7 @@ def register_workforce_routes(app, get_db, roles_required):
             if not result['private_details']:
                 # Staffing users need the prepared workforce, not passport, health,
                 # recruitment notes or private source rows from HR spreadsheets.
-                for field in ('birth_date', 'phone', 'messenger', 'origin_city', 'origin_code', 'notes'):
+                for field in ('birth_date', 'phone', 'email', 'messenger', 'origin_city', 'origin_code', 'notes'):
                     result['profile'].pop(field, None)
                 for name in ('documents', 'checks', 'pvp', 'sources', 'history', 'conflicts'):
                     result[name] = []
@@ -389,12 +515,21 @@ def register_workforce_routes(app, get_db, roles_required):
     @app.post('/api/workforce/people/<int:worker_id>/stage')
     @roles_required('admin', 'rotation')
     def workforce_stage(worker_id):
-        data = payload({'stage_code', 'effective_date', 'confirmed', 'reason', 'replaces_id', 'request_key'},
+        data = payload({'stage_code', 'effective_date', 'confirmed', 'reason', 'replaces_id', 'request_key', 'tickets'},
                        {'stage_code', 'effective_date', 'confirmed', 'reason', 'request_key'})
+        tickets = data.get('tickets', [])
+        ticket_fields = {'worker_id', 'planned_date', 'travel_details', 'origin_code', 'destination_code', 'recognition'}
+        if not isinstance(tickets, list) or len(tickets) > 1:
+            abort(400, description='Укажите не более одного билета сотрудника.')
+        for ticket in tickets:
+            if (not isinstance(ticket, dict) or set(ticket) - ticket_fields
+                    or {'worker_id', 'planned_date', 'travel_details'} - set(ticket)
+                    or type(ticket['worker_id']) is not int or ticket['worker_id'] != worker_id):
+                abort(400, description='Билет должен принадлежать выбранному сотруднику.')
         if type(data['confirmed']) is not bool:
             abort(400, description='Укажите, подтверждено ли событие.')
         day = date_value(data['effective_date'], required=True)
-        reason = text_value(data['reason'], 'Основание изменения', 30000, True)
+        reason = text_value(data.get('reason', ''), 'Основание изменения', 30000)
         db = database()
         with db:
             db.execute('BEGIN IMMEDIATE')
@@ -404,6 +539,10 @@ def register_workforce_routes(app, get_db, roles_required):
             if previous is not None:
                 return jsonify(previous)
             code = catalog_value(db, data['stage_code'], 'stage', True)
+            from workforce_board import prepare_ticket, record_ticket
+            clean_ticket = prepare_ticket(
+                db, {key: value for key, value in tickets[0].items() if key != 'worker_id'},
+                code, day, worker_id=worker_id) if tickets else None
             replaces = uuid_value(data['replaces_id']) if data.get('replaces_id') else None
             if replaces and not db.native('''SELECT id FROM workforce_stage_events e WHERE id=%s AND worker_id=%s
                 AND NOT EXISTS(SELECT 1 FROM workforce_stage_events r WHERE r.replaces_id=e.id)''',
@@ -413,6 +552,8 @@ def register_workforce_routes(app, get_db, roles_required):
                 reason,replaces_id,created_by,request_key) VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *''',
                 (worker_id, code, day, data['confirmed'], reason, replaces, actor['id'], data['request_key'])).fetchone())
             audit(db, actor, 'create', 'stage', row['id'], None, row, worker_id=worker_id, reason=reason)
+            if clean_ticket:
+                record_ticket(db, actor, worker_id, row['id'], clean_ticket, reason)
             remember(db, actor, operation, data, row)
         return jsonify(row), 201
 
@@ -425,7 +566,7 @@ def register_workforce_routes(app, get_db, roles_required):
             abort(404)
         data = payload(set(spec['fields']) | {'token', 'reason', 'request_key'},
                        {'request_key', 'reason'} | ({'token'} if entity_id else spec['required']))
-        reason = text_value(data['reason'], 'Основание изменения', 10000, True)
+        reason = text_value(data.get('reason', ''), 'Основание изменения', 10000)
         db = database()
         with db:
             db.execute('BEGIN IMMEDIATE')
@@ -476,7 +617,7 @@ def register_workforce_routes(app, get_db, roles_required):
         data = payload({'planned_date', 'reason', 'token', 'request_key'},
                        {'planned_date', 'reason', 'token', 'request_key'})
         day = date_value(data['planned_date'], 'Новая плановая дата', True)
-        reason = text_value(data['reason'], 'Причина переноса', 10000, True)
+        reason = text_value(data.get('reason', ''), 'Причина переноса', 10000)
         db = database()
         with db:
             db.execute('BEGIN IMMEDIATE')
@@ -519,12 +660,13 @@ def register_workforce_routes(app, get_db, roles_required):
         rules = {'full_name': ('text', 240), 'profession': ('catalog_text', 'profession', 500),
                  'profession_code': ('catalog', 'profession'), 'origin_code': ('catalog', 'travelpoint'),
                  'citizenship_code': ('catalog', 'citizenship'), 'employment_code': ('catalog', 'employment'),
-                 'birth_date': ('date',), 'phone': ('text', 300), 'messenger': ('text', 300),
+                 'accommodation_code': ('catalog', 'accommodation'),
+                 'birth_date': ('date',), 'phone': ('text', 300), 'email': ('email',), 'messenger': ('text', 300),
                  'origin_city': ('catalog_text', 'travelpoint', 300), 'rotation_schedule': ('text', 500), 'arrival_date': ('date',),
                  'forecast_departure_date': ('date',), 'leave_start_date': ('date',), 'leave_end_date': ('date',),
                  'notes': ('text', 30000)}
         data = payload(set(rules) | {'employer_id', 'rotation_schedule_id', 'token', 'reason', 'request_key'}, {'token', 'reason', 'request_key'})
-        reason = text_value(data['reason'], 'Основание изменения', 10000, True)
+        reason = text_value(data.get('reason', ''), 'Основание изменения', 10000)
         db = database()
         with db:
             db.execute('BEGIN IMMEDIATE')
@@ -592,7 +734,7 @@ def register_workforce_routes(app, get_db, roles_required):
         rules = {'state_code': ('catalog', 'checkstate'), 'planned_date': ('date',),
                  'completed_date': ('date',), 'notes': ('text', 10000)}
         data = payload(set(rules) | {'token', 'reason', 'request_key'}, {'token', 'reason', 'request_key', 'state_code'})
-        reason = text_value(data['reason'], 'Основание изменения', 10000, True)
+        reason = text_value(data.get('reason', ''), 'Основание изменения', 10000)
         db = database()
         with db:
             db.execute('BEGIN IMMEDIATE')
@@ -661,13 +803,13 @@ def register_workforce_routes(app, get_db, roles_required):
     @roles_required('admin')
     def workforce_catalog(kind, code=None):
         if kind not in {'citizenship', 'employment', 'stage', 'basis', 'result', 'document', 'docstate',
-                        'check', 'checkstate', 'project', 'organization', 'place', 'profession', 'specialty', 'travelpoint', 'direction', 'destination'}:
+                        'check', 'checkstate', 'project', 'organization', 'place', 'profession', 'specialty', 'travelpoint', 'direction', 'destination', 'accommodation'}:
             abort(404)
         if kind in {'employment', 'stage', 'basis', 'result', 'docstate', 'checkstate', 'direction', 'destination'}:
             abort(400, description='Этот перечень закреплён правилами учёта и доступен только для просмотра.')
         data = payload({'label', 'active', 'address', 'capacity', 'specialty_code', 'grade', 'token', 'request_key', 'reason'},
                        {'request_key', 'reason'} | ({'token'} if code else {'label'}))
-        reason = text_value(data['reason'], 'Основание изменения', 10000, True)
+        reason = text_value(data.get('reason', ''), 'Основание изменения', 10000)
         db = database()
         with db:
             db.execute('BEGIN IMMEDIATE')

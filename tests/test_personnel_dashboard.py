@@ -69,11 +69,11 @@ class PersonnelDashboardTest(unittest.TestCase):
 
     def test_range_validation_authentication_and_empty_period(self):
         for query in ({'start': ''}, {'end': 'wrong'}, {'start': '2026-09-14'},
-                      {'start': '2026-01-01'}, {'end': '2026-02-30'}):
+                      {'start': '2025-09-12'}, {'end': '2026-02-30'}):
             self.assertEqual(self.dashboard(**query).status_code, 400)
-        result = self.dashboard(start='2026-06-14').get_json()
-        self.assertEqual(len(result['dates']), 92)
-        self.assertEqual(result['counts'], [0] * 92)
+        result = self.dashboard(start='2025-09-13').get_json()
+        self.assertEqual(len(result['dates']), 366)
+        self.assertEqual(result['counts'], [0] * 366)
         self.assertEqual(result['unique_count'], 0)
         self.assertEqual(self.dashboard(start='2026-09-13').get_json()['counts'], [0])
         guest = self.case.module.app.test_client()

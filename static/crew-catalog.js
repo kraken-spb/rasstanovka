@@ -18,6 +18,7 @@
     $('crew-catalog-status').classList.toggle('error-text',error);
   }
   async function api(url, options = {}) {
+    if (options.method && options.method !== 'GET') window.catalogData.invalidate();
     const response = await fetch(url, {...options, cache:'no-store', headers:{
       'Content-Type':'application/json', 'X-CSRF-Token':root.dataset.csrf}}), data = await response.json();
     if (!response.ok) throw Error(data.error || 'Не удалось загрузить бригады.');
@@ -27,10 +28,10 @@
     if (busy || editing) { status('Завершите работу с открытой формой.',true); return false; }
     return true;
   }
-  async function load() {
+  async function load(refresh = false) {
     if (!canLeave()) return;
     busy = true; $('view-crew-catalog').inert = true; status('Загрузка бригад…');
-    try { rows = (await api('/api/crew-catalog')).rows; status(''); render(); }
+    try { rows = (await window.catalogData.get('/api/crew-catalog', () => api('/api/crew-catalog'), {refresh})).rows; status(''); render(); }
     catch(error) { status(error.message,true); }
     finally { busy = false; $('view-crew-catalog').inert = false; }
   }
@@ -40,7 +41,7 @@
     editing = true;
     window.crewCreator.open({crew, rows:[], snapshot:{},
       onClosed: () => { editing = false; $('crew-catalog-add').focus(); },
-      onSaved: async () => { await load(); if (!$('crew-catalog-status').classList.contains('error-text')) status(crew ? 'Бригада сохранена.' : 'Бригада создана.'); }});
+      onSaved: async () => { window.catalogData.invalidate();await load(); if (!$('crew-catalog-status').classList.contains('error-text')) status(crew ? 'Бригада сохранена.' : 'Бригада создана.'); }});
   }
   function remove(crew, trigger) {
     if (!canLeave()) return;
@@ -123,7 +124,7 @@
     $('crew-catalog-list').replaceChildren(visible.length ? el('table',{className:'crew-catalog-table'},head,body) : el('p',{},'Бригады не найдены.'));
   }
   $('crew-catalog-add').addEventListener('click',()=>edit());
-  $('crew-catalog-refresh').addEventListener('click',load);
+  $('crew-catalog-refresh').addEventListener('click',()=>load(true));
   $('crew-catalog-search').addEventListener('input',render);
   $('crew-catalog-regex').addEventListener('change',render);
   window.crewCatalogScreen = {load,canLeave};

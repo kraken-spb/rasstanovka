@@ -13,9 +13,9 @@ body:has(:is(#view-employees, #view-outstaff).active) .app-shell {
   body:has(:is(#view-employees, #view-outstaff).active) .app-shell { width: calc(100% - 40px); height: calc(100dvh - 54px); padding-bottom: 8px; }
   :is(#view-employees, #view-outstaff).active { display: flex; flex-direction: column; height: 100%; }
   :is(#view-employees, #view-outstaff) > :not(#employees-list):not(#outstaff-list) { flex-shrink: 0; }
-  :is(#view-employees, #view-outstaff) :is(input, select) { min-height: 30px; padding: .25rem .35rem; border-radius: 4px; font-size: .75rem; }
+  :is(#view-employees, #view-outstaff) :is(input, select):not(.table-pagination *) { min-height: 30px; padding: .25rem .35rem; border-radius: 4px; font-size: .75rem; }
   :is(#view-employees, #view-outstaff) input[type="checkbox"] { width: 16px; height: 16px; min-height: 16px; }
-  :is(#view-employees, #view-outstaff) :is(.primary-button, .secondary-button, .text-button) { min-height: 30px; padding: .25rem .45rem; border-radius: 4px; font-size: .75rem; }
+  :is(#view-employees, #view-outstaff) :is(.primary-button, .secondary-button, .text-button):not(.table-pagination *) { min-height: 30px; padding: .25rem .45rem; border-radius: 4px; font-size: .75rem; }
   :is(#view-employees, #view-outstaff) .employees-toolbar { display: grid; grid-template-columns: minmax(200px, 2fr) auto repeat(3, minmax(120px, 1fr)) auto; align-items: end; padding: .5rem .65rem; margin: .4rem 0; gap: .5rem; border-radius: 5px; }
   :is(#view-employees, #view-outstaff) .employees-toolbar > label:not(.check-label) { display: grid; gap: .15rem; }
   :is(#view-employees, #view-outstaff) .employees-toolbar .check-label { display: flex; min-height: 30px; gap: .3rem; }
@@ -68,7 +68,6 @@ body:has(:is(#view-employees, #view-outstaff).active) .app-shell {
 :is(#view-employees, #view-outstaff) > .table-note { margin: .15rem 0; }
 :is(#view-employees, #view-outstaff) .employees-toolbar { margin: .25rem 0; padding-block: .25rem; gap: .4rem; }
 :is(#employees-status, #outstaff-status):empty { display: none; }
-:is(#view-employees, #view-outstaff) .employees-toolbar > .employee-columns-menu { flex: 0 0 auto; align-self: end; }
 @media (max-width: 900px) {
-  :is(#view-employees, #view-outstaff) .employees-toolbar > label:last-of-type { flex: 1 1 calc(100% - 60px); }
+  :is(#view-employees, #view-outstaff) .employees-toolbar > label:last-of-type { flex: 1 1 calc(100% - 52px); }
 }

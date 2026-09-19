@@ -1,27 +1,83 @@
+<link rel="stylesheet" href="{{ asset_url('workforce-create.css') }}">
+<link rel="stylesheet" href="{{ asset_url('ticket-import.css') }}">
+<link rel="stylesheet" href="{{ asset_url('workforce-bulk.css') }}">
+<link rel="stylesheet" href="{{ asset_url('accommodation.css') }}">
+<link rel="stylesheet" href="{{ asset_url('workforce-operations.css') }}">
 <section id="view-workforce" class="view workforce-view">
   <div id="wf-list-workspace">
   <div class="wf-heading"><div><h1 id="wf-title">Учёт персонала</h1><p id="wf-description">Единая карточка сотрудника · история присутствия и движения</p></div>
     <label>Отчётная дата<input id="wf-date" type="date" value="{{ today }}" required></label>
+    <div class="wf-heading-actions"><button id="wf-create-open" type="button" class="secondary-button" title="Добавить сотрудника" aria-label="Добавить сотрудника" aria-expanded="false" aria-controls="wf-create-panel" hidden>+ Сотрудник</button><div id="wf-heading-actions" class="wf-heading-actions" aria-label="Действия с файлами"></div>
+      <button id="wf-accommodation-request" type="button" class="secondary-button" aria-label="Заявка на хостел" aria-haspopup="dialog" title="Заявка на хостел — выберите сотрудников" disabled hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 18V6 M3 14h18v4 M21 18v-8h-9v4 M3 18v3 M21 18v3 M6 9h3v5H6z"/></svg></button>
+    </div>
   </div>
+  <section id="wf-create-panel" class="wf-create-panel" aria-label="Добавление сотрудника" hidden></section>
   <div class="wf-workspace-toolbar">
-    <nav id="wf-workspaces" class="wf-tabs" aria-label="Рабочие списки учёта"></nav>
-    <div class="wf-view-switch" role="group" aria-label="Вид учёта персонала"><button id="wf-view-board" type="button" aria-pressed="true">Доска</button><button id="wf-view-table" type="button" aria-pressed="false">Таблица</button></div>
+    <nav id="wf-workspaces" class="wf-tabs" aria-label="Быстрые фильтры по статусу и мой день"></nav>
+    <div class="wf-view-switch" role="group" aria-label="Вид учёта персонала"><button id="wf-view-table" type="button" aria-pressed="true">Таблица</button><button id="wf-view-board" type="button" aria-pressed="false">Доска</button></div>
   </div>
   <div class="wf-stats" id="wf-stats" aria-live="polite"></div>
-  <details id="wf-filter-panel" class="wf-filter-panel" open><summary id="wf-filter-summary">Фильтры</summary><div class="wf-toolbar panel">
-    <label class="wf-search">Поиск<input id="wf-search" type="search" maxlength="200" placeholder="ФИО или табельный номер"></label>
-    <label class="check-label"><input id="wf-regex" type="checkbox"> Regex</label>
+  <section id="wf-filter-panel" class="wf-filter-panel" aria-label="Фильтры сотрудников"><div class="wf-quick-filters"><nav id="wf-pps" class="wf-tabs wf-pps-tabs" aria-label="Быстрые фильтры по ППС"></nav><div class="wf-tabs wf-employment-tabs" role="group" aria-label="Быстрые фильтры по занятости"><button id="wf-outstaff" type="button" aria-pressed="false" title="Внешний и внутренний аутстафф" disabled>Аутстафф</button><button id="wf-rental" type="button" aria-pressed="false" disabled>Аренда</button><button id="wf-rso" type="button" aria-pressed="false" disabled>РСО</button></div></div><span id="wf-filter-summary" class="wf-visually-hidden">Фильтры</span><div class="wf-toolbar">
+    <label>ФИО<select id="wf-full_name"><option value="">Все сотрудники</option></select></label>
+    <label>Табельный номер<select id="wf-personnel_no"><option value="">Все номера</option></select></label>
     <label>СМУ<select id="wf-department"><option value="">Все доступные</option></select></label>
+    <label>Подразделение<select id="wf-division"><option value="">Все</option></select></label>
     <label>Состояние на дату<select id="wf-stage"><option value="">Все состояния</option></select></label>
+    <label>Статус сотрудника<select id="wf-employment"><option value="">Все статусы</option></select></label>
+    <label>Проживание<select id="wf-accommodation"><option value="">Все варианты</option></select></label>
     <label>Работодатель<select id="wf-employer"><option value="">Все работодатели</option></select></label>
     <label>Категория ГДЛР<select id="wf-category"><option value="">Все категории</option></select></label>
+    <div id="wf-date-filters"></div>
     <label class="check-label"><input id="wf-conflicts" type="checkbox"> С замечаниями</label>
-    <button type="button" id="wf-refresh" class="secondary-button">Обновить</button>
-  </div></details>
-  <div class="wf-list-heading"><span id="wf-count" role="status"></span><div id="wf-table-pagination"><button id="wf-prev" type="button" class="secondary-button" aria-label="Предыдущая страница">←</button><button id="wf-next" type="button" class="secondary-button" aria-label="Следующая страница">→</button></div></div>
+    <div class="wf-filter-actions"><label class="wf-select-page-mobile"><input type="checkbox" data-wf-table-select-all aria-label="Выбрать всех доступных сотрудников на странице"> Все на странице</label><button type="button" id="wf-filter-reset" class="secondary-button" title="Сбросить фильтры">Сбросить фильтры</button><button type="button" id="wf-refresh" class="secondary-button" title="Обновить список">Обновить</button></div>
+  </div></section>
+  <div id="wf-list-status" class="wf-list-heading"><span id="wf-count" role="status"></span></div>
+  <section id="wf-columns-panel" class="wf-columns-panel" aria-label="Настройки столбцов реестра" hidden>
+    <p>Отметьте видимые столбцы.</p>
+    <div id="wf-columns-list" class="wf-columns-list"></div>
+    <button id="wf-columns-reset" type="button" class="secondary-button">Вернуть исходный вид</button>
+    <span id="wf-columns-status" role="status" aria-live="polite"></span>
+  </section>
   <p id="wf-error" class="error-text" role="alert" hidden></p>
+  <section id="wf-operations" aria-label="Мой день и прогноз персонала" hidden></section>
   <div id="wf-board-region" role="region" aria-label="Доска движения персонала"></div>
-  <div id="wf-table-region" class="wf-table-region" tabindex="0" role="region" aria-label="Реестр персонала" hidden><table class="wf-table"><thead><tr><th>ФИО / табельный №</th><th>Проект / СМУ</th><th>Работодатель</th><th>Должность</th><th>Категория ГДЛР</th><th>Статус сотрудника</th><th>Состояние на дату</th><th>Заезд / прогноз выезда</th></tr></thead><tbody id="wf-rows"></tbody></table></div>
+  <div id="wf-table-selection" class="wf-table-selection" aria-label="Выбор сотрудников в таблице" hidden>
+    <span id="wf-selected-count" role="status">Отметьте сотрудников, затем выберите новое значение под заголовком столбца</span>
+    <button id="wf-selection-clear" type="button" class="secondary-button" disabled>Снять выбор</button>
+    <small>Выбор на текущей странице</small>
+    <span id="wf-selection-notice" role="status" aria-live="polite"></span>
+  </div>
+  <div id="wf-inline-edit" aria-label="Изменение выбранных сотрудников" hidden></div>
+  <div id="wf-table-region" class="wf-table-region" tabindex="0" role="region" aria-label="Реестр персонала" hidden><table class="wf-table"><thead><tr>
+    <th class="wf-select-cell"><input type="checkbox" data-wf-table-select-all aria-label="Выбрать всех доступных сотрудников на странице"></th>
+    <th data-column="number" data-width="64">№ п/п</th>
+    <th data-column="employer" data-width="150" data-edit-field="employer_id">Организация-работодатель</th>
+    <th data-column="employment" data-width="130" data-edit-field="employment_code">Статус сотрудника</th>
+    <th data-column="stage" data-width="110" data-edit-field="stage_code">Состояние</th>
+    <th data-column="rotation_schedule" data-width="150" data-edit-field="rotation_schedule_id">График вахтования</th>
+    <th data-column="personnel" data-width="110">Табельный номер</th>
+    <th data-column="name" data-width="240">ФИО</th>
+    <th data-column="profession" data-width="210" data-edit-field="profession_code">Должность</th>
+    <th data-column="category" data-width="160" data-edit-field="category_id">Категория ГДЛР</th>
+    <th data-column="citizenship" data-width="130" data-edit-field="citizenship_code">Гражданство</th>
+    <th data-column="phone" data-width="160">Телефон</th>
+    <th data-column="email" data-width="200">E-mail</th>
+    <th data-column="department" data-width="180" data-edit-field="smu_id">СМУ</th>
+    <th data-column="division" data-width="220" data-edit-field="division_id">Подразделение</th>
+    <th data-column="origin_city" data-width="160" data-edit-field="origin_code">Город отправления</th>
+    <th data-column="leave_start_date" data-width="120" data-edit-field="leave_start_date" data-edit-type="date">Дата начала МО</th>
+    <th data-column="leave_end_date" data-width="120" data-edit-field="leave_end_date" data-edit-type="date">Дата окончания МО</th>
+    <th data-column="arrival_date" data-width="110" data-edit-field="arrival_date" data-edit-type="date">Дата заезда</th>
+    <th data-column="forecast_departure_date" data-width="140" data-edit-field="forecast_departure_date" data-edit-type="date">Прогноз окончания вахты</th>
+    <th data-column="project" data-width="120" data-edit-field="project_code">Проект</th>
+    <th data-column="stage_date" data-width="110" data-edit-field="stage_date" data-edit-type="date">Дата начала статуса</th>
+    <th data-column="movement_direction" data-width="110" data-edit-field="movement_direction">Заезд / выезд</th>
+    <th data-column="planned_date" data-width="130" data-edit-field="planned_date" data-edit-type="date">Плановая дата поездки</th>
+    <th data-column="movement_basis" data-width="140" data-edit-field="movement_basis">Тип заезда/выезда</th>
+    <th data-column="next_arrival_date" data-width="120" data-edit-field="next_arrival_date" data-edit-type="date">Следующий заезд</th>
+    <th data-column="accommodation" data-width="130" data-edit-field="accommodation_code">Проживание</th>
+  </tr></thead><tbody id="wf-rows"></tbody></table></div>
+  <div id="wf-table-pagination"><button id="wf-columns-toggle" type="button" class="secondary-button table-pagination-columns" aria-expanded="false" aria-controls="wf-columns-panel" title="Настроить столбцы">Столбцы</button></div>
   </div>
   <section id="wf-card" class="wf-card wf-card-page" aria-labelledby="wf-card-title" hidden>
     <header class="wf-card-heading">
@@ -44,8 +100,16 @@
     </div>
   </section>
 </section>
+<script src="{{ asset_url('workforce-bulk.js') }}" defer></script>
+<script src="{{ asset_url('workforce-tickets.js') }}" defer></script>
 <script src="{{ asset_url('workforce-board.js') }}" defer></script>
+<script src="{{ asset_url('workforce-operations.js') }}" defer></script>
+<script src="{{ asset_url('workforce-table-edit.js') }}" defer></script>
+<script src="{{ asset_url('workforce-create.js') }}" defer></script>
+<script src="{{ asset_url('accommodation.js') }}" defer></script>
 <script src="{{ asset_url('workforce.js') }}" defer></script>
+<script src="{{ asset_url('workforce-cell-selection.js') }}" defer></script>
 <script src="{{ asset_url('workforce-import.js') }}" defer></script>
 <script src="{{ asset_url('workforce-export.js') }}" defer></script>
 <script src="{{ asset_url('workforce-catalogs.js') }}" defer></script>
+<script src="{{ asset_url('ticket-import.js') }}" defer></script>

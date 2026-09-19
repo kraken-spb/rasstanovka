@@ -1,0 +1,22 @@
+#wf-create-open { background: #218343; border-color: #218343; color: #fff; }
+#wf-create-open:hover:not(:disabled) { background: #196a35; border-color: #196a35; }
+#wf-create-open:focus-visible { outline-color: #218343; }
+.wf-create-panel { padding: 12px; margin: 0 0 10px; border: 1px solid #dce5df; border-radius: 7px; background: #fff; }
+.wf-create-panel h2 { margin: 0 0 6px; font-size: 16px; }
+.wf-create-panel .table-note { margin: 0 0 10px; }
+.wf-create-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px 12px; align-items: end; }
+.wf-create-grid label { display: flex; flex-direction: column; gap: 4px; min-width: 0; font-size: 12px; }
+.wf-create-grid input,.wf-create-grid select { width: 100%; min-width: 0; min-height: 32px; font-size: 12px; padding: 5px 8px; }
+.wf-create-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.wf-create-actions button { font-size: 12px; min-height: 32px; }
+@media(max-width:760px) {
+  .wf-create-grid { grid-template-columns: minmax(0,1fr); }
+  .wf-create-grid input,.wf-create-grid select,.wf-create-actions button { min-height: 38px; }
+}
+
+@media(max-width:760px) {
+  #wf-list-workspace .wf-heading .wf-heading-actions { gap: 3px; }
+  #wf-list-workspace .wf-heading .wf-heading-actions button { width: 32px; min-width: 32px; padding: 4px; }
+  #wf-create-open { font-size: 0; }
+  #wf-create-open::after { content: '+'; font-size: 20px; }
+}

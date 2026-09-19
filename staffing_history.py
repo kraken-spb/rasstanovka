@@ -29,6 +29,7 @@ ENDPOINTS = {
     'update_day': ('Назначение или смена', ('assignments', 'staffing_shifts')),
     'save_attendance_status': ('Статус сотрудника', ('staffing_attendance',)),
     'save_performed_work': ('Выполняемые работы', ('staffing_performed_work',)),
+    'save_work_type': ('Вид работ', ('staffing_performed_work',)),
     'save_row_responsible': ('Ответственный сотрудника', ('staffing_row_details',)),
     'save_selected_responsible': ('Ответственные выбранных', ('staffing_row_details',)),
     'save_crew_details': ('Ответственные бригады', ('crews',)),
@@ -47,7 +48,7 @@ def packed(value):
 
 
 def semantic(row):
-    return None if row is None else {key: value for key, value in row.items() if key not in AUDIT_FIELDS and not (key in ('linear_itr_worker_id', 'brigadier_worker_id') and value is None)}
+    return None if row is None else {key: value for key, value in row.items() if key not in AUDIT_FIELDS and not (key in ('linear_itr_worker_id', 'brigadier_worker_id', 'work_type_id') and value is None)}
 
 
 def migrate_history(db):
@@ -252,6 +253,14 @@ def authorize(db, scope, target):
 
 
 def restore(db, target, now):
+    employer_sources = {}
+    if getattr(db, 'dialect', None) == 'postgres':
+        employer_ids = [json.loads(key)[1][0] for key, row in target.items()
+                        if row is None and json.loads(key)[0] == 'employee_employers']
+        if employer_ids:
+            employer_sources = {row['worker_id']: row['source_employer'] for row in db.execute(
+                'SELECT worker_id,source_employer FROM employee_employers WHERE worker_id IN (' +
+                ','.join('?' for _ in employer_ids) + ')', employer_ids)}
     # Delete only owned leaf rows first so a restored date/shift cannot collide with this action's removed row.
     for key, row in target.items():
         table, values = json.loads(key)
@@ -279,6 +288,13 @@ def restore(db, target, now):
         sql = 'INSERT INTO ' + table + '(' + ','.join(fields) + ') VALUES (' + ','.join('?' for _ in fields) + ')'
         sql += ' ON CONFLICT(' + ','.join(TABLES[table]) + ') DO UPDATE SET ' + ','.join(field + '=excluded.' + field for field in updates)
         db.execute(sql, [row[field] for field in fields])
+
+    if getattr(db, 'dialect', None) == 'postgres':
+        for key, row in target.items():
+            table, values = json.loads(key)
+            if table == 'employee_employers' and (row is not None or values[0] in employer_sources):
+                name = row['employer'] if row is not None else employer_sources[values[0]]
+                db.execute('UPDATE workers SET employer=? WHERE id=?', (name or '', values[0]))
 
 
 def assignment_events(db, before, after, now):

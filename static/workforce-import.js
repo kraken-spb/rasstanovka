@@ -45,7 +45,7 @@
     try {if (!source.options.length) {const values = await api('sources');source.replaceChildren(...values.map(row => E('option',{value:row.key},row.label)));}}
     catch (err) {error(err.message);}
   }},'Импорт');
-  document.querySelector('.wf-heading').append(button);
+  document.getElementById('wf-heading-actions').append(button);
   function canApply() {apply.disabled = !preview || preview.state === 'applied' || !confirm.checked || preview.items.some(item => item.restricted_identity || item.issue &&
     (!decisions.get(item.index)?.worker_id || !decisions.get(item.index)?.reason.trim()));}
   async function previewImport(event) {

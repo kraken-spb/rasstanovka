@@ -41,6 +41,7 @@
     $(id).classList.toggle('error-text', error);
   }
   async function api(url, options = {}) {
+    if (options.method && options.method !== 'GET') window.catalogData.invalidate();
     const response = await fetch(url, {...options, cache: 'no-store', headers: {
       'Content-Type': 'application/json', 'X-CSRF-Token': root.dataset.csrf
     }});
@@ -109,12 +110,12 @@
     $('location-site-add').disabled = !catalog.objects.length;
     status('location-catalog-status', section === 'stages' ? `Этапов: ${stages.length} из ${catalog.stages.length}` : `Групп: ${groups.length} из ${catalog.objects.length} · Подобъектов: ${sites.length} из ${catalog.subobjects.length}`);
   }
-  async function load() {
+  async function load(refresh = false) {
     if (editing || busy || loading) return;
     loading = true; panel.inert = true;
     status('location-catalog-status', 'Загрузка справочников…');
     try {
-      catalog = await api('/api/locations');
+      catalog = await window.catalogData.get('/api/locations', () => api('/api/locations'), {refresh});
       const tokens = new Map(catalog.stage_details.map(row => [row.id, row.edit_token]));
       catalog.stages.forEach(row => { row.edit_token = tokens.get(row.id); });
       stageOptions(stageFilter, MF.get(stageFilter), 'Все этапы');
@@ -196,7 +197,7 @@
   stageFilter.addEventListener('change', () => { MF.set(filter, ''); options(filter, '', 'Все группы'); render(); });
   search.addEventListener('input', render);
   filter.addEventListener('change', render);
-  $('location-catalog-refresh').addEventListener('click', () => { window.appReference.invalidate(); load(); });
+  $('location-catalog-refresh').addEventListener('click', () => { window.appReference.invalidate(); load(true); });
   $('location-group-add').addEventListener('click', () => open('objects'));
   $('location-stage-add').addEventListener('click', () => open('stages'));
   $('location-site-add').addEventListener('click', () => open('subobjects'));

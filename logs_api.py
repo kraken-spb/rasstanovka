@@ -57,8 +57,9 @@ def register_log_routes(app, get_db, roles_required):
     @app.get('/api/logs')
     @roles_required('admin')
     def assignment_logs():
-        start, end, work_day = day_arg('from'), day_arg('to'), day_arg('work_date')
-        if start and end and start > end:
+        start, end = day_arg('from'), day_arg('to')
+        work_start, work_end, work_day = day_arg('work_date_from'), day_arg('work_date_to'), day_arg('work_date')
+        if (start and end and start > end) or (work_start and work_end and work_start > work_end):
             abort(400, description='Начало периода не может быть позже окончания.')
         query = request.args.get('q', '').strip()
         if len(query) > 200:
@@ -82,6 +83,10 @@ def register_log_routes(app, get_db, roles_required):
             abort(400, description='Дата окончания выходит за допустимый диапазон.')
         if work_day:
             where.append('e.work_date=?'); params.append(work_day.isoformat())
+        if work_start:
+            where.append('e.work_date>=?'); params.append(work_start.isoformat())
+        if work_end:
+            where.append('e.work_date<=?'); params.append(work_end.isoformat())
         if actor:
             where.append('e.changed_by IN (' + ','.join('?' for _ in filter_values(actor)) + ')'); params.extend(int(item) for item in filter_values(actor))
         if action:

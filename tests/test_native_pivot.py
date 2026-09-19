@@ -17,7 +17,7 @@ class NativePivotTest(unittest.TestCase):
         source.append(HEADERS)
         for row in rows:
             source.append(row)
-        source.auto_filter.ref=f'A1:O{source.max_row}'
+        source.auto_filter.ref=f'A1:P{source.max_row}'
         summary_sheet(book, [], '2026-09-14')
         output=io.BytesIO()
         save_workbook_with_slicer(book, output)
@@ -25,7 +25,7 @@ class NativePivotTest(unittest.TestCase):
 
     def row(self, name='Иванов Иван', company='Подрядчик', employer='Работодатель', shift='День'):
         return [1,'Группа','Подобъект',company,employer,name,'000123','Должность','Профессия',
-                'Категория','ИТР','Бригадир',shift,'СМУ','Монтаж\nСварка']
+                'Категория','ИТР','Бригадир',shift,'СМУ','Монтаж\nСварка','Электромонтаж']
 
     def test_real_pivot_cache_source_fields_and_count_aggregation(self):
         payload=self.report([self.row(),self.row(name=None),self.row(name='Другой',shift='Ночь')])
@@ -33,7 +33,7 @@ class NativePivotTest(unittest.TestCase):
         self.assertEqual(book.sheetnames,['Список сотрудников','Сводная таблица'])
         source, summary=book.worksheets
         self.assertIsNone(source.auto_filter.ref)
-        self.assertEqual(source.tables['StaffingSource'].ref,'A1:O4')
+        self.assertEqual(source.tables['StaffingSource'].ref,'A1:P4')
         self.assertEqual(len(summary._pivots),1)
         pivot=summary._pivots[0]
         self.assertEqual([unescape(pivot.cache.cacheFields[f.x].name) for f in pivot.rowFields],HEADERS[1:3])

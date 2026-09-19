@@ -156,7 +156,7 @@ class WorkforceApiTest(unittest.TestCase):
         pages = [self.request('get', path + '&offset=' + str(offset), role='rotation').json for offset in (0, 1, 2)]
         self.assertEqual({row['id'] for page in pages for row in page['rows']}, {self.worker, outstaff})
         self.assertEqual([len(page['rows']) for page in pages], [1, 1, 0])
-        expected = {'total': 2, 'onsite': 1, 'pvp': 1, 'inbound': 0, 'on_leave': 0, 'unconfirmed': 0}
+        expected = {'total': 2, 'onsite': 1, 'pvp': 1, 'inbound': 0, 'outbound': 0, 'on_leave': 0, 'unconfirmed': 0}
         for page in pages:
             self.assertEqual(page['totals'], expected)
         self.assertEqual(self.request('get', path + '&department=OTHER-SMU', role='rotation').json['totals']['total'], 0)
@@ -267,12 +267,12 @@ class WorkforceApiTest(unittest.TestCase):
         self.assertEqual([len(page['rows']) for page in pages], [1, 1, 0])
         self.assertEqual({row['id'] for page in pages for row in page['rows']}, {self.worker, onsite})
         for page in pages:
-            self.assertEqual(page['totals'], {'total': 2, 'onsite': 1, 'pvp': 0, 'inbound': 0, 'on_leave': 0, 'unconfirmed': 1})
+            self.assertEqual(page['totals'], {'total': 2, 'onsite': 1, 'pvp': 0, 'inbound': 0, 'outbound': 0, 'on_leave': 0, 'unconfirmed': 1})
         self.assertEqual(self.request('get', path + '&section=rotation').json['totals']['total'], 3)
         self.assertEqual(self.request('get', path + '&section=rotation&department=OTHER-SMU', role='rotation').json['totals']['total'], 0)
         recruitment = self.request('get', path + '&section=recruitment', role='recruitment').json
-        self.assertEqual([row['id'] for row in recruitment['rows']], [onsite])
-        self.assertEqual(recruitment['totals']['total'], 1)
+        self.assertEqual(recruitment['rows'], [])
+        self.assertEqual(recruitment['totals']['total'], 0)
 
     def test_registry_stage_multiselect_rejects_unknown_codes(self):
         for query in ('stage=unknown', 'stage=stage.onsite&stage=unknown', 'stage=unconfirmed&stage=employment.staff',
@@ -520,7 +520,7 @@ class WorkforceApiTest(unittest.TestCase):
         people = [{'id': worker_id, 'token': self.board_row(worker_id)['stage_token']} for worker_id in self.ids]
         body = self.board_move('stage.onsite', people)
         self.assertEqual(self.request('post', 'transitions', body, 'rotation').status_code, 404)
-        self.assertEqual(self.request('post', 'transitions', {**body, 'effective_date': '2099-01-01'}).status_code, 400)
+        self.assertEqual(self.request('post', 'transitions', {**body, 'effective_date': 'not-a-date'}).status_code, 400)
         self.request('post', f'people/{self.ids[1]}/stage', {'stage_code': 'stage.leave', 'effective_date': '2026-09-16',
             'confirmed': True, 'reason': 'Другая служба уже уточнила этап', 'request_key': str(uuid4())})
         stale = self.request('post', 'transitions', body)
@@ -534,6 +534,27 @@ class WorkforceApiTest(unittest.TestCase):
         self.assertEqual(succeeded.status_code, 201, succeeded.json)
         self.assertEqual(succeeded.json['changed'], 2)
 
+    def test_board_accepts_future_single_and_bulk_transitions_as_of_effective_date(self):
+        single = self.board_move('stage.onsite', effective_date='2099-01-01')
+        created = self.request('post', 'transitions', single, 'rotation')
+        self.assertEqual(created.status_code, 201, created.json)
+        self.assertIsNone(self.board_row(day='2026-09-16')['stage_code'])
+        self.assertEqual(self.board_row(day='2099-01-01')['stage_code'], 'stage.onsite')
+        event = self.db.native('''SELECT effective_date FROM workforce_stage_events
+            WHERE worker_id=%s ORDER BY sequence DESC LIMIT 1''', (self.worker,)).fetchone()
+        self.assertEqual(event['effective_date'].isoformat(), '2099-01-01')
+        self.assertEqual(self.db.native("SELECT count(*) FROM workforce_audit WHERE worker_id=%s AND action='transition'",
+                                        (self.worker,)).fetchone()[0], 1)
+
+        people = [{'id': worker_id, 'token': self.board_row(worker_id)['stage_token']} for worker_id in self.ids]
+        bulk = self.board_move('stage.onsite', people, effective_date='2099-01-02')
+        response = self.request('post', 'transitions', bulk, 'admin')
+        self.assertEqual(response.status_code, 201, response.json)
+        self.assertEqual(response.json['changed'], 2)
+        self.assertEqual({self.board_row(worker_id, day='2099-01-02')['stage_code'] for worker_id in self.ids},
+                         {'stage.onsite'})
+        stale = {**bulk, 'request_key': str(uuid4()), 'people': [people[0], {**people[1], 'token': '0' * 64}]}
+        self.assertEqual(self.request('post', 'transitions', stale, 'admin').status_code, 409)
     def test_board_service_roles_and_fresh_permissions(self):
         body = self.board_move('stage.onsite')
         for role in ('foreman', 'viewer', 'hr_viewer', 'recruitment'):
@@ -932,3 +953,5 @@ class WorkforceApiTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+

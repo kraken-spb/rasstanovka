@@ -85,10 +85,10 @@ class ExportUnassignedTest(unittest.TestCase):
         formula = next(r for r in sheet.iter_rows(min_row=2) if r[6].value == '000201')
         self.assertEqual(formula[5].data_type, 's')
         self.assertEqual(formula[6].number_format, '@')
-        self.assertEqual(sheet.tables['StaffingSource'].autoFilter.ref, 'A1:P9')
+        self.assertEqual(sheet.tables['StaffingSource'].autoFilter.ref, 'A1:Q9')
         default = self.export(include_unassigned='0')
         self.assertEqual(default.headers['X-Export-Count'], '4')
-        self.assertEqual(self.fixture.workbook(default)['Список сотрудников'].max_column, 15)
+        self.assertEqual(self.fixture.workbook(default)['Список сотрудников'].max_column, 16)
 
     def test_shift_and_date_scope_no_opposite_shift_duplicates(self):
         night = self.rows(self.export(shift='2 смена'))

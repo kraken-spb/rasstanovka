@@ -1,6 +1,6 @@
 FROM postgres:17-bookworm
 
-RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-venv ca-certificates \
+RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-venv ca-certificates nodejs poppler-utils tesseract-ocr tesseract-ocr-eng tesseract-ocr-rus tesseract-ocr-uzb \
     && rm -rf /var/lib/apt/lists/* \
     && python3 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH" PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
@@ -8,6 +8,7 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 COPY *.py ./
+COPY smg_hierarchy.json ./
 COPY tools ./tools
 COPY migrations ./migrations
 COPY seed.example.json ./seed.json

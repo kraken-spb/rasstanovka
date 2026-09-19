@@ -1,6 +1,7 @@
 """Shared workforce authorization, dated reads and transactional audit contracts."""
 import hashlib
 import json
+import re
 from datetime import date, datetime
 from uuid import UUID
 
@@ -11,6 +12,13 @@ from psycopg.types.json import Jsonb
 ADMINS = {'admin', 'super_admin'}
 EDITORS = ADMINS | {'rotation', 'recruitment'}
 READERS = EDITORS | {'foreman', 'viewer', 'hr_viewer'}
+
+
+def email_value(value):
+    value = text_value(value, 'E-mail', 254)
+    if value and not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', value):
+        abort(400, description='Укажите корректный e-mail сотрудника.')
+    return value
 
 
 def plain(value):
@@ -147,13 +155,17 @@ PROFILE_SELECT = '''SELECT w.id,w.uuid,w.full_name,
     CASE WHEN w.personnel_is_internal THEN '' ELSE w.personnel_no::text END personnel_no,
     w.profession,w.profession_code,w.department,w.active,w.contractor,p.employer_id,o.name employer,
     p.citizenship_code,ct.label citizenship,p.employment_code,et.label employment,
-    p.birth_date,p.phone,p.messenger,p.origin_city,p.origin_code,p.rotation_schedule,p.rotation_schedule_id,p.arrival_date,
+    p.accommodation_code,ac.label accommodation,p.division_id,dv.name division,dv.pps_id division_pps_id,dp.name division_pps,
+    p.birth_date,p.phone,p.email,p.messenger,p.origin_city,p.origin_code,p.rotation_schedule,p.rotation_schedule_id,p.arrival_date,
     p.forecast_departure_date,p.leave_start_date,p.leave_end_date,p.notes,p.edit_token,
     eg.category_id,COALESCE(gc.name,w.category) category,es.smu_id,pr.label project
     FROM workers w JOIN workforce_profiles p ON p.worker_id=w.id
+    LEFT JOIN workforce_divisions dv ON dv.id=p.division_id
+    LEFT JOIN pps_catalog dp ON dp.id=dv.pps_id
     LEFT JOIN workforce_organizations o ON o.id=p.employer_id
     LEFT JOIN workforce_catalog ct ON ct.code=p.citizenship_code
     LEFT JOIN workforce_catalog et ON et.code=p.employment_code
+    LEFT JOIN workforce_catalog ac ON ac.code=p.accommodation_code
     LEFT JOIN employee_gdlr eg ON eg.worker_id=w.id LEFT JOIN gdlr_categories gc ON gc.id=eg.category_id
     LEFT JOIN employee_smu es ON es.worker_id=w.id
     LEFT JOIN workforce_smu_projects sp ON sp.smu_id=es.smu_id
@@ -187,7 +199,10 @@ def departure_warnings(db, day, worker_ids):
         ORDER BY e.worker_id,e.effective_date DESC,e.sequence DESC''', (list(worker_ids), day, day))
     for stage in stages:
         worker_id = stage['worker_id']
-        if stage['stage_code'] == 'stage.leave':
+        if stage['stage_code'] == 'stage.outbound':
+            result[worker_id] = ('Подтверждён выезд с ' + stage['effective_date'].strftime('%d.%m.%Y') +
+                                 '. Назначение можно сохранить.')
+        elif stage['stage_code'] == 'stage.leave':
             result[worker_id] = ('Подтверждена неявка с ' + stage['effective_date'].strftime('%d.%m.%Y') +
                                  '. Назначение можно сохранить.')
         elif stage['stage_code'] == 'stage.onsite' and (

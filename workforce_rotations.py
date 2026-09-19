@@ -32,7 +32,7 @@ def register_rotation_routes(app, database, roles_required):
         if data['action'] not in ('close', 'cancel'):
             abort(400, description='Выберите завершение или отмену вахты.')
         end = date_value(data.get('actual_end_date'), 'Фактическое окончание', data['action'] == 'close')
-        reason = text_value(data['reason'], 'Основание изменения', 10000, True)
+        reason = text_value(data.get('reason', ''), 'Основание изменения', 10000)
         db = database()
         with db:
             db.execute('BEGIN IMMEDIATE')
@@ -62,7 +62,7 @@ def register_rotation_routes(app, database, roles_required):
         data = payload({'name', 'onsite_days', 'leave_days', 'travel_days', 'active', 'token', 'reason', 'request_key'},
                        {'name', 'onsite_days', 'leave_days', 'travel_days', 'reason', 'request_key'} | ({'token'} if schedule_id else set()))
         name = text_value(data['name'], 'Название графика', 200, True)
-        reason = text_value(data['reason'], 'Основание изменения', 10000, True)
+        reason = text_value(data.get('reason', ''), 'Основание изменения', 10000)
         for key, minimum, maximum in [('onsite_days', 1, 366), ('leave_days', 0, 366), ('travel_days', 1, 30)]:
             if type(data[key]) is not int or not minimum <= data[key] <= maximum:
                 abort(400, description=f'{key}: укажите целое число от {minimum} до {maximum}.')
@@ -108,7 +108,7 @@ def register_rotation_routes(app, database, roles_required):
         schedule_id = uuid_value(data['schedule_id'])
         start = date_value(data['start_date'], 'Начало вахты', True)
         end = date_value(data.get('planned_end_date'), 'Окончание вахты')
-        reason = text_value(data['reason'], 'Основание изменения', 10000, True)
+        reason = text_value(data.get('reason', ''), 'Основание изменения', 10000)
         notes = text_value(data.get('notes', ''), 'Примечания', 10000)
         db = database()
         with db:
@@ -136,7 +136,7 @@ def register_rotation_routes(app, database, roles_required):
     def workforce_extend(worker_id, rotation_id):
         data = payload({'new_end_date', 'token', 'reason', 'request_key'}, {'new_end_date', 'token', 'reason', 'request_key'})
         end = date_value(data['new_end_date'], 'Новая дата окончания', True)
-        reason = text_value(data['reason'], 'Причина продления', 10000, True)
+        reason = text_value(data.get('reason', ''), 'Причина продления', 10000)
         db = database()
         with db:
             db.execute('BEGIN IMMEDIATE')

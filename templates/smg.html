@@ -1,0 +1,27 @@
+<section id="view-smg" class="view">
+  <div class="page-heading"><div><h1>Планы СМГ</h1><p>План ППС на три месяца · ежемесячное обновление</p></div>
+    {% if user.role in ('admin','super_admin') %}<button id="smg-upload" type="button" class="primary-button">Загрузить «Свод»</button>{% endif %}
+  </div>
+  <div id="smg-filters" class="smg-filters" aria-label="Быстрые фильтры планов">
+    <div class="smg-filter-tools"><label>ППС / объект<input id="smg-search" type="search" placeholder="Номер или название" autocomplete="off"></label><label>ГДЛР<input id="smg-category-search" type="search" placeholder="Поиск по категории" autocomplete="off"></label><button id="smg-reset" type="button" class="secondary-button">Сбросить</button><button id="smg-refresh" type="button" class="secondary-button" aria-label="Обновить планы" title="Обновить планы">↻</button></div>
+    <fieldset class="smg-filter-row"><legend>ППС</legend><div id="smg-scopes" class="smg-chips"></div></fieldset>
+    <fieldset class="smg-filter-row"><legend>Объекты</legend><div id="smg-objects" class="smg-chips smg-object-chips"></div></fieldset>
+    <div class="smg-filter-bottom"><fieldset class="smg-filter-row"><legend>Период</legend><div id="smg-periods"></div><small class="table-note">Данные по полным месяцам</small></fieldset><fieldset class="smg-filter-row"><legend>Состав плана</legend><div id="smg-kinds" class="smg-chips"></div></fieldset></div>
+  </div>
+  <p id="smg-source" class="table-note" role="status" aria-live="polite"></p><p id="smg-error" class="error-text" role="alert" hidden></p>
+  <details id="smg-history" class="smg-history"><summary>История редакций</summary><button id="smg-latest" type="button" class="secondary-button">К актуальным планам</button><div id="smg-editions" class="smg-chips"></div></details>
+  <div id="smg-table" class="smg-table-region"></div>
+</section>
+<dialog id="smg-import" class="smg-dialog" aria-labelledby="smg-import-title">
+  <header><h2 id="smg-import-title">Загрузка плана СМГ</h2><button id="smg-close" type="button" class="secondary-button" aria-label="Закрыть загрузку плана">Закрыть</button></header>
+  <p>Загружается общий план ППС с листа «Свод» сразу на три последовательных месяца. Первый месяц берётся из первого планового столбца; после декабря год переключается автоматически.</p>
+  <form id="smg-file-form" class="smg-toolbar"><label>Файл перевахтовки<input id="smg-file" type="file" accept=".xlsx" required></label><label>Год первого месяца<input id="smg-year" type="number" min="2000" max="2100" required></label><button type="submit" class="primary-button">Проверить файл</button></form>
+  <p id="smg-import-error" class="error-text" role="alert" hidden></p>
+  <section id="smg-preview" hidden>
+    <div class="smg-toolbar"><label>ППС<select id="smg-block"></select></label></div>
+    <p id="smg-replacement" role="status"></p><ul id="smg-warnings"></ul>
+    <label id="smg-ack-label" class="check-label" hidden><input id="smg-ack" type="checkbox">Выбран нужный блок, замечания проверены</label>
+    <div id="smg-preview-table" class="smg-table-region"></div>
+    <button id="smg-apply" type="button" class="primary-button">Сохранить план на 3 месяца</button>
+  </section>
+</dialog>

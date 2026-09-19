@@ -12,6 +12,33 @@ assert.ok(start >= 0 && end > start);
 const routing = source.slice(start, end);
 const settle = async () => { for (let i = 0; i < 4; i++) await new Promise(setImmediate); };
 
+test('summary cohort survives employee card, close, reload and browser back', async () => {
+  const route='workforce/rotation/summary/'+encodeURIComponent(JSON.stringify({date:'2026-09-18',node:'group',metric:'onsite'}));
+  const a=app();await a.navigate('dashboard');await a.window.openWorkforceReport(route);
+  assert.equal(a.location.hash,'#'+route);
+  assert.ok(a.buttons.find(b=>b.dataset.view==='workforce/rotation').classList.active);
+  await a.window.openWorkforcePerson(12);
+  assert.equal(a.location.hash,'#'+route+'/people/12');
+  a.window.closeWorkforcePerson();await settle();assert.equal(a.location.hash,'#'+route);
+  a.history.back();await settle();assert.equal(a.location.hash,'#dashboard');
+  const direct=app({hash:'#'+route+'/people/12'});await direct.navigate(route+'/people/12');
+  await direct.window.closeWorkforcePerson();assert.equal(direct.location.hash,'#'+route);
+});
+
+test('legacy employee links and staffing cards preserve the selected date and return to the resolved list', async () => {
+  for (const view of ['employees','staffing']) {
+    const a=app({hash:'#'+view});const input={value:''};
+    a.context.document={getElementById:id=>{assert.equal(id,'wf-date');return input;}};
+    await a.navigate(view);
+    await a.window.openWorkforcePerson(12,'2026-09-14');
+    assert.equal(input.value,'2026-09-14');
+    assert.match(a.location.hash,/\/people\/12$/);
+    a.window.closeWorkforcePerson();await settle();
+    assert.equal(a.location.hash,view === 'employees' ? '#workforce/recruitment' : '#'+view);
+    assert.equal(a.calls.employees,0);
+  }
+});
+
 function app({workforce = true, hash = '#workforce', role = 'admin', entries = null, index = 0} = {}) {
   const calls = {activate:[], deactivate:0, guards:0, staffing:0, employees:0, locations:0, errors:[]};
   const hooks = {leave:true, activate:null};
@@ -25,14 +52,15 @@ function app({workforce = true, hash = '#workforce', role = 'admin', entries = n
   let cursor = index;
   const location = {get hash() {return stack[cursor].hash;}};
   const window = {
+    loadViewModules: async () => {},
     addEventListener(type, callback) { if (!listeners.has(type)) listeners.set(type, []); listeners.get(type).push(callback); },
     staffingScreen:{canLeave:() => true, load:async () => {calls.staffing++;}, openFromCalendar:async () => {calls.staffing++;}},
     employeesScreen:{canLeave:() => true, load:async () => {calls.employees++;}}
   };
   if (workforce) window.workforceScreen = {
     routeView(route) {
-      const match = /^workforce(?:\/(rotation|recruitment))?(?:\/people\/([1-9]\d*))?$/.exec(route);
-      return match && (!match[2] || Number.isSafeInteger(Number(match[2]))) ? 'workforce' : null;
+      const match = /^workforce(?:\/(rotation|recruitment))?(?:\/summary\/([^/]+))?(?:\/people\/([1-9]\d*))?$/.exec(route);
+      return match && (!match[3] || Number.isSafeInteger(Number(match[3]))) ? 'workforce' : null;
     },
     canLeave() {calls.guards++;return hooks.leave;},
     activate:async route => {calls.activate.push(route);if (hooks.activate) await hooks.activate(route);},
@@ -128,6 +156,8 @@ test('unsafe IDs and malformed hashes do not reach a CSS selector or the card AP
   await legacy.navigate('workforce/people/1');
   assert.equal(legacy.location.hash, '#dashboard');
   assert.equal(await legacy.window.openWorkforcePerson(1), false);
+  await legacy.navigate('employees');
+  assert.equal(legacy.location.hash, '#employees');assert.equal(legacy.calls.employees, 1);
 });
 
 test('a superseded navigation waiting on plan saves does not replace the newer destination', async () => {
@@ -136,7 +166,8 @@ test('a superseded navigation waiting on plan saves does not replace the newer d
   const older = a.navigate('staffing'), newer = a.navigate('employees');
   a.state.pendingPlans = 0;a.state.planWaiters.forEach(resolve => resolve());
   assert.equal(await older, false);assert.equal(await newer, true);
-  assert.equal(a.location.hash, '#employees');assert.equal(a.calls.staffing, 0);assert.equal(a.calls.employees, 1);
+  assert.equal(a.location.hash, '#workforce/recruitment');assert.equal(a.calls.staffing, 0);assert.equal(a.calls.employees, 0);
+  assert.equal(a.calls.activate.at(-1), 'workforce/recruitment');
 });
 
 test('late activation failure cannot change or report an error over a newer card route', async () => {
@@ -144,6 +175,7 @@ test('late activation failure cannot change or report an error over a newer card
   let rejectOlder;
   a.hooks.activate = route => route.endsWith('/1') ? new Promise((_resolve, reject) => {rejectOlder = reject;}) : undefined;
   const older = a.window.openWorkforcePerson(1);
+  await settle();
   await a.window.openWorkforcePerson(2);rejectOlder(new Error('Old request failed'));await older;
   assert.equal(a.location.hash, '#workforce/rotation/people/2');assert.deepEqual(a.calls.errors, []);
 });

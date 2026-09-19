@@ -1,15 +1,32 @@
-.table-pagination { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem .85rem; padding: .55rem .7rem; margin: .45rem 0; border: 1px solid #d2e1e3; border-radius: 9px; background: #fff; min-width: 0; }
-.table-pagination-summary { margin-right: auto; font-size: .85rem; color: #35505a; }
-.table-pagination-pages { display: flex; align-items: center; flex-wrap: wrap; gap: .25rem; }
-.table-pagination .table-pagination-pages button { min-width: 34px; min-height: 34px; padding: .3rem .5rem; font-size: .85rem; }
+.table-pagination { box-sizing: border-box; display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; align-self: stretch; gap: 4px 12px; width: 100%; min-width: 0; margin: 4px 0 0; padding: 4px 6px; border: 1px solid #d2e1e3; border-radius: 6px; background: #fff; }
+.table-pagination[hidden] { display: none; }
+.table-pagination-summary { margin-right: auto; font-size: 11px; color: #35505a; font-variant-numeric: tabular-nums; }
+.table-pagination-controls, .table-pagination-pages, .table-pagination-actions { display: flex; align-items: center; flex-wrap: nowrap; gap: 4px; min-width: 0; }
+.table-pagination-controls { gap: 8px; }
+.table-pagination-actions:empty { display: none; }
+.table-pagination .table-pagination-pages button, .table-pagination .table-pagination-columns { box-sizing: border-box; flex-shrink: 0; min-width: 28px; height: 28px; min-height: 28px; padding: 3px 6px; border: 1px solid #d2e1e3; border-radius: 4px; background: #fff; color: #35505a; font: 12px/1.2 Arial, sans-serif; }
 .table-pagination button[aria-current="page"] { background: #007c86; color: white; border-color: #007c86; font-weight: 700; }
-.table-pagination-size { display: flex; align-items: center; gap: .35rem; font-size: .85rem; }
-.table-pagination-size select { width: auto; min-height: 34px; padding: .25rem .4rem; }
-.table-pagination-note { flex-basis: 100%; color: #526c73; }
-@media (max-width: 640px) {
-  .table-pagination { gap: .4rem; padding: .4rem; }
+.table-pagination-size { display: flex; flex-direction: row; align-items: center; gap: 4px; margin: 0; font-size: 11px; white-space: nowrap; }
+.table-pagination .table-pagination-size select { box-sizing: border-box; width: auto; height: 28px; min-height: 28px; padding: 2px 4px; font-size: 12px; }
+.table-pagination-note { margin-left: 8px; color: #526c73; font-size: 10px; }
+.table-pagination .table-pagination-columns { display: inline-flex; align-items: center; justify-content: center; gap: 5px; white-space: nowrap; }
+.table-pagination-columns::before { content: ''; width: 14px; height: 14px; background: currentColor; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75'%3E%3Cpath d='M3 4h18v16H3z M9 4v16 M15 4v16'/%3E%3C/svg%3E") center/contain no-repeat; }
+.table-pagination :focus-visible { outline: 2px solid #16818b; outline-offset: 2px; }
+@media (min-width: 901px) {
+  :is(#view-staffing, #view-employees) .table-pagination button { height: 28px; min-height: 28px; padding: 3px 6px; }
+  :is(#view-staffing, #view-employees) .table-pagination select { height: 28px; min-height: 28px; padding: 2px 4px; }
+}
+@media (max-width: 900px) {
+  .table-pagination { gap: 4px; }
   .table-pagination-summary { flex-basis: 100%; }
-  .table-pagination-pages { flex: 1 1 100%; gap: .2rem; }
-  .table-pagination .table-pagination-pages button { min-width: 32px; min-height: 44px; padding: .25rem .45rem; }
-  .table-pagination-size select { min-height: 44px; }
+  .table-pagination-controls { width: 100%; justify-content: flex-end; gap: 6px; }
+  .table-pagination-pages { margin-right: auto; }
+  .table-pagination .table-pagination-pages button { min-width: 30px; min-height: 40px; height: 40px; }
+  .table-pagination .table-pagination-size select { min-height: 40px; height: 40px; }
+  .table-pagination .table-pagination-columns { min-width: 36px; width: 36px; min-height: 40px; height: 40px; font-size: 0; gap: 0; padding: 5px; }
+  .table-pagination-columns::before { width: 17px; height: 17px; }
+}
+@media (max-width: 480px) {
+  .table-pagination-number, .table-pagination-gap { display: none; }
+  .table-pagination-size { font-size: 0; gap: 0; }
 }

@@ -39,6 +39,71 @@ class PostgresCatalogTest(unittest.TestCase):
         register_smu_routes(self.app, lambda: self.db, roles_required, lambda: '2026-09-17T00:00:00Z')
         register_crew_routes(self.app, lambda: self.db, roles_required, lambda: '2026-09-17T00:00:00Z')
 
+    def test_category_staffing_toggle_uses_current_binding_and_preserves_default(self):
+        from gdlr_api import register_gdlr_routes, staffing_eligible_sql
+        register_gdlr_routes(self.app, lambda: self.db, lambda *roles: lambda view: view, lambda: '2026-09-18T00:00:00Z')
+        name = 'Проверка расстановки ' + self.fixture.suffix
+        created = self.client.post('/api/gdlr-categories',json={'name':name})
+        self.assertEqual(created.status_code,201,created.json)
+        cid = created.json['id']
+        self.db.native('INSERT INTO employee_gdlr(worker_id,category_id,edit_token,updated_by,updated_at) VALUES (%s,%s,%s,%s,%s)',
+                       (self.fixture.worker,cid,'binding',self.actor,'now'))
+        def eligible():
+            return self.db.execute('SELECT COUNT(*) FROM workers w WHERE w.id=? AND '+staffing_eligible_sql(),(self.fixture.worker,)).fetchone()[0]
+        self.assertEqual(eligible(),0)
+        row = self.db.native('SELECT * FROM gdlr_categories WHERE id=%s',(cid,)).fetchone()
+        body = {'name':name,'active':True,'staffing_allowed':True,'expected_token':row['edit_token']}
+        url = '/api/gdlr-categories/'+str(cid)
+        response = self.client.patch(url,json=body)
+        self.assertEqual(response.status_code,200,response.json)
+        self.assertEqual(eligible(),1)
+        self.assertEqual(self.client.patch(url,json=body).status_code,409)
+        row = self.db.native('SELECT * FROM gdlr_categories WHERE id=%s',(cid,)).fetchone()
+        body.update(staffing_allowed=False,expected_token=row['edit_token'])
+        self.assertEqual(self.client.patch(url,json=body).status_code,200)
+        self.assertEqual(eligible(),0)
+        self.assertEqual(self.db.native('SELECT category_id FROM employee_gdlr WHERE worker_id=%s',(self.fixture.worker,)).fetchone()[0],cid)
+
+    def test_employer_catalog_and_correction_keep_worker_and_profile_in_sync(self):
+        from employer_api import register_employer_routes, employer_token
+        from staffing_shifts import responsibility_states
+        register_employer_routes(self.app, lambda: self.db, lambda *roles: lambda view: view,
+                                 lambda: '2026-09-18T00:00:00Z')
+        name = 'Новый работодатель ' + self.fixture.suffix
+        archived = 'Отключённый ' + self.fixture.suffix
+        self.db.native('INSERT INTO workforce_organizations(name) VALUES (%s)', (name,))
+        self.db.native('INSERT INTO workforce_organizations(name,active) VALUES (%s,FALSE)', (archived,))
+        options = self.client.get('/api/staffing/employers')
+        self.assertEqual(options.status_code, 200)
+        names = [row['name'] for row in options.json['rows']]
+        self.assertIn(name, names)
+        self.assertNotIn(archived, names)
+        worker, untouched = self.fixture.ids
+        before = self.db.native('SELECT employer FROM workers WHERE id=%s', (worker,)).fetchone()['employer']
+        group = responsibility_states(self.db, [worker])[worker]['group_token']
+        data = {'employer': name, 'worker_ids': [worker], 'expected_crews': {str(worker): None},
+                'expected_group_tokens': {str(worker): group},
+                'expected_tokens': {str(worker): employer_token(before)}}
+        self.assertEqual(self.client.put('/api/staffing/groups/employer', json={**data, 'employer': archived}).status_code, 400)
+        response = self.client.put('/api/staffing/groups/employer', json=data)
+        self.assertEqual(response.status_code, 200, response.json)
+        self.assertEqual(self.db.native('SELECT employer FROM workers WHERE id=%s', (worker,)).fetchone()['employer'], name)
+        self.assertEqual(self.db.native('SELECT o.name FROM workforce_profiles p JOIN workforce_organizations o ON o.id=p.employer_id WHERE p.worker_id=%s', (worker,)).fetchone()['name'], name)
+        self.assertEqual(self.db.native('SELECT source_employer FROM employee_employers WHERE worker_id=%s', (worker,)).fetchone()['source_employer'], before)
+        self.assertEqual(self.db.native('SELECT employer FROM workers WHERE id=%s', (untouched,)).fetchone()['employer'], before)
+        self.assertEqual(self.client.put('/api/staffing/groups/employer', json=data).status_code, 409)
+        # Undo to a missing override and redo must update the effective profile too.
+        from staffing_history import restore
+        row = dict(self.db.native('SELECT * FROM employee_employers WHERE worker_id=%s', (worker,)).fetchone())
+        key = json.dumps(['employee_employers', [worker]])
+        with self.app.test_request_context():
+            g.user = self.fixture.users['admin']
+            restore(self.db, {key: None}, '2026-09-18T01:00:00Z')
+            self.assertEqual(self.db.native('SELECT employer FROM workers WHERE id=%s', (worker,)).fetchone()['employer'], before)
+            restore(self.db, {key: row}, '2026-09-18T02:00:00Z')
+            self.assertEqual(self.db.native('SELECT employer FROM workers WHERE id=%s', (worker,)).fetchone()['employer'], name)
+
+
     def test_smu_counts_with_and_without_chief_and_archived_chief(self):
         chief = self.fixture.users['foreman']['id']
         populated = self.db.native('INSERT INTO smu_catalog(name,site_chief_user_id) VALUES (%s,%s) RETURNING id',

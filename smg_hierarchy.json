@@ -1,0 +1,884 @@
+[
+  {
+    "id": "gdlr-bc309d972a3d8c1d",
+    "label": "Итого",
+    "name_key": "итого",
+    "parent_id": null,
+    "group": true,
+    "order": 3,
+    "source_cell": "A3"
+  },
+  {
+    "id": "gdlr-d1612b11e3fa6049",
+    "label": "Рабочие",
+    "name_key": "рабочие",
+    "parent_id": "gdlr-bc309d972a3d8c1d",
+    "group": true,
+    "order": 4,
+    "source_cell": "A4"
+  },
+  {
+    "id": "gdlr-d1e9cef2da63870e",
+    "label": "Основные рабочие",
+    "name_key": "основные рабочие",
+    "parent_id": "gdlr-d1612b11e3fa6049",
+    "group": true,
+    "order": 5,
+    "source_cell": "A5"
+  },
+  {
+    "id": "gdlr-c0dd4799691a8e80",
+    "label": "Бетонщик",
+    "name_key": "бетонщик",
+    "parent_id": "gdlr-d1e9cef2da63870e",
+    "group": false,
+    "order": 6,
+    "source_cell": "A6"
+  },
+  {
+    "id": "gdlr-974e118ebb11a5ff",
+    "label": "Арматурщик",
+    "name_key": "арматурщик",
+    "parent_id": "gdlr-d1e9cef2da63870e",
+    "group": false,
+    "order": 7,
+    "source_cell": "A7"
+  },
+  {
+    "id": "gdlr-f6b6fae6403e5ba3",
+    "label": "Электромонтажник",
+    "name_key": "электромонтажник",
+    "parent_id": "gdlr-d1e9cef2da63870e",
+    "group": false,
+    "order": 8,
+    "source_cell": "A8"
+  },
+  {
+    "id": "gdlr-06a5872ce52bcd2d",
+    "label": "Антикоррозийщик",
+    "name_key": "антикоррозийщик",
+    "parent_id": "gdlr-d1e9cef2da63870e",
+    "group": false,
+    "order": 9,
+    "source_cell": "A9"
+  },
+  {
+    "id": "gdlr-213de616b8901eb6",
+    "label": "Изолировщик",
+    "name_key": "изолировщик",
+    "parent_id": "gdlr-d1e9cef2da63870e",
+    "group": false,
+    "order": 10,
+    "source_cell": "A10"
+  },
+  {
+    "id": "gdlr-996cc058822196f8",
+    "label": "Монтажник СиЖБК",
+    "name_key": "монтажник сижбк",
+    "parent_id": "gdlr-d1e9cef2da63870e",
+    "group": false,
+    "order": 11,
+    "source_cell": "A11"
+  },
+  {
+    "id": "gdlr-2fe00ec9c9ebe495",
+    "label": "Монтажник ТТ",
+    "name_key": "монтажник тт",
+    "parent_id": "gdlr-d1e9cef2da63870e",
+    "group": false,
+    "order": 12,
+    "source_cell": "A12"
+  },
+  {
+    "id": "gdlr-28fa1e2a5a446e0d",
+    "label": "Прочие монтажники",
+    "name_key": "прочие монтажники",
+    "parent_id": "gdlr-d1e9cef2da63870e",
+    "group": false,
+    "order": 13,
+    "source_cell": "A13"
+  },
+  {
+    "id": "gdlr-ce18d3cbd3931c4b",
+    "label": "Сварщик МК",
+    "name_key": "сварщик мк",
+    "parent_id": "gdlr-d1e9cef2da63870e",
+    "group": false,
+    "order": 14,
+    "source_cell": "A14"
+  },
+  {
+    "id": "gdlr-70901ad37ddea4d9",
+    "label": "Сварщик ТТ",
+    "name_key": "сварщик тт",
+    "parent_id": "gdlr-d1e9cef2da63870e",
+    "group": false,
+    "order": 15,
+    "source_cell": "A15"
+  },
+  {
+    "id": "gdlr-78e2513e96880af4",
+    "label": "Сварщик АиПАМ",
+    "name_key": "сварщик аипам",
+    "parent_id": "gdlr-d1e9cef2da63870e",
+    "group": false,
+    "order": 16,
+    "source_cell": "A16"
+  },
+  {
+    "id": "gdlr-7e1eac56e86d0ba9",
+    "label": "Прочие сварщики и газорезчики",
+    "name_key": "прочие сварщики и газорезчики",
+    "parent_id": "gdlr-d1e9cef2da63870e",
+    "group": false,
+    "order": 17,
+    "source_cell": "A17"
+  },
+  {
+    "id": "gdlr-9967aae483ae0a7c",
+    "label": "Дефектоскописты",
+    "name_key": "дефектоскописты",
+    "parent_id": "gdlr-d1e9cef2da63870e",
+    "group": false,
+    "order": 18,
+    "source_cell": "A18"
+  },
+  {
+    "id": "gdlr-bb546b99b5f929cc",
+    "label": "Прочие основные рабочие",
+    "name_key": "прочие основные рабочие",
+    "parent_id": "gdlr-d1e9cef2da63870e",
+    "group": false,
+    "order": 19,
+    "source_cell": "A19"
+  },
+  {
+    "id": "gdlr-f9e97861e773b774",
+    "label": "Водители и механизаторы",
+    "name_key": "водители и механизаторы",
+    "parent_id": "gdlr-d1612b11e3fa6049",
+    "group": true,
+    "order": 20,
+    "source_cell": "A20"
+  },
+  {
+    "id": "gdlr-b4eaa1083efcc10d",
+    "label": "Водители",
+    "name_key": "водители",
+    "parent_id": "gdlr-f9e97861e773b774",
+    "group": true,
+    "order": 21,
+    "source_cell": "A21"
+  },
+  {
+    "id": "gdlr-18e0ea8848a59ddb",
+    "label": "Водитель грузового автомобиля",
+    "name_key": "водитель грузового автомобиля",
+    "parent_id": "gdlr-b4eaa1083efcc10d",
+    "group": false,
+    "order": 22,
+    "source_cell": "A22"
+  },
+  {
+    "id": "gdlr-8bce5bdf570e91cd",
+    "label": "Водитель самосвала",
+    "name_key": "водитель самосвала",
+    "parent_id": "gdlr-b4eaa1083efcc10d",
+    "group": false,
+    "order": 23,
+    "source_cell": "A23"
+  },
+  {
+    "id": "gdlr-e7d12529954567d9",
+    "label": "Водитель трубоплетевоза",
+    "name_key": "водитель трубоплетевоза",
+    "parent_id": "gdlr-b4eaa1083efcc10d",
+    "group": false,
+    "order": 24,
+    "source_cell": "A24"
+  },
+  {
+    "id": "gdlr-4d5dd454c71b98f1",
+    "label": "Водитель вахты",
+    "name_key": "водитель вахты",
+    "parent_id": "gdlr-b4eaa1083efcc10d",
+    "group": false,
+    "order": 25,
+    "source_cell": "A25"
+  },
+  {
+    "id": "gdlr-c0ad6255bce8e94e",
+    "label": "Водитель спецавтотранспорта",
+    "name_key": "водитель спецавтотранспорта",
+    "parent_id": "gdlr-b4eaa1083efcc10d",
+    "group": false,
+    "order": 26,
+    "source_cell": "A26"
+  },
+  {
+    "id": "gdlr-a727425e980fcf05",
+    "label": "Прочие водители",
+    "name_key": "прочие водители",
+    "parent_id": "gdlr-b4eaa1083efcc10d",
+    "group": false,
+    "order": 27,
+    "source_cell": "A27"
+  },
+  {
+    "id": "gdlr-8e24331b026f8d50",
+    "label": "Машинисты",
+    "name_key": "машинисты",
+    "parent_id": "gdlr-f9e97861e773b774",
+    "group": true,
+    "order": 28,
+    "source_cell": "A28"
+  },
+  {
+    "id": "gdlr-b097e5755d18026e",
+    "label": "Машинист бульдозера",
+    "name_key": "машинист бульдозера",
+    "parent_id": "gdlr-8e24331b026f8d50",
+    "group": false,
+    "order": 29,
+    "source_cell": "A29"
+  },
+  {
+    "id": "gdlr-e03f61a4a1a8e798",
+    "label": "Машинист трубоукладчика",
+    "name_key": "машинист трубоукладчика",
+    "parent_id": "gdlr-8e24331b026f8d50",
+    "group": false,
+    "order": 30,
+    "source_cell": "A30"
+  },
+  {
+    "id": "gdlr-2360c01e3736d887",
+    "label": "Машинист крана",
+    "name_key": "машинист крана",
+    "parent_id": "gdlr-8e24331b026f8d50",
+    "group": false,
+    "order": 31,
+    "source_cell": "A31"
+  },
+  {
+    "id": "gdlr-0e8f77aafa83c931",
+    "label": "Машинист буровой установки",
+    "name_key": "машинист буровой установки",
+    "parent_id": "gdlr-8e24331b026f8d50",
+    "group": false,
+    "order": 32,
+    "source_cell": "A32"
+  },
+  {
+    "id": "gdlr-bd2f741de6a51b0e",
+    "label": "Машинист оборудования",
+    "name_key": "машинист оборудования",
+    "parent_id": "gdlr-8e24331b026f8d50",
+    "group": false,
+    "order": 33,
+    "source_cell": "A33"
+  },
+  {
+    "id": "gdlr-b85a19deb1c09973",
+    "label": "Машинист экскаватора",
+    "name_key": "машинист экскаватора",
+    "parent_id": "gdlr-8e24331b026f8d50",
+    "group": false,
+    "order": 34,
+    "source_cell": "A34"
+  },
+  {
+    "id": "gdlr-5cdb530f19c5d056",
+    "label": "Машинист АПС",
+    "name_key": "машинист апс",
+    "parent_id": "gdlr-8e24331b026f8d50",
+    "group": false,
+    "order": 35,
+    "source_cell": "A35"
+  },
+  {
+    "id": "gdlr-ef2d2d98e4d32cf0",
+    "label": "Прочие машинисты",
+    "name_key": "прочие машинисты",
+    "parent_id": "gdlr-8e24331b026f8d50",
+    "group": false,
+    "order": 36,
+    "source_cell": "A36"
+  },
+  {
+    "id": "gdlr-b3bf2b914c8047d3",
+    "label": "ИТР",
+    "name_key": "итр",
+    "parent_id": "gdlr-bc309d972a3d8c1d",
+    "group": true,
+    "order": 37,
+    "source_cell": "A37"
+  },
+  {
+    "id": "gdlr-aa7a380d5d3c518f",
+    "label": "Руководители",
+    "name_key": "руководители",
+    "parent_id": "gdlr-b3bf2b914c8047d3",
+    "group": true,
+    "order": 38,
+    "source_cell": "A38"
+  },
+  {
+    "id": "gdlr-e7fa487bff222b99",
+    "label": "Начальник ОП/ рег.управления",
+    "name_key": "начальник оп/ рег.управления",
+    "parent_id": "gdlr-aa7a380d5d3c518f",
+    "group": false,
+    "order": 39,
+    "source_cell": "A39"
+  },
+  {
+    "id": "gdlr-82e28e9696e1becd",
+    "label": "Руководитель проекта, Главный инженер проекта, Заместитель начальника ОП/ рег.управления",
+    "name_key": "руководитель проекта, главный инженер проекта, заместитель начальника оп/ рег.управления",
+    "parent_id": "gdlr-aa7a380d5d3c518f",
+    "group": false,
+    "order": 40,
+    "source_cell": "A40"
+  },
+  {
+    "id": "gdlr-64bca7d1f5632042",
+    "label": "Начальник управления/ СМУ/ КТП/ мех. колонны, Главн. энергетик/ сварщик/ геодезист/ механик, зам. руководителя проекта/ главного инженера проекта",
+    "name_key": "начальник управления/ сму/ ктп/ мех. колонны, главн. энергетик/ сварщик/ геодезист/ механик, зам. руководителя проекта/ главного инженера проекта",
+    "parent_id": "gdlr-aa7a380d5d3c518f",
+    "group": false,
+    "order": 41,
+    "source_cell": "A41"
+  },
+  {
+    "id": "gdlr-9eee89634f54afe8",
+    "label": "Начальник участка/ отдела/ службы/ автоколонны, зам. нач. управления/ СМУ/ КТП/ мех. колонны, зам. главн. энергетика/ сварщика/ геодезиста/ механика",
+    "name_key": "начальник участка/ отдела/ службы/ автоколонны, зам. нач. управления/ сму/ ктп/ мех. колонны, зам. главн. энергетика/ сварщика/ геодезиста/ механика",
+    "parent_id": "gdlr-aa7a380d5d3c518f",
+    "group": false,
+    "order": 42,
+    "source_cell": "A42"
+  },
+  {
+    "id": "gdlr-7c06459bf9c6f9bd",
+    "label": "Прочие руководители (руководитель группы, зам. начальника участка/ отдела/ службы и пр.)",
+    "name_key": "прочие руководители (руководитель группы, зам. начальника участка/ отдела/ службы и пр.)",
+    "parent_id": "gdlr-aa7a380d5d3c518f",
+    "group": false,
+    "order": 43,
+    "source_cell": "A43"
+  },
+  {
+    "id": "gdlr-99922894b187c6ea",
+    "label": "Специалисты и служащие",
+    "name_key": "специалисты и служащие",
+    "parent_id": "gdlr-b3bf2b914c8047d3",
+    "group": true,
+    "order": 44,
+    "source_cell": "A44"
+  },
+  {
+    "id": "gdlr-bd695238f98ee0e8",
+    "label": "Геодезическая служба",
+    "name_key": "геодезическая служба",
+    "parent_id": "gdlr-99922894b187c6ea",
+    "group": false,
+    "order": 45,
+    "source_cell": "A45"
+  },
+  {
+    "id": "gdlr-cd83b6b9014c9799",
+    "label": "Организация и контроль производства",
+    "name_key": "организация и контроль производства",
+    "parent_id": "gdlr-99922894b187c6ea",
+    "group": false,
+    "order": 46,
+    "source_cell": "A46"
+  },
+  {
+    "id": "gdlr-d81f160844606d12",
+    "label": "Строительный контроль",
+    "name_key": "строительный контроль",
+    "parent_id": "gdlr-99922894b187c6ea",
+    "group": false,
+    "order": 47,
+    "source_cell": "A47"
+  },
+  {
+    "id": "gdlr-0d17e644e7b8d261",
+    "label": "ПТО",
+    "name_key": "пто",
+    "parent_id": "gdlr-99922894b187c6ea",
+    "group": false,
+    "order": 48,
+    "source_cell": "A48"
+  },
+  {
+    "id": "gdlr-31db038e96b126c7",
+    "label": "Производственная безопасность",
+    "name_key": "производственная безопасность",
+    "parent_id": "gdlr-99922894b187c6ea",
+    "group": false,
+    "order": 49,
+    "source_cell": "A49"
+  },
+  {
+    "id": "gdlr-a01bb4472ed328af",
+    "label": "Прочие службы",
+    "name_key": "прочие службы",
+    "parent_id": "gdlr-99922894b187c6ea",
+    "group": false,
+    "order": 50,
+    "source_cell": "A50"
+  },
+  {
+    "id": "gdlr-5301447f680d1992",
+    "label": "Линейный ИТР",
+    "name_key": "линейный итр",
+    "parent_id": "gdlr-b3bf2b914c8047d3",
+    "group": true,
+    "order": 51,
+    "source_cell": "A51"
+  },
+  {
+    "id": "gdlr-b1e6a2f295dfa7a8",
+    "label": "Старший прораб",
+    "name_key": "старший прораб",
+    "parent_id": "gdlr-5301447f680d1992",
+    "group": false,
+    "order": 52,
+    "source_cell": "A52"
+  },
+  {
+    "id": "gdlr-fe13c9e07c8af8c4",
+    "label": "Прораб",
+    "name_key": "прораб",
+    "parent_id": "gdlr-5301447f680d1992",
+    "group": false,
+    "order": 53,
+    "source_cell": "A53"
+  },
+  {
+    "id": "gdlr-da6745854a5a34dc",
+    "label": "Мастер строительных и монтажных работ",
+    "name_key": "мастер строительных и монтажных работ",
+    "parent_id": "gdlr-5301447f680d1992",
+    "group": false,
+    "order": 54,
+    "source_cell": "A54"
+  },
+  {
+    "id": "gdlr-cf7ced7cd508ab50",
+    "label": "Вспомогательные работники",
+    "name_key": "вспомогательные работники",
+    "parent_id": "gdlr-bc309d972a3d8c1d",
+    "group": true,
+    "order": 55,
+    "source_cell": "A55"
+  },
+  {
+    "id": "gdlr-795c46042aa35d23",
+    "label": "Работники складского хозяйства",
+    "name_key": "работники складского хозяйства",
+    "parent_id": "gdlr-cf7ced7cd508ab50",
+    "group": true,
+    "order": 56,
+    "source_cell": "A56"
+  },
+  {
+    "id": "gdlr-f1b8ed2218e247e6",
+    "label": "Руководители складского хозяйства",
+    "name_key": "руководители складского хозяйства",
+    "parent_id": "gdlr-795c46042aa35d23",
+    "group": false,
+    "order": 57,
+    "source_cell": "A57"
+  },
+  {
+    "id": "gdlr-b1fdfe95cd3d61cd",
+    "label": "Специалисты и служащие складского хозяйства",
+    "name_key": "специалисты и служащие складского хозяйства",
+    "parent_id": "gdlr-795c46042aa35d23",
+    "group": false,
+    "order": 58,
+    "source_cell": "A58"
+  },
+  {
+    "id": "gdlr-b28541d54ea2b7b9",
+    "label": "Вспомогательные рабочие складского хозяйства",
+    "name_key": "вспомогательные рабочие складского хозяйства",
+    "parent_id": "gdlr-795c46042aa35d23",
+    "group": false,
+    "order": 59,
+    "source_cell": "A59"
+  },
+  {
+    "id": "gdlr-79a9b3c81185b72e",
+    "label": "Работники РММ",
+    "name_key": "работники рмм",
+    "parent_id": "gdlr-cf7ced7cd508ab50",
+    "group": true,
+    "order": 60,
+    "source_cell": "A60"
+  },
+  {
+    "id": "gdlr-8d00b77a8b3f1171",
+    "label": "Руководители РММ",
+    "name_key": "руководители рмм",
+    "parent_id": "gdlr-79a9b3c81185b72e",
+    "group": false,
+    "order": 61,
+    "source_cell": "A61"
+  },
+  {
+    "id": "gdlr-accde6e216c7c61d",
+    "label": "Специалисты и служащие РММ",
+    "name_key": "специалисты и служащие рмм",
+    "parent_id": "gdlr-79a9b3c81185b72e",
+    "group": false,
+    "order": 62,
+    "source_cell": "A62"
+  },
+  {
+    "id": "gdlr-0ed69a19298ae369",
+    "label": "Вспомогательные рабочие РММ",
+    "name_key": "вспомогательные рабочие рмм",
+    "parent_id": "gdlr-79a9b3c81185b72e",
+    "group": false,
+    "order": 63,
+    "source_cell": "A63"
+  },
+  {
+    "id": "gdlr-0b545fde43c44bb7",
+    "label": "Работники лаборатории",
+    "name_key": "работники лаборатории",
+    "parent_id": "gdlr-cf7ced7cd508ab50",
+    "group": true,
+    "order": 64,
+    "source_cell": "A64"
+  },
+  {
+    "id": "gdlr-9c2e82c21f236780",
+    "label": "Руководители лаборатории",
+    "name_key": "руководители лаборатории",
+    "parent_id": "gdlr-0b545fde43c44bb7",
+    "group": false,
+    "order": 65,
+    "source_cell": "A65"
+  },
+  {
+    "id": "gdlr-20894d10b2081ab3",
+    "label": "Специалисты и служащие лаборатории",
+    "name_key": "специалисты и служащие лаборатории",
+    "parent_id": "gdlr-0b545fde43c44bb7",
+    "group": false,
+    "order": 66,
+    "source_cell": "A66"
+  },
+  {
+    "id": "gdlr-8131465f2955738d",
+    "label": "Вспомогательные рабочие лаборатории",
+    "name_key": "вспомогательные рабочие лаборатории",
+    "parent_id": "gdlr-0b545fde43c44bb7",
+    "group": false,
+    "order": 67,
+    "source_cell": "A67"
+  },
+  {
+    "id": "gdlr-d66135872125ab12",
+    "label": "Работники РБУ",
+    "name_key": "работники рбу",
+    "parent_id": "gdlr-cf7ced7cd508ab50",
+    "group": true,
+    "order": 68,
+    "source_cell": "A68"
+  },
+  {
+    "id": "gdlr-e153bca0c7609295",
+    "label": "Руководители РБУ",
+    "name_key": "руководители рбу",
+    "parent_id": "gdlr-d66135872125ab12",
+    "group": false,
+    "order": 69,
+    "source_cell": "A69"
+  },
+  {
+    "id": "gdlr-de712b7909d52155",
+    "label": "Специалисты и служащие РБУ",
+    "name_key": "специалисты и служащие рбу",
+    "parent_id": "gdlr-d66135872125ab12",
+    "group": false,
+    "order": 70,
+    "source_cell": "A70"
+  },
+  {
+    "id": "gdlr-2cbb7a95f3664855",
+    "label": "Вспомогательные рабочие РБУ",
+    "name_key": "вспомогательные рабочие рбу",
+    "parent_id": "gdlr-d66135872125ab12",
+    "group": false,
+    "order": 71,
+    "source_cell": "A71"
+  },
+  {
+    "id": "gdlr-f7b32e38ce544992",
+    "label": "Работники производства кислорода",
+    "name_key": "работники производства кислорода",
+    "parent_id": "gdlr-cf7ced7cd508ab50",
+    "group": true,
+    "order": 72,
+    "source_cell": "A72"
+  },
+  {
+    "id": "gdlr-877f9665ad89168b",
+    "label": "Руководители производства кислорода",
+    "name_key": "руководители производства кислорода",
+    "parent_id": "gdlr-f7b32e38ce544992",
+    "group": false,
+    "order": 73,
+    "source_cell": "A73"
+  },
+  {
+    "id": "gdlr-d10f8a14498fbe1e",
+    "label": "Специалисты и служащие производства кислорода",
+    "name_key": "специалисты и служащие производства кислорода",
+    "parent_id": "gdlr-f7b32e38ce544992",
+    "group": false,
+    "order": 74,
+    "source_cell": "A74"
+  },
+  {
+    "id": "gdlr-dccb8ae414ee43c0",
+    "label": "Вспомогательные рабочие производства кислорода",
+    "name_key": "вспомогательные рабочие производства кислорода",
+    "parent_id": "gdlr-f7b32e38ce544992",
+    "group": false,
+    "order": 75,
+    "source_cell": "A75"
+  },
+  {
+    "id": "gdlr-5fb3c7b26da564a4",
+    "label": "Работники производства м/к",
+    "name_key": "работники производства м/к",
+    "parent_id": "gdlr-cf7ced7cd508ab50",
+    "group": true,
+    "order": 76,
+    "source_cell": "A76"
+  },
+  {
+    "id": "gdlr-19f819850b85fe8d",
+    "label": "Руководители производства м/к",
+    "name_key": "руководители производства м/к",
+    "parent_id": "gdlr-5fb3c7b26da564a4",
+    "group": false,
+    "order": 77,
+    "source_cell": "A77"
+  },
+  {
+    "id": "gdlr-d095c3b8b16b5774",
+    "label": "Специалисты и служащие производства м/к",
+    "name_key": "специалисты и служащие производства м/к",
+    "parent_id": "gdlr-5fb3c7b26da564a4",
+    "group": false,
+    "order": 78,
+    "source_cell": "A78"
+  },
+  {
+    "id": "gdlr-ee6f96fc500db64e",
+    "label": "Вспомогательные рабочие производства м/к",
+    "name_key": "вспомогательные рабочие производства м/к",
+    "parent_id": "gdlr-5fb3c7b26da564a4",
+    "group": false,
+    "order": 79,
+    "source_cell": "A79"
+  },
+  {
+    "id": "gdlr-1ba2db9971424270",
+    "label": "Обслуживающий персонал",
+    "name_key": "обслуживающий персонал",
+    "parent_id": "gdlr-bc309d972a3d8c1d",
+    "group": true,
+    "order": 80,
+    "source_cell": "A80"
+  },
+  {
+    "id": "gdlr-9147d41bbb2ee42e",
+    "label": "Охрана",
+    "name_key": "охрана",
+    "parent_id": "gdlr-1ba2db9971424270",
+    "group": true,
+    "order": 81,
+    "source_cell": "A81"
+  },
+  {
+    "id": "gdlr-0392c24767ebaa03",
+    "label": "Руководители (охрана)",
+    "name_key": "руководители (охрана)",
+    "parent_id": "gdlr-9147d41bbb2ee42e",
+    "group": false,
+    "order": 82,
+    "source_cell": "A82"
+  },
+  {
+    "id": "gdlr-198e37a7ae0a52eb",
+    "label": "Специалисты и служащие (охрана)",
+    "name_key": "специалисты и служащие (охрана)",
+    "parent_id": "gdlr-9147d41bbb2ee42e",
+    "group": false,
+    "order": 83,
+    "source_cell": "A83"
+  },
+  {
+    "id": "gdlr-4c92841b7e05a094",
+    "label": "Вспомогательные рабочие (охрана)",
+    "name_key": "вспомогательные рабочие (охрана)",
+    "parent_id": "gdlr-9147d41bbb2ee42e",
+    "group": false,
+    "order": 84,
+    "source_cell": "A84"
+  },
+  {
+    "id": "gdlr-310707447ed9c311",
+    "label": "Услуги питания",
+    "name_key": "услуги питания",
+    "parent_id": "gdlr-1ba2db9971424270",
+    "group": true,
+    "order": 85,
+    "source_cell": "A85"
+  },
+  {
+    "id": "gdlr-20e4113d6f1d0c41",
+    "label": "Руководители (питание)",
+    "name_key": "руководители (питание)",
+    "parent_id": "gdlr-310707447ed9c311",
+    "group": false,
+    "order": 86,
+    "source_cell": "A86"
+  },
+  {
+    "id": "gdlr-10a6144d37b51988",
+    "label": "Специалисты и служащие (питание)",
+    "name_key": "специалисты и служащие (питание)",
+    "parent_id": "gdlr-310707447ed9c311",
+    "group": false,
+    "order": 87,
+    "source_cell": "A87"
+  },
+  {
+    "id": "gdlr-854dd9cf22a9f439",
+    "label": "Вспомогательные рабочие (питание)",
+    "name_key": "вспомогательные рабочие (питание)",
+    "parent_id": "gdlr-310707447ed9c311",
+    "group": false,
+    "order": 88,
+    "source_cell": "A88"
+  },
+  {
+    "id": "gdlr-9ccec50941b3ff83",
+    "label": "Обслуживающий персонал на ВЖП",
+    "name_key": "обслуживающий персонал на вжп",
+    "parent_id": "gdlr-1ba2db9971424270",
+    "group": true,
+    "order": 89,
+    "source_cell": "A89"
+  },
+  {
+    "id": "gdlr-943911e98ed59b4c",
+    "label": "Руководители (персонал на ВЖП)",
+    "name_key": "руководители (персонал на вжп)",
+    "parent_id": "gdlr-9ccec50941b3ff83",
+    "group": false,
+    "order": 90,
+    "source_cell": "A90"
+  },
+  {
+    "id": "gdlr-676b69ba7acb9144",
+    "label": "Специалисты и служащие (персонал на ВЖП)",
+    "name_key": "специалисты и служащие (персонал на вжп)",
+    "parent_id": "gdlr-9ccec50941b3ff83",
+    "group": false,
+    "order": 91,
+    "source_cell": "A91"
+  },
+  {
+    "id": "gdlr-50fc4bc3a6de5859",
+    "label": "Вспомогательные рабочие (персонал на ВЖП)",
+    "name_key": "вспомогательные рабочие (персонал на вжп)",
+    "parent_id": "gdlr-9ccec50941b3ff83",
+    "group": false,
+    "order": 92,
+    "source_cell": "A92"
+  },
+  {
+    "id": "gdlr-0516b08416959be2",
+    "label": "Медицинский персонал",
+    "name_key": "медицинский персонал",
+    "parent_id": "gdlr-1ba2db9971424270",
+    "group": true,
+    "order": 93,
+    "source_cell": "A93"
+  },
+  {
+    "id": "gdlr-dce49ef527ab10f8",
+    "label": "Руководители (мед. персонал)",
+    "name_key": "руководители (мед. персонал)",
+    "parent_id": "gdlr-0516b08416959be2",
+    "group": false,
+    "order": 94,
+    "source_cell": "A94"
+  },
+  {
+    "id": "gdlr-49772aa207e4a652",
+    "label": "Специалисты и служащие (мед. персонал)",
+    "name_key": "специалисты и служащие (мед. персонал)",
+    "parent_id": "gdlr-0516b08416959be2",
+    "group": false,
+    "order": 95,
+    "source_cell": "A95"
+  },
+  {
+    "id": "gdlr-947f242c04dfc01f",
+    "label": "Вспомогательные рабочие (мед. персонал)",
+    "name_key": "вспомогательные рабочие (мед. персонал)",
+    "parent_id": "gdlr-0516b08416959be2",
+    "group": false,
+    "order": 96,
+    "source_cell": "A96"
+  },
+  {
+    "id": "gdlr-3248061b4d1b52e7",
+    "label": "Работники электроснабжения",
+    "name_key": "работники электроснабжения",
+    "parent_id": "gdlr-1ba2db9971424270",
+    "group": true,
+    "order": 97,
+    "source_cell": "A97"
+  },
+  {
+    "id": "gdlr-3152e4bcc2630b38",
+    "label": "Руководители (электроснабжение)",
+    "name_key": "руководители (электроснабжение)",
+    "parent_id": "gdlr-3248061b4d1b52e7",
+    "group": false,
+    "order": 98,
+    "source_cell": "A98"
+  },
+  {
+    "id": "gdlr-33c36d85ae940ea1",
+    "label": "Специалисты и служащие (электроснабжение)",
+    "name_key": "специалисты и служащие (электроснабжение)",
+    "parent_id": "gdlr-3248061b4d1b52e7",
+    "group": false,
+    "order": 99,
+    "source_cell": "A99"
+  },
+  {
+    "id": "gdlr-3faab0bc85c00e33",
+    "label": "Вспомогательные рабочие (электроснабжение)",
+    "name_key": "вспомогательные рабочие (электроснабжение)",
+    "parent_id": "gdlr-3248061b4d1b52e7",
+    "group": false,
+    "order": 100,
+    "source_cell": "A100"
+  }
+]
